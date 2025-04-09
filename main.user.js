@@ -16,10 +16,7 @@
     
     console.log('[FB-Chat-Monitor] Script loaded 🚀');
     
-    // For Tampermonkey testing, we include the main code here
-    // We detect the current URL and load the corresponding module
-    
-    // Simplified version of the main code for testing
+    // Configuration object with all necessary constants
     const CONFIG = {
         // General settings
         scrollAttempts: 20,
@@ -29,20 +26,147 @@
         
         // Facebook Marketplace selectors
         MARKETPLACE: {
-            buyingTab: 'div[role=tab]:nth-child(3)',
-            chatContainer: 'div.x1ey2m1c.xds687c.xixxii4.x1vjfegm',
-            messagesWrapper: 'div.x1ey2m1c.x78zum5.x164qtfw.xixxii4.x1vjfegm',
-            messageRow: 'div[role="row"]',
-            messageContent: 'div[dir="auto"]'
+            // Navigation
+            navigation: {
+                // Multiple options for each selector for resilience
+                inboxLink: [
+                    'a[href*="/marketplace/inbox/"]',
+                    'div[role="navigation"] a[href*="marketplace"][href*="inbox"]'
+                ],
+                buyingTab: [
+                    'div[role="tab"]:nth-child(3)',
+                    'div[role="tab"][tabindex="0"]:not([aria-selected="true"])'
+                ],
+                sellingTab: [
+                    'div[role="tab"]:nth-child(2)',
+                    'div[role="tab"][aria-selected="true"]'
+                ]
+            },
+            
+            // Chat list 
+            chatList: {
+                container: [
+                    'div[role="main"]',
+                    'div[class*="x78zum5"][class*="xdt5ytf"]',
+                    'div.x1yztbdb.xw7yly9.xh8yej3 > div > div > div > div > div'
+                ],
+                chatItem: [
+                    'div[role="button"][tabindex="0"]',
+                    'div[role="row"]',
+                    'div[class*="x1n2onr6"]'
+                ],
+                unreadIndicator: [
+                    'div[class*="xwnonoy"]',
+                    'span[dir="auto"] span > div[class*="x1s688f"]',
+                    'div[aria-label*="unread"]'
+                ],
+                chatUserName: [
+                    'span[dir="auto"][class*="x1lliihq"]',
+                    'span[dir="auto"] span > div'
+                ],
+                lastMessagePreview: [
+                    'span[class*="x1s688f"]',
+                    'span[dir="auto"]:not([class*="x1lliihq"])'
+                ]
+            },
+            
+            // Active chat window
+            activeChat: {
+                container: [
+                    'div.x1ey2m1c.xds687c.xixxii4.x1vjfegm',
+                    'div[role="main"] > div > div > div:last-child'
+                ],
+                messagesWrapper: [
+                    'div.x1ey2m1c.x78zum5.x164qtfw.xixxii4.x1vjfegm',
+                    'div[role="main"] > div > div > div:last-child > div'
+                ],
+                messageRow: [
+                    'div[role="row"]',
+                    'div[class*="x1n2onr6"]'
+                ],
+                messageContent: [
+                    'div[dir="auto"]',
+                    'span[class*="x1lliihq"]'
+                ],
+                messageTimestamp: [
+                    'span[class*="x4k7w5x"] span[class*="x1lliihq"]',
+                    'span[class*="x1lliihq"]:last-child'
+                ],
+                
+                // Input area
+                messageInput: [
+                    'div[contenteditable="true"][role="textbox"]',
+                    'div[aria-label*="Message"]'
+                ],
+                sendButton: [
+                    'div[aria-label="Send"]',
+                    'div[role="button"]:has(svg)'
+                ]
+            }
         },
         
-        // Messenger selectors
+        // Messenger selectors - For compatibility
         MESSENGER: {
             messagesContainer: '.message-container',
             messageItem: '.message-item',
             author: '.author',
             content: '.content',
             date: '.timestamp'
+        }
+    };
+
+    // Utility functions for selector resilience
+    const SELECTOR_UTILS = {
+        // Try multiple selectors in sequence until one works
+        findElement(selectors, parent = document) {
+            for (const selector of selectors) {
+                try {
+                    const element = parent.querySelector(selector);
+                    if (element) return element;
+                } catch (e) {
+                    console.warn(`Selector failed: ${selector}`, e);
+                }
+            }
+            return null;
+        },
+        
+        // Try multiple selectors for finding all matching elements
+        findAllElements(selectors, parent = document) {
+            for (const selector of selectors) {
+                try {
+                    const elements = parent.querySelectorAll(selector);
+                    if (elements.length > 0) return Array.from(elements);
+                } catch (e) {
+                    console.warn(`Selector failed: ${selector}`, e);
+                }
+            }
+            return [];
+        },
+        
+        // Find element by text content
+        findElementByText(text, elementType = '*', parent = document) {
+            const elements = parent.querySelectorAll(elementType);
+            for (const el of elements) {
+                if (el.textContent.includes(text)) return el;
+            }
+            return null;
+        },
+        
+        // Check if an element is unread based on multiple possible indicators
+        isUnreadChat(chatElement) {
+            // Unread indicator method 1: specific class
+            const hasUnreadIndicator = !!chatElement.querySelector('div[class*="xwnonoy"]');
+            
+            // Unread indicator method 2: text style
+            const nameSpan = chatElement.querySelector('span[dir="auto"] span > div');
+            if (nameSpan) {
+                const nameClasses = nameSpan.parentElement?.className || '';
+                const hasUnreadTextStyle = nameClasses.includes('x1s688f');
+                const hasReadTextStyle = nameClasses.includes('xk50ysn');
+                if (hasUnreadTextStyle && !hasReadTextStyle) return true;
+            }
+            
+            return hasUnreadIndicator;
         }
     };
     
@@ -52,7 +176,12 @@
             const interval = CONFIG.waitElementCheckInterval;
             let elapsed = 0;
             const check = () => {
-                const el = document.querySelector(selector);
+                let el;
+                if (Array.isArray(selector)) {
+                    el = SELECTOR_UTILS.findElement(selector);
+                } else {
+                    el = document.querySelector(selector);
+                }
                 if (el) return resolve(el);
                 elapsed += interval;
                 if (elapsed >= timeout) return reject(`Element not found: ${selector}`);
@@ -91,167 +220,179 @@
         console.log(`[FB-Chat-Monitor] ${message}`);
     }
     
-    // Facebook Marketplace Scraper
-    function initFbMarketplaceScraper() {
-        logInfo('Initializing Facebook Marketplace scraper...');
+    // ChatManager class - incorporated directly for Tampermonkey compatibility
+    class ChatManager {
+        constructor() {
+            this.activeChats = new Map(); // Map<chatId, chatData>
+            this.pendingChats = []; // Queue of chats with unread messages
+            this.currentChatId = null;
+        }
         
-        waitForElement(CONFIG.MARKETPLACE.buyingTab).then(buyingBtn => {
-            buyingBtn.click();
-            logInfo('Clicked "Buying" tab ✅');
-            return waitForElement(CONFIG.MARKETPLACE.chatContainer);
-        }).then(chatContainer => {
-            const messagesWrapper = chatContainer.querySelector(CONFIG.MARKETPLACE.messagesWrapper);
-            logInfo('Scrolling to load chat history...');
+        /**
+         * Scans Marketplace Inbox for unread messages
+         * @returns {Promise<number>} Number of unread chats found
+         */
+        async scanForUnreadChats() {
+            logInfo('Scanning for unread chats...');
             
-            autoScroll(messagesWrapper, () => {
-                logInfo('Chat history loaded ✅');
-                // Extract existing messages and set up the observer
-                setupMarketplaceObserver(messagesWrapper);
-            });
-        }).catch(err => {
-            console.error('[FB-Chat-Monitor] Error:', err);
-        });
-    }
-    
-    function setupMarketplaceObserver(container) {
-        const observer = new MutationObserver(mutations => {
-            mutations.forEach(mutation => {
-                if (mutation.addedNodes.length > 0) {
-                    mutation.addedNodes.forEach(node => {
-                        if (node.nodeType === Node.ELEMENT_NODE) {
-                            const messageElement = node.matches && 
-                                node.matches(CONFIG.MARKETPLACE.messageRow) ? 
-                                node : node.querySelector(CONFIG.MARKETPLACE.messageRow);
-                            
-                            if (messageElement) {
-                                const content = messageElement.querySelector(CONFIG.MARKETPLACE.messageContent)?.innerText.trim();
-                                if (content) {
-                                    // Get sender information (you or the other person)
-                                    const isSentByYou = isMessageSentByYou(messageElement);
-                                    const sender = isSentByYou ? 'You' : 'Contact';
-                                    
-                                    // Log and save the message
-                                    logInfo(`New message in Marketplace: "${content}"`);
-                                    saveMessage('marketplace', { 
-                                        sender: sender,
-                                        content: content,
-                                        isSentByYou: isSentByYou
-                                    });
-                                }
-                            }
-                        }
-                    });
+            try {
+                // Select the buying tab if not already selected
+                const buyingTab = SELECTOR_UTILS.findElement(CONFIG.MARKETPLACE.navigation.buyingTab);
+                if (buyingTab) {
+                    // Only click if it's not already selected
+                    if (buyingTab.getAttribute('aria-selected') !== 'true') {
+                        buyingTab.click();
+                        logInfo('Clicked "Buying" tab');
+                        // Wait a moment for the UI to update
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    }
                 }
-            });
-        });
-        
-        observer.observe(container, { childList: true, subtree: true });
-        logInfo('Marketplace observer started 🧠');
-    }
-    
-    // Helper function to determine if a message was sent by the current user
-    function isMessageSentByYou(messageElement) {
-        // Check if message is sent by current user based on styling
-        const alignCheck = messageElement.querySelector('[style*="flex-end"]');
-        const possibleYou = messageElement.closest('div[class*="x1yc453h"]');
-        return !!(alignCheck || possibleYou);
-    }
-    
-    // Messenger Scraper
-    function initMessengerScraper() {
-        logInfo('Initializing Messenger scraper...');
-        
-        waitForElement(CONFIG.MESSENGER.messagesContainer).then(container => {
-            logInfo('Found messages container ✅');
-            setupMessengerObserver(container);
-        }).catch(err => {
-            console.error('[FB-Chat-Monitor] Error:', err);
-        });
-    }
-    
-    function setupMessengerObserver(container) {
-        const observer = new MutationObserver(mutations => {
-            mutations.forEach(mutation => {
-                if (mutation.addedNodes.length > 0) {
-                    mutation.addedNodes.forEach(node => {
-                        if (node.nodeType === Node.ELEMENT_NODE) {
-                            const messageElement = node.matches && 
-                                node.matches(CONFIG.MESSENGER.messageItem) ? 
-                                node : node.querySelector(CONFIG.MESSENGER.messageItem);
-                            
-                            if (messageElement) {
-                                const author = messageElement.querySelector(CONFIG.MESSENGER.author)?.innerText.trim();
-                                const content = messageElement.querySelector(CONFIG.MESSENGER.content)?.innerText.trim();
-                                const date = messageElement.querySelector(CONFIG.MESSENGER.date)?.getAttribute('title') || new Date().toISOString();
-                                
-                                if (author && content) {
-                                    // Determine if the message is from the current user
-                                    const currentUser = 'You'; // Could be dynamically determined
-                                    const isSentByYou = author === currentUser;
-                                    
-                                    // Log and save the message
-                                    logInfo(`New message in Messenger from ${author}: "${content}"`);
-                                    saveMessage('messenger', {
-                                        sender: author,
-                                        content: content,
-                                        date: date,
-                                        isSentByYou: isSentByYou
-                                    });
-                                }
-                            }
-                        }
-                    });
+                
+                // Get the chat list container
+                const chatContainer = SELECTOR_UTILS.findElement(CONFIG.MARKETPLACE.chatList.container);
+                if (!chatContainer) {
+                    logInfo('Chat container not found');
+                    return 0;
                 }
-            });
-        });
-        
-        observer.observe(container, { childList: true, subtree: true });
-        logInfo('Messenger observer started 🧠');
-    }
-    
-    // Added: Function to save messages to localStorage for persistence
-    function saveMessage(platform, messageData) {
-        try {
-            const key = `fb-chat-monitor-${platform}`;
-            const existingData = JSON.parse(localStorage.getItem(key) || '[]');
-            existingData.push({
-                ...messageData,
-                timestamp: new Date().toISOString()
-            });
-            // Keep only last 100 messages
-            if (existingData.length > 100) {
-                existingData.shift();
+                
+                // Find all chat items
+                const chatItems = SELECTOR_UTILS.findAllElements(CONFIG.MARKETPLACE.chatList.chatItem, chatContainer);
+                logInfo(`Found ${chatItems.length} chat items`);
+                
+                // Reset the pending chats queue
+                this.pendingChats = [];
+                
+                // Check each chat for unread messages
+                for (const chat of chatItems) {
+                    const isUnread = SELECTOR_UTILS.isUnreadChat(chat);
+                    const userName = this.extractUserName(chat);
+                    
+                    if (isUnread) {
+                        // Get a unique identifier for this chat
+                        const chatId = this.getChatId(chat);
+                        
+                        // Add to pending chats queue
+                        this.pendingChats.push({
+                            chatId,
+                            userName,
+                            element: chat
+                        });
+                        
+                        logInfo(`Found unread chat: ${userName} (${chatId})`);
+                    }
+                }
+                
+                return this.pendingChats.length;
+            } catch (error) {
+                logInfo(`Error scanning for unread chats: ${error}`);
+                return 0;
             }
-            localStorage.setItem(key, JSON.stringify(existingData));
-        } catch (error) {
-            console.error('[FB-Chat-Monitor] Error saving message:', error);
+        }
+        
+        /**
+         * Extracts user name from a chat item
+         */
+        extractUserName(chatElement) {
+            const nameElement = SELECTOR_UTILS.findElement(CONFIG.MARKETPLACE.chatList.chatUserName, chatElement);
+            return nameElement?.innerText?.trim() || 'Unknown User';
+        }
+        
+        /**
+         * Generates a unique ID for a chat element
+         */
+        getChatId(chatElement) {
+            // Try to get a stable ID from the DOM
+            const idAttr = chatElement.id || chatElement.getAttribute('data-testid');
+            if (idAttr) return `chat_${idAttr}`;
+            
+            // Fall back to using the user name (not perfect but workable)
+            const userName = this.extractUserName(chatElement);
+            return `chat_${userName.replace(/\s+/g, '_').toLowerCase()}_${Date.now()}`;
         }
     }
     
-    // Added: Function to access saved messages
-    function getSavedMessages(platform) {
+    // Create chatManager instance
+    const chatManager = new ChatManager();
+    
+    // Main function to monitor and respond to marketplace messages
+    async function runMarketplaceMonitor() {
+        logInfo('Starting Marketplace Monitor');
+        
         try {
-            const key = `fb-chat-monitor-${platform}`;
-            return JSON.parse(localStorage.getItem(key) || '[]');
+            // Scan for unread chats
+            const unreadCount = await chatManager.scanForUnreadChats();
+            logInfo(`Found ${unreadCount} unread chats`);
+            
+            if (unreadCount > 0) {
+                // Process the first unread chat
+                await chatManager.openNextPendingChat();
+                
+                // Get the conversation history for this chat
+                const currentChatId = chatManager.currentChatId;
+                const history = chatManager.getConversationHistory(currentChatId);
+                
+                logInfo(`Processed chat with ${history.length} messages`);
+                
+                // Here you would integrate with an AI assistant to get a response
+                // For now, we'll just log the conversation
+                logInfo('Conversation history:');
+                history.forEach(msg => {
+                    logInfo(`${msg.sender}: ${msg.content}`);
+                });
+                
+                // Setup a watcher to detect new messages in this chat
+                setupActiveConversationWatcher();
+            }
+            
+            // Schedule the next scan
+            setTimeout(runMarketplaceMonitor, 30000); // Check every 30 seconds
+            
         } catch (error) {
-            console.error('[FB-Chat-Monitor] Error retrieving messages:', error);
-            return [];
+            logInfo(`Error in marketplace monitor: ${error}`);
+            // Retry after delay
+            setTimeout(runMarketplaceMonitor, 60000); 
         }
     }
     
-    // Expose function to global scope for debugging
-    window.FB_CHAT_MONITOR = {
-        getSavedMessages,
-        clearSavedMessages: (platform) => {
-            localStorage.removeItem(`fb-chat-monitor-${platform}`);
-            logInfo(`Cleared saved messages for ${platform}`);
+    // Set up observer to watch for new messages in the active conversation
+    function setupActiveConversationWatcher() {
+        const chatContainer = SELECTOR_UTILS.findElement(CONFIG.MARKETPLACE.activeChat.container);
+        if (!chatContainer) {
+            logInfo('Cannot set up watcher - chat container not found');
+            return;
         }
+        
+        logInfo('Setting up active conversation watcher');
+        
+        const observer = new MutationObserver(async (mutations) => {
+            // When new messages arrive, process them
+            await chatManager.processCurrentChatMessages();
+            
+            // Log the updated conversation
+            const history = chatManager.getConversationHistory(chatManager.currentChatId);
+            logInfo(`Updated conversation has ${history.length} messages`);
+        });
+        
+        observer.observe(chatContainer, { childList: true, subtree: true });
+        logInfo('Active conversation watcher initialized');
+        
+        return observer;
+    }
+    
+    // For debugging
+    window.FB_CHAT_MONITOR = {
+        chatManager,
+        config: CONFIG,
+        utils: SELECTOR_UTILS,
+        runMonitor: runMarketplaceMonitor
     };
     
     // Detect which page we're on and run the corresponding scraper
     if (window.location.href.includes('facebook.com/marketplace/inbox')) {
-        setTimeout(initFbMarketplaceScraper, 1000); // Small delay to ensure the page is loaded
+        // Small delay to ensure the page is loaded
+        setTimeout(runMarketplaceMonitor, 2000);
     } else if (window.location.href.includes('messenger.com')) {
-        setTimeout(initMessengerScraper, 1000);
+        // We'll focus on Marketplace for now
+        logInfo('Messenger support coming soon!');
     }
 })();
