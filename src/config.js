@@ -1,5 +1,3 @@
-// Configuration file with selectors and constants
-
 // Configuration object with all necessary constants
 export const CONFIG = {
   // General settings
@@ -105,6 +103,11 @@ export const CONFIG = {
         'div[role="button"]:has(svg)'
       ]
     }
+  },
+  
+  // Messenger selectors - For compatibility
+  MESSENGER: {
+    // Placeholder for future Messenger-specific selectors
   }
 };
 

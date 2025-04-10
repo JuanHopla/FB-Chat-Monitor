@@ -1,8 +1,16 @@
 # FB-Chat-Monitor
 
-A Tampermonkey-based project that monitors and extracts chat data from Facebook Messenger and Facebook Marketplace in real-time using MutationObserver.
+Monitors and extracts chat data from Facebook Messenger and Facebook Marketplace in real-time using MutationObserver.
 
-Project structure:
+## Features
+
+- Automatic detection of unread messages in Facebook Marketplace
+- Processing and organization of conversations by user
+- Extraction of product information in conversations
+- Automated responses based on text patterns
+- Debugging interface accessible via browser console
+
+## Project Structure
 - main.user.js         // Main script with Tampermonkey metadata
 - src/
    - config.js         // Constants and selectors
