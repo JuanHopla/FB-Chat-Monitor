@@ -6,6 +6,7 @@
   "scripts": {
     "build": "node scripts/build-optimized.js",
     "build-debug": "node scripts/build-debug.js",
+    "build-optimized": "node scripts/build-optimized.js",
     "dev": "node scripts/build-debug.js && echo Build complete",
     "publish": "node scripts/publish.js",
     "clean": "rimraf dist/*.js.bak scripts/build.js scripts/build-fixed.js scripts/build-manual.js"
