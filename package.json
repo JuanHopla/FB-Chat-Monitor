@@ -1,0 +1,27 @@
+{
+  "name": "fb-chat-monitor",
+  "version": "0.1.0",
+  "description": "Extracts chat data from Facebook Marketplace",
+  "main": "dist/main.user.js",
+  "scripts": {
+    "build": "node scripts/build-optimized.js",
+    "build-debug": "node scripts/build-debug.js",
+    "dev": "node scripts/build-debug.js && echo Build complete",
+    "publish": "node scripts/publish.js",
+    "clean": "rimraf dist/*.js.bak scripts/build.js scripts/build-fixed.js scripts/build-manual.js"
+  },
+  "keywords": [
+    "tampermonkey",
+    "facebook",
+    "marketplace",
+    "chat"
+  ],
+  "author": "JuanHopla",
+  "license": "UNLICENSED",
+  "private": true,
+  "devDependencies": {
+    "javascript-obfuscator": "^4.0.0",
+    "rimraf": "^3.0.2",
+    "terser": "^5.16.1"
+  }
+}
