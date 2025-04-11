@@ -6,6 +6,7 @@
 // @author       JuanHopla
 // @match        https://www.messenger.com/*
 // @match        https://www.facebook.com/marketplace/inbox*
+// @match        https://www.facebook.com/marketplace/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/JuanHopla/FB-Chat-Monitor/main/main.user.js
 // @downloadURL  https://raw.githubusercontent.com/JuanHopla/FB-Chat-Monitor/main/main.user.js
@@ -15,6 +16,49 @@
     'use strict';
     
     console.log('[FB-Chat-Monitor] Script loaded 🚀');
+    
+    // Notificación visible para confirmar que el script está cargado
+    const notifyScriptLoaded = () => {
+        const div = document.createElement('div');
+        div.style.position = 'fixed';
+        div.style.bottom = '20px';
+        div.style.right = '20px';
+        div.style.padding = '10px';
+        div.style.backgroundColor = '#4CAF50';
+        div.style.color = 'white';
+        div.style.borderRadius = '5px';
+        div.style.zIndex = '9999';
+        div.style.opacity = '0.9';
+        div.textContent = 'FB Chat Monitor: Script loaded';
+        document.body.appendChild(div);
+        
+        // Eliminar después de 3 segundos
+        setTimeout(() => {
+            document.body.removeChild(div);
+        }, 3000);
+    };
+    
+    // Ejecutar notificación al cargar
+    setTimeout(notifyScriptLoaded, 1000);
+    
+    // Carga de variables de entorno simplificada (al inicio)
+    const ENV = {
+        OPENAI_API_KEY: localStorage.getItem('FB_CHAT_MONITOR_OPENAI_KEY') || '',
+        AI_MODEL: localStorage.getItem('FB_CHAT_MONITOR_AI_MODEL') || 'gpt-3.5-turbo',
+        AI_TEMPERATURE: parseFloat(localStorage.getItem('FB_CHAT_MONITOR_AI_TEMP') || '0.7'),
+        AI_MAX_TOKENS: parseInt(localStorage.getItem('FB_CHAT_MONITOR_AI_MAX_TOKENS') || '150'),
+        DEBUG_MODE: localStorage.getItem('FB_CHAT_MONITOR_DEBUG') === 'true'
+    };
+
+    // Configuración de AI
+    const AI_CONFIG = {
+        enabled: !!ENV.OPENAI_API_KEY,
+        apiKey: ENV.OPENAI_API_KEY,
+        model: ENV.AI_MODEL,
+        endpoint: 'https://api.openai.com/v1/chat/completions',
+        temperature: ENV.AI_TEMPERATURE,
+        maxTokens: ENV.AI_MAX_TOKENS
+    };
     
     // Configuration object with all necessary constants
     const CONFIG = {
@@ -594,8 +638,23 @@
             const idAttr = chatElement.id || chatElement.getAttribute('data-testid');
             if (idAttr) return `chat_${idAttr}`;
             
+            // Get product name from chat preview if available
+            let productInfo = '';
+            const lastMessagePreview = SELECTOR_UTILS.findElement(
+                CONFIG.MARKETPLACE.chatList.lastMessagePreview, 
+                chatElement
+            );
+            
+            if (lastMessagePreview?.innerText) {
+                const previewText = lastMessagePreview.innerText.trim();
+                // Check if there might be a product name in the preview
+                if (previewText.includes('·')) {
+                    productInfo = previewText.split('·')[1].trim();
+                }
+            }
+            
             const userName = this.extractUserName(chatElement);
-            return `chat_${userName.replace(/\s+/g, '_').toLowerCase()}_${Date.now()}`;
+            return `chat_${userName.replace(/\s+/g, '_').toLowerCase()}${productInfo ? '_' + productInfo.replace(/\s+/g, '_').toLowerCase() : ''}`;
         }
         
         /**
@@ -734,13 +793,18 @@
                     buildConversationThread(chatContainer, currentChatId);
                 }
                 
-                // Here you would integrate with an AI assistant to get a response
+                // Aquí es donde generamos la respuesta
                 const lastMessage = history[history.length - 1];
                 if (lastMessage && !lastMessage.isSentByYou) {
-                    // Example of an automated response (replace with AI-generated response)
-                    const responseMessage = generateAutoResponse(lastMessage.content);
+                    // Obtenemos información del producto si existe
+                    const productInfo = chatManager.activeChats.get(currentChatId)?.productInfo;
+                    
+                    // Generamos una respuesta usando la API de OpenAI
+                    const responseMessage = await generateAutoResponse(lastMessage.content, productInfo);
+                    
                     if (responseMessage) {
                         await chatManager.sendMessage(responseMessage);
+                        logInfo(`Mensaje enviado: "${responseMessage.substring(0, 30)}${responseMessage.length > 30 ? '...' : ''}"`);
                     }
                 }
                 
@@ -758,8 +822,61 @@
         }
     }
 
-    // Translation of code in Spanish
-    function generateAutoResponse(incomingMessage) {
+    // Reemplazar la función generateAutoResponse con una versión que use la API de OpenAI
+    async function generateAutoResponse(incomingMessage, productInfo = null) {
+        // Si no hay configuración de API, usar respuestas predefinidas
+        if (!AI_CONFIG.enabled || !AI_CONFIG.apiKey) {
+            return generateDefaultResponse(incomingMessage);
+        }
+        
+        try {
+            logInfo('Generando respuesta con IA...');
+            
+            // Formatear la conversación para la API
+            const messages = [
+                {
+                    role: "system", 
+                    content: `You are a helpful assistant responding to messages on Facebook Marketplace.
+    ${productInfo ? `The conversation is about a product: ${productInfo.title || "Unknown product"}` : ""}
+    Keep your responses concise, friendly and helpful. Respond in the same language as the customer message.`
+                },
+                {
+                    role: "user",
+                    content: incomingMessage
+                }
+            ];
+            
+            // Llamar a la API de OpenAI
+            const response = await fetch(AI_CONFIG.endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${AI_CONFIG.apiKey}`
+                },
+                body: JSON.stringify({
+                    model: AI_CONFIG.model,
+                    messages: messages,
+                    temperature: AI_CONFIG.temperature,
+                    max_tokens: AI_CONFIG.maxTokens
+                })
+            });
+            
+            if (!response.ok) {
+                logInfo(`Error en la API: ${response.status} ${response.statusText}`);
+                return generateDefaultResponse(incomingMessage);
+            }
+            
+            const data = await response.json();
+            return data.choices[0]?.message?.content?.trim() || generateDefaultResponse(incomingMessage);
+            
+        } catch (error) {
+            logInfo(`Error al generar respuesta con IA: ${error.message}`);
+            return generateDefaultResponse(incomingMessage);
+        }
+    }
+
+    // Función para respuestas por defecto cuando la API falla
+    function generateDefaultResponse(incomingMessage) {
         // Example of basic response logic
         if (incomingMessage.toLowerCase().includes('hola') || 
             incomingMessage.toLowerCase().includes('hi') ||
@@ -804,20 +921,94 @@
         return observer;
     }
     
-    // For debugging
-    window.FB_CHAT_MONITOR = {
+    // Definir el objeto de monitoreo en el ámbito global de manera definitiva
+    const FB_CHAT_MONITOR_API = {
         chatManager,
         config: CONFIG,
         utils: SELECTOR_UTILS,
-        runMonitor: runMarketplaceMonitor
+        runMonitor: runMarketplaceMonitor,
+        setLogLevel: (level) => {
+            console.log(`[FB-Chat-Monitor] Log level set to ${level}`);
+        },
+        
+        // Configuración de IA
+        configureAI(apiKey, model = 'gpt-3.5-turbo') {
+            localStorage.setItem('FB_CHAT_MONITOR_OPENAI_KEY', apiKey);
+            localStorage.setItem('FB_CHAT_MONITOR_AI_MODEL', model);
+            AI_CONFIG.apiKey = apiKey;
+            AI_CONFIG.model = model;
+            AI_CONFIG.enabled = true;
+            console.log(`[FB-Chat-Monitor] IA configurada con modelo: ${model}`);
+            
+            // Agregar notificación visual
+            const div = document.createElement('div');
+            div.style.position = 'fixed';
+            div.style.bottom = '20px';
+            div.style.right = '20px';
+            div.style.padding = '10px';
+            div.style.backgroundColor = '#4CAF50';
+            div.style.color = 'white';
+            div.style.borderRadius = '5px';
+            div.style.zIndex = '9999';
+            div.textContent = 'OpenAI API configured successfully!';
+            document.body.appendChild(div);
+            
+            setTimeout(() => {
+                document.body.removeChild(div);
+            }, 3000);
+            
+            return { success: true, message: "API Key configured successfully" };
+        },
+        
+        disableAI() {
+            AI_CONFIG.enabled = false;
+            console.log('[FB-Chat-Monitor] Respuestas de IA desactivadas');
+            return { success: true, message: "AI responses disabled" };
+        },
+        
+        // Ver estado actual de la IA
+        getAIStatus() {
+            return {
+                enabled: AI_CONFIG.enabled,
+                model: AI_CONFIG.model,
+                hasApiKey: !!AI_CONFIG.apiKey
+            };
+        },
+        
+        // Método de diagnóstico
+        debug() {
+            console.log('[FB-Chat-Monitor] Debug information:');
+            console.log('- Script loaded: Yes');
+            console.log('- API exposed: Yes');
+            console.log('- AI Config:', AI_CONFIG);
+            console.log('- Current URL:', window.location.href);
+            return "FB Chat Monitor is working! You can use this API.";
+        }
     };
     
+    // Asegurar que el objeto se exponga correctamente en el ámbito global
+    window.FB_CHAT_MONITOR = FB_CHAT_MONITOR_API;
+    
+    // Método alternativo de exposición del API para mayor compatibilidad
+    document.FB_CHAT_MONITOR = FB_CHAT_MONITOR_API;
+    
+    // Auto-verificación tras la carga
+    setTimeout(() => {
+        if (window.FB_CHAT_MONITOR) {
+            console.log('[FB-Chat-Monitor] API successfully exposed to global scope');
+        } else {
+            console.error('[FB-Chat-Monitor] Failed to expose API to global scope');
+        }
+    }, 2000);
+    
     // Detect which page we're on and run the corresponding scraper
-    if (window.location.href.includes('facebook.com/marketplace/inbox')) {
+    if (window.location.href.includes('facebook.com/marketplace')) {
         // Small delay to ensure the page is loaded
         setTimeout(runMarketplaceMonitor, 2000);
     } else if (window.location.href.includes('messenger.com')) {
         // We'll focus on Marketplace for now
         logInfo('Messenger support coming soon!');
     }
+    
+    console.log('[FB-Chat-Monitor] Script initialization complete');
 })();
