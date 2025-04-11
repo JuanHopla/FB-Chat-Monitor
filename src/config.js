@@ -1,10 +1,25 @@
 // Configuration object with all necessary constants
+import { loadEnv } from './envLoader.js';
+
+// Load environment variables
+const ENV = loadEnv();
+
 export const CONFIG = {
   // General settings
   scrollAttempts: 20,
   scrollInterval: 300,
   waitElementTimeout: 10000,
   waitElementCheckInterval: 100,
+  
+  // AI Service Configuration
+  AI: {
+    enabled: !!ENV.OPENAI_API_KEY,  // Automatically enable if API key exists
+    apiKey: ENV.OPENAI_API_KEY,     // API key from environment
+    endpoint: ENV.AI_ENDPOINT,
+    model: ENV.AI_MODEL,
+    temperature: ENV.AI_TEMPERATURE,
+    maxTokens: ENV.AI_MAX_TOKENS
+  },
   
   // Facebook Marketplace selectors
   MARKETPLACE: {
