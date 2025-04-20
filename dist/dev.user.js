@@ -110,7 +110,7 @@ const CONFIG = {
   // Logging level
   debug: true,
   
-  // Enable debug visualization in interface - CHANGED TO FALSE to remove visual effects
+  // Enable debug visualization in interface – set to false to disable visual effects
   visualDebug: false,
 
   // Human simulation timing configuration
@@ -131,7 +131,10 @@ const CONFIG = {
     saveConversations: true,
     // Maximum number of conversations to save
     maxStoredConversations: 50
-  }
+  },
+
+  // Manual mode timeout duration (ms)
+  manualModeTimeout: 60000
 };
 
 // ----- UTILITIES -----
@@ -958,7 +961,7 @@ class ChatManager {
     return /^(Today|Yesterday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Hoy|Ayer|Lunes|Martes|Miércoles|Jueves|Viernes|Sábado|Domingo)$/i.test(text) ||
            /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(text) ||
            /^\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(\w*)\s+\d{2,4}$/i.test(text) ||
-           /^\d{1,2}\s+(Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Sep|Oct|Nov|Dic)(\w*)\s+\d{2,4}$/i.test(text);
+           /^\d{1,2}\s+(Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Sep|Oct|Nov|Dic)(\w*)\s+\d{2,4})?$/i.test(text);
   }
 
   // Determines if an element is a chat divider (corrected implementation)
@@ -1013,87 +1016,13 @@ class ChatManager {
   isSystemMessage(messageText) {
     try {
       if (!messageText) return false;
-      logger.debug(`Analyzing if it's a system message: "${messageText.substring(0, 30)}${messageText.length > 30 ? '...' : ''}"`);
+      logger.debug(`Analyzing if it's a system message: "${messageText.substring(0, 30)}..."`);
       
-      // IMPORTANT: For this specific bug, temporarily disable system message detection
-      return false;
-      
-      /* ORIGINAL CODE COMMENTED FOR DEBUGGING
-      // System messages in English
-      const englishSystemMessages = [
-        'You are now connected on Messenger',
-        'You sent an attachment',
-        'You missed a call',
-        'Call ended',
-        'Say hi to your new Facebook friend',
-        'You are now connected',
-        'You sent',
-        'Say hi',
-        'Reminder:',
-        'Welcome to',
-        'This message was deleted',
-        'You deleted this message',
-        'You have blocked',
-        'You have unblocked',
-        'Invitation sent',
-        'This item is no longer available'
-      ];
-      
-      // System messages in Spanish
-      const spanishSystemMessages = [
-        'Ahora están conectados en Messenger',
-        'Enviaste un archivo adjunto',
-        'Llamada perdida',
-        'Finalizó la llamada',
-        'Saluda a tu nuevo amigo de Facebook',
-        'Ahora están conectados',
-        'Enviaste',
-        'Saluda',
-        'Recordatorio:',
-        'Bienvenido a',
-        'Este mensaje fue eliminado',
-        'Eliminaste este mensaje',
-        'Has bloqueado',
-        'Has desbloqueado',
-        'Invitación enviada',
-        'Este artículo ya no está disponible'
-      ];
-      
-      // Combine system messages in both languages
-      const systemMessages = [...englishSystemMessages, ...spanishSystemMessages];
-      
-      // Check if the message contains any of the system patterns
-      for (const pattern of systemMessages) {
-        if (messageText.includes(pattern)) {
-          logger.debug(`System message detected by pattern: "${pattern}"`);
-          return true;
-        }
-      }
-      
-      // Check system message patterns with regular expressions
-      const systemPatterns = [
-        /^You sent \d+ photos?$/i,
-        /^Enviaste \d+ fotos?$/i,
-        /^You reacted/i,
-        /^Reaccionaste/i,
-        /^Replied to your message$/i,
-        /^Respondió a tu mensaje$/i,
-        /^[A-Za-z0-9]+ requests \d+ from you$/i,
-        /^[A-Za-z0-9]+ solicita \d+ de ti$/i
-      ];
-      
-      for (const pattern of systemPatterns) {
-        if (pattern.test(messageText)) {
-          logger.debug(`System message detected by regex`);
-          return true;
-        }
-      }
-      */
-      
+      // Always false (we do not detect system messages)
       return false;
     } catch (error) {
       logger.error(`Error in isSystemMessage: ${error.message}`);
-      return false; // In case of error, assume it's not a system message
+      return false;
     }
   }
 
@@ -1145,7 +1074,7 @@ class ChatManager {
       // Detect if it's Spanish (simple responses)
       if (/[áéíóúñ¿¡]/i.test(lastMessage) || 
           /\b(hola|gracias|buenos días|buenas tardes|disponible)\b/i.test(lastMessage)) {
-        return "¡Hola! Gracias por tu mensaje. Te responderé lo antes posible.";
+        return "Hello! Thank you for your message. I’ll reply as soon as possible.";
       } 
       
       // If not Spanish, respond in English
@@ -1156,50 +1085,16 @@ class ChatManager {
     }
   }
   
-  // Function to send a message - IMPROVED FOR THE CORRECT INPUT FIELD
-  async sendMessage(text) {
-    if (!text || text.trim() === '') {
-      logger.error('Attempt to send empty message');
-      return false;
-    }
-    
-    try {
-      // 1. Find the input field
-      const inputField = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageInput);
-      
-      // 2. Check the type of element and clear the content appropriately
-      if (inputField.tagName.toLowerCase() === 'p') {
-        // For <p> element, replace the entire content
-        inputField.innerHTML = text;
-      } else {
-        // For other elements (div), use innerText
-        inputField.innerText = text;
-      }
-      
-      // 3. Simulate typing the message
-      inputField.focus();
-      
-      // 4. Trigger events for Facebook to detect the change
-      inputField.dispatchEvent(new Event('input', { bubbles: true }));
-      inputField.dispatchEvent(new Event('change', { bubbles: true }));
-      
-      // 5. Find the send button
-      const sendButton = await domUtils.waitForElement(CONFIG.selectors.activeChat.sendButton);
-      
-      // 6. Wait a moment (more natural)
-      await this.delay(300);
-      
-      // 7. Click the button
-      sendButton.click();
-      
-      logger.log(`Message sent: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`);
-      return true;
-    } catch (error) {
-      logger.error(`Error sending message: ${error.message}`);
-      return false;
-    }
+  // New helper: send by pressing Enter in the field
+  async sendViaEnter(inputField) {
+    inputField.focus();
+    ['keydown','keypress','keyup'].forEach(type => {
+      inputField.dispatchEvent(new KeyboardEvent(type, {
+        key: 'Enter', code: 'Enter', bubbles: true
+      }));
+    });
   }
-  
+
   // Handles the response according to the configured mode
   async handleResponse(messages, productLink, isSeller) {
     // Only respond if the last message is not ours
@@ -1244,44 +1139,68 @@ class ChatManager {
   // Handles the automatic mode
   async handleAutoMode(context) {
     try {
-      // 1. Simulate a natural wait time before starting to "type"
-      const delayTime = this.getRandomResponseDelay();
-      logger.log(`Waiting ${delayTime}ms before starting to respond...`);
-      await this.delay(delayTime);
-      
-      // 2. Start "typing..." indicator
+      const wrapper = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageWrapper);
+      // load the entire history
+      await domUtils.scrollToTop(wrapper);
+      wrapper.scrollTop = wrapper.scrollHeight;
+      await this.delay(500);
+
+      // collect initial messages
+      let collected = [...context.messages];
+      const observer = new MutationObserver(muts => {
+        muts.forEach(m => {
+          m.addedNodes.forEach(node => {
+            if (node.nodeType===1 && node.innerText) {
+              collected.push({
+                content: node.innerText.trim(),
+                sentByUs: this.isMessageSentByUs(node),
+                timestamp: new Date().toISOString()
+              });
+            }
+          });
+        });
+      });
+      observer.observe(wrapper, { childList: true, subtree: true });
+
+      // random wait 30–60s
+      const waitTime = 30000 + Math.random()*30000;
+      logger.log(`Collecting messages for ${Math.round(waitTime/1000)}s before auto-response`);
+      await this.delay(waitTime);
+      observer.disconnect();
+
+      // update context
+      context.messages = collected;
+
+      // generate and send
       await this.startTypingIndicator();
-      
-      // 3. Generate response with AI
       let responseText;
       try {
         responseText = await this.generateAIResponse(context);
-        logger.log('Response successfully generated in auto mode');
-      } catch (error) {
-        logger.error(`Error generating response in auto mode: ${error.message}`);
+      } catch {
         responseText = this.getFallbackResponse(context.messages);
       }
-      
-      // 4. Simulate typing time based on message length
-      const typingTime = this.calculateTypingTime(responseText);
-      logger.log(`Simulating typing for ${typingTime}ms...`);
-      await this.delay(typingTime);
-      
-      // 5. Stop "typing..." indicator
+      await this.delay(this.calculateTypingTime(responseText));
       await this.stopTypingIndicator();
-      
-      // 6. Send the message
-      await this.sendMessage(responseText);
-      
-      // 7. Log successful operation
+
+      // insert and send
+      const inputField = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageInput);
+      inputField.click(); inputField.focus();
+      this.insertTextDirectly(inputField, responseText);
+
+      await this.delay(200);
+      // now reuse the helper
+      await this.sendViaEnter(inputField);
+
       logger.notify('Message sent automatically', 'success');
-      
-      // Save in history
       this.saveResponseToHistory(context, responseText, 'auto');
-      
-    } catch (error) {
-      logger.error(`Error in auto mode: ${error.message}`);
-      this.stopTypingIndicator();
+    } catch (e) {
+      // Log the specific error message
+      logger.error(`Error in auto mode: ${e.message}`); 
+      // Add stack trace for more details if available
+      if (e.stack) {
+        logger.error(e.stack);
+      }
+      await this.stopTypingIndicator();
       logger.notify('Error processing automatic message', 'error');
     }
   }
@@ -1289,10 +1208,7 @@ class ChatManager {
   // Handles the manual mode - MODIFIED FOR MORE RELIABLE INSERTION
   async handleManualMode(context) {
     try {
-      // 1. Start "typing..." indicator
       await this.startTypingIndicator();
-      
-      // 2. Generate response with AI
       let responseText;
       try {
         responseText = await this.generateAIResponse(context);
@@ -1301,103 +1217,63 @@ class ChatManager {
         logger.error(`Error generating response in manual mode: ${error.message}`);
         responseText = this.getFallbackResponse(context.messages);
       }
-      
-      // 3. Stop "typing..." indicator after generating the response
       await this.stopTypingIndicator();
-      
-      // 4. Insert response - IMPROVED METHOD
-      try {
-        // Get the input field
-        const inputField = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageInput);
-        
-        // Click on the field to focus it
-        inputField.click();
-        inputField.focus();
-        await this.delay(300);
-        
-        // MAIN CHANGE: Use direct insertion first as a more reliable method
-        logger.debug('Inserting text directly as primary method');
-        const inserted = this.insertTextDirectly(inputField, responseText);
-        
-        // If direct insertion fails, try clipboard as a backup
-        if (!inserted) {
-          logger.debug('Direct insertion failed, trying clipboard as backup');
-          try {
-            // Save to clipboard
-            await navigator.clipboard.writeText(responseText);
-            logger.debug('Response copied to clipboard');
-            
-            // Simulate paste
-            await this.simulateCtrlV(inputField, responseText);
-          } catch (clipboardError) {
-            logger.error(`Clipboard error: ${clipboardError.message}`);
-            // Last attempt - assign the value directly
-            inputField.innerText = responseText;
-            inputField.dispatchEvent(new Event('input', { bubbles: true }));
-          }
-        }
-        
-        // Check if the text was inserted correctly
-        await this.delay(500);
-        const currentContent = inputField.innerText || inputField.textContent || '';
-        if (currentContent.length === 0) {
-          logger.error('Insertion verification: No text detected after multiple attempts');
-          // Show message to the user if insertion seems to have failed
-          this.showSimpleAlert('Error: Could not insert the response. Try typing manually.', 'error');
-        } else {
-          logger.debug(`Final verification: Text inserted correctly (${currentContent.length} characters)`);
-          
-          // Show informative alert
-          this.showSimpleAlert('Response generated and ready to send. Press the "Send" button or modify the response.', 'info');
-          
-          try {
-            // Set up event for the send button
-            const sendButton = await domUtils.waitForElement(CONFIG.selectors.activeChat.sendButton, 2000);
-            
-            if (sendButton) {
-              // Event for when the send button is pressed
-              const onSendClick = () => {
-                // Get the current text from the field (which may have been modified)
-                const finalText = inputField.innerText || inputField.textContent || responseText;
-                this.saveResponseToHistory(context, finalText, 'manual');
-                logger.notify('Message sent manually', 'success');
-                // Remove the listener after sending
-                sendButton.removeEventListener('click', onSendClick);
-                // Remove the alert
-                const alertElement = document.querySelector('#fb-chat-monitor-simple-alert');
-                if (alertElement) {
-                  alertElement.remove();
-                }
-              };
-              
-              sendButton.addEventListener('click', onSendClick);
-              
-              // Event for when the input field is clicked
-              inputField.addEventListener('click', function onInputClick() {
-                const alertElement = document.querySelector('#fb-chat-monitor-simple-alert');
-                if (alertElement) {
-                  alertElement.remove();
-                }
-                inputField.removeEventListener('click', onInputClick);
-              });
-            } else {
-              logger.debug('Send button not found, continuing without setting up event');
-            }
-          } catch (btnError) {
-            logger.debug(`Could not set up event for send button: ${btnError.message}`);
-            // Not critical, continue without the event
-          }
-          
-          logger.notify('Response generated and ready to send', 'info');
-        }
-      } catch (error) {
-        logger.error(`Error inserting response in the field: ${error.message}`);
-        logger.notify('Error preparing the response', 'error');
+
+      // 4. Prepare manual insertion with highlighting and timeout
+      const inputField = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageInput);
+      inputField.click(); inputField.focus(); await this.delay(300);
+
+      // Highlight input field
+      inputField.style.border = '2px solid #4267B2';
+      inputField.style.boxShadow = '0 0 8px rgba(66,103,178,0.6)';
+
+      // Attempt insertion
+      const inserted = this.insertTextDirectly(inputField, responseText);
+      if (!inserted) { /* fallback clipboard/prompt... */ }
+
+      await this.delay(500);
+      const alertElement = this.showSimpleAlert(
+        'Response generated and ready to send. Press Send or edit.', 
+        'info'
+      );
+
+      // start manual mode timeout
+      this.manualTimeoutId = setTimeout(() => {
+        alertElement?.remove();
+        inputField.style.border = '';
+        inputField.style.boxShadow = '';
+        logger.notify('Manual mode timeout reached, response discarded', 'warning');
+      }, CONFIG.manualModeTimeout);
+
+      // set up events to clear timeout and styles
+      const onSendClick = () => {
+        clearTimeout(this.manualTimeoutId);
+        inputField.style.border = '';
+        inputField.style.boxShadow = '';
+        const finalText = inputField.innerText || inputField.textContent || responseText;
+        this.saveResponseToHistory(context, finalText, 'manual');
+        logger.notify('Message sent manually', 'success');
+        alertElement?.remove();
+        sendButton.removeEventListener('click', onSendClick);
+      };
+      const onInputClick = () => {
+        clearTimeout(this.manualTimeoutId);
+        inputField.style.border = '';
+        inputField.style.boxShadow = '';
+        alertElement?.remove();
+        inputField.removeEventListener('click', onInputClick);
+      };
+
+      const sendButton = await domUtils.waitForElement(CONFIG.selectors.activeChat.sendButton, 2000);
+      if (sendButton) {
+        sendButton.addEventListener('click', onSendClick);
+        inputField.addEventListener('click', onInputClick);
       }
-      
+
+      logger.notify('Response generated and ready to send', 'info');
     } catch (error) {
       logger.error(`Error in manual mode: ${error.message}`);
-      this.stopTypingIndicator();
+      await this.stopTypingIndicator();
       logger.notify('Error processing manual message', 'error');
     }
   }
@@ -1486,25 +1362,22 @@ class ChatManager {
   // Handles the test mode (generate)
   async handleGenerateMode(context) {
     try {
-      // 1. Generate response with AI
+      // Generate response with AI
       let responseText;
       try {
         responseText = await this.generateAIResponse(context);
-        logger.log('Response successfully generated in test mode');
+        logger.log('Response successfully generated in generate mode');
       } catch (error) {
-        logger.error(`Error generating response in test mode: ${error.message}`);
+        logger.error(`Error generating response in generate mode: ${error.message}`);
         responseText = this.getFallbackResponse(context.messages);
       }
-      
-      // 2. Notification
-      logger.notify('Response generated for evaluation (not sent)', 'info');
-      
-      // 3. Show advanced panel with configuration options
-      this.displayGenerateModePanelEnhanced(responseText, context);
-      
-      // 4. Save in history (marked as not sent)
-      this.saveResponseToHistory(context, responseText, 'generate');
-      
+
+      // Insert directly into the field
+      const inputField = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageInput);
+      inputField.click(); inputField.focus();
+      this.insertTextDirectly(inputField, responseText);
+
+      logger.notify('Response generated (generate mode)', 'info');
     } catch (error) {
       logger.error(`Error in generate mode: ${error.message}`);
       logger.notify('Error generating test response', 'error');
@@ -1595,7 +1468,6 @@ class ChatManager {
           inputField.innerText = '';
           inputField.dispatchEvent(new Event('input', { bubbles: true }));
         }
-        
         // Remove focus to completely stop the indicator
         inputField.blur();
       } catch (e) {
@@ -1653,353 +1525,6 @@ class ChatManager {
     logger.debug(`Conversation logged: ${JSON.stringify(log)}`);
   }
   
-  // Shows advanced panel for generate mode with adjustment options
-  displayGenerateModePanelEnhanced(message, context) {
-    // Create panel to show the generated message with advanced options
-    const panel = document.createElement('div');
-    panel.style.position = 'fixed';
-    panel.style.bottom = '100px';
-    panel.style.right = '20px';
-    panel.style.width = '400px';
-    panel.style.backgroundColor = 'white';
-    panel.style.padding = '15px';
-    panel.style.borderRadius = '8px';
-    panel.style.boxShadow = '0 0 15px rgba(0,0,0,0.3)';
-    panel.style.zIndex = '10000';
-    panel.style.fontFamily = 'Arial, sans-serif';
-    panel.style.maxHeight = '80vh';
-    panel.style.overflowY = 'auto';
-    
-    // Title with context information
-    const title = document.createElement('div');
-    title.style.display = 'flex';
-    title.style.justifyContent = 'space-between';
-    title.style.alignItems = 'center';
-    title.style.borderBottom = '1px solid #ddd';
-    title.style.paddingBottom = '8px';
-    title.style.marginBottom = '10px';
-    
-    const titleText = document.createElement('h3');
-    titleText.textContent = 'Test Mode - Generated Response';
-    titleText.style.margin = '0';
-    titleText.style.color = '#4267B2';
-    title.appendChild(titleText);
-    
-    // Role badge (seller/buyer)
-    const roleBadge = document.createElement('span');
-    roleBadge.textContent = context.isSeller ? 'Seller' : 'Buyer';
-    roleBadge.style.backgroundColor = context.isSeller ? '#4CAF50' : '#2196F3';
-    roleBadge.style.color = 'white';
-    roleBadge.style.padding = '3px 8px';
-    roleBadge.style.borderRadius = '12px';
-    roleBadge.style.fontSize = '12px';
-    roleBadge.style.fontWeight = 'bold';
-    title.appendChild(roleBadge);
-    
-    panel.appendChild(title);
-    
-    // Context section
-    const contextDiv = document.createElement('div');
-    contextDiv.style.marginBottom = '15px';
-    
-    // Last received message
-    const lastMessageLabel = document.createElement('div');
-    lastMessageLabel.textContent = 'Last received message:';
-    lastMessageLabel.style.fontWeight = 'bold';
-    lastMessageLabel.style.fontSize = '13px';
-    lastMessageLabel.style.marginBottom = '3px';
-    contextDiv.appendChild(lastMessageLabel);
-    
-    const lastMessage = document.createElement('div');
-    lastMessage.textContent = context.messages[context.messages.length - 1]?.content || 'No messages';
-    lastMessage.style.padding = '8px';
-    lastMessage.style.backgroundColor = '#f1f1f1';
-    lastMessage.style.borderRadius = '5px';
-    lastMessage.style.fontSize = '13px';
-    lastMessage.style.marginBottom = '10px';
-    contextDiv.appendChild(lastMessage);
-    
-    // Product link if exists
-    if (context.productLink) {
-      const productLabel = document.createElement('div');
-      productLabel.textContent = 'Product:';
-      productLabel.style.fontWeight = 'bold';
-      productLabel.style.fontSize = '13px';
-      productLabel.style.marginBottom = '3px';
-      contextDiv.appendChild(productLabel);
-      
-      const productLink = document.createElement('a');
-      productLink.href = context.productLink;
-      productLink.textContent = context.productLink;
-      productLink.target = '_blank';
-      productLink.style.display = 'block';
-      productLink.style.fontSize = '12px';
-      productLink.style.marginBottom = '10px';
-      productLink.style.wordBreak = 'break-all';
-      contextDiv.appendChild(productLink);
-    }
-    
-    panel.appendChild(contextDiv);
-    
-    // Generated response section
-    const responseSection = document.createElement('div');
-    responseSection.style.marginBottom = '15px';
-    
-    const responseLabel = document.createElement('div');
-    responseLabel.textContent = 'Generated response:';
-    responseLabel.style.fontWeight = 'bold';
-    responseLabel.style.fontSize = '14px';
-    responseLabel.style.marginBottom = '5px';
-    responseSection.appendChild(responseLabel);
-    
-    // Editable text area
-    const responseTextArea = document.createElement('textarea');
-    responseTextArea.value = message;
-    responseTextArea.style.width = '100%';
-    responseTextArea.style.height = '120px';
-    responseTextArea.style.padding = '10px';
-    responseTextArea.style.boxSizing = 'border-box';
-    responseTextArea.style.borderRadius = '5px';
-    responseTextArea.style.border = '1px solid #ddd';
-    responseTextArea.style.fontSize = '14px';
-    responseTextArea.style.marginBottom = '10px';
-    responseTextArea.style.resize = 'vertical';
-    responseSection.appendChild(responseTextArea);
-    
-    panel.appendChild(responseSection);
-    
-    // AI configuration section
-    const aiConfigSection = document.createElement('div');
-    aiConfigSection.style.marginBottom = '15px';
-    
-    const aiConfigLabel = document.createElement('div');
-    aiConfigLabel.textContent = 'AI Settings:';
-    aiConfigLabel.style.fontWeight = 'bold';
-    aiConfigLabel.style.fontSize = '14px';
-    aiConfigLabel.style.marginBottom = '8px';
-    aiConfigSection.appendChild(aiConfigLabel);
-    
-    // AI model
-    const modelSelectContainer = document.createElement('div');
-    modelSelectContainer.style.display = 'flex';
-    modelSelectContainer.style.alignItems = 'center';
-    modelSelectContainer.style.marginBottom = '8px';
-    
-    const modelLabel = document.createElement('span');
-    modelLabel.textContent = 'Model: ';
-    modelLabel.style.width = '100px';
-    modelLabel.style.fontSize = '13px';
-    modelSelectContainer.appendChild(modelLabel);
-    
-    const modelSelect = document.createElement('select');
-    modelSelect.style.flex = '1';
-    modelSelect.style.padding = '5px';
-    
-    const models = [
-      { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' },
-      { value: 'gpt-4', label: 'GPT-4' },
-      { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' }
-    ];
-    
-    models.forEach(model => {
-      const option = document.createElement('option');
-      option.value = model.value;
-      option.textContent = model.label;
-      option.selected = CONFIG.AI.model === model.value;
-      modelSelect.appendChild(option);
-    });
-    
-    modelSelectContainer.appendChild(modelSelect);
-    aiConfigSection.appendChild(modelSelectContainer);
-    
-    // Temperature
-    const temperatureContainer = document.createElement('div');
-    temperatureContainer.style.display = 'flex';
-    temperatureContainer.style.alignItems = 'center';
-    temperatureContainer.style.marginBottom = '8px';
-    
-    const tempLabel = document.createElement('span');
-    tempLabel.textContent = 'Temperature: ';
-    tempLabel.style.width = '100px';
-    tempLabel.style.fontSize = '13px';
-    temperatureContainer.appendChild(tempLabel);
-    
-    const tempSlider = document.createElement('input');
-    tempSlider.type = 'range';
-    tempSlider.min = '0';
-    tempSlider.max = '10';
-    tempSlider.step = '1';
-    tempSlider.value = Math.round(CONFIG.AI.temperature * 10);
-    tempSlider.style.flex = '1';
-    
-    const tempValue = document.createElement('span');
-    tempValue.textContent = CONFIG.AI.temperature.toFixed(1);
-    tempValue.style.marginLeft = '10px';
-    tempValue.style.width = '30px';
-    tempValue.style.textAlign = 'right';
-    
-    tempSlider.oninput = function() {
-      const value = parseFloat(this.value) / 10;
-      tempValue.textContent = value.toFixed(1);
-    };
-    
-    temperatureContainer.appendChild(tempSlider);
-    temperatureContainer.appendChild(tempValue);
-    aiConfigSection.appendChild(temperatureContainer);
-    
-    // Max tokens
-    const tokensContainer = document.createElement('div');
-    tokensContainer.style.display = 'flex';
-    tokensContainer.style.alignItems = 'center';
-    
-    const tokensLabel = document.createElement('span');
-    tokensLabel.textContent = 'Max tokens: ';
-    tokensLabel.style.width = '100px';
-    tokensLabel.style.fontSize = '13px';
-    tokensContainer.appendChild(tokensLabel);
-    
-    const tokensInput = document.createElement('input');
-    tokensInput.type = 'number';
-    tokensInput.min = '50';
-    tokensInput.max = '1000';
-    tokensInput.step = '10';
-    tokensInput.value = CONFIG.AI.maxTokens;
-    tokensInput.style.width = '80px';
-    tokensInput.style.padding = '5px';
-    tokensContainer.appendChild(tokensInput);
-    
-    aiConfigSection.appendChild(tokensContainer);
-    panel.appendChild(aiConfigSection);
-    
-    // Action buttons
-    const buttonsDiv = document.createElement('div');
-    buttonsDiv.style.display = 'flex';
-    buttonsDiv.style.justifyContent = 'space-between';
-    
-    // Close button
-    const closeButton = document.createElement('button');
-    closeButton.textContent = 'Close';
-    closeButton.style.padding = '8px 15px';
-    closeButton.style.backgroundColor = '#f44336';
-    closeButton.style.color = 'white';
-    closeButton.style.border = 'none';
-    closeButton.style.borderRadius = '3px';
-    closeButton.style.cursor = 'pointer';
-    buttonsDiv.appendChild(closeButton);
-    
-    // Regenerate button
-    const regenerateButton = document.createElement('button');
-    regenerateButton.textContent = 'Regenerate';
-    regenerateButton.style.padding = '8px 15px';
-    regenerateButton.style.backgroundColor = '#ff9800';
-    regenerateButton.style.color = 'white';
-    regenerateButton.style.border = 'none';
-    regenerateButton.style.borderRadius = '3px';
-    regenerateButton.style.cursor = 'pointer';
-    buttonsDiv.appendChild(regenerateButton);
-    
-    // Send this message button
-    const sendButton = document.createElement('button');
-    sendButton.textContent = 'Send message';
-    sendButton.style.padding = '8px 15px';
-    sendButton.style.backgroundColor = '#4CAF50';
-    sendButton.style.color = 'white';
-    sendButton.style.border = 'none';
-    sendButton.style.borderRadius = '3px';
-    sendButton.style.cursor = 'pointer';
-    buttonsDiv.appendChild(sendButton);
-    
-    // Copy button
-    const copyButton = document.createElement('button');
-    copyButton.textContent = 'Copy';
-    copyButton.style.padding = '8px 15px';
-    copyButton.style.backgroundColor = '#2196F3';
-    copyButton.style.color = 'white';
-    copyButton.style.border = 'none';
-    copyButton.style.borderRadius = '3px';
-    copyButton.style.cursor = 'pointer';
-    buttonsDiv.appendChild(copyButton);
-    
-    panel.appendChild(buttonsDiv);
-    document.body.appendChild(panel);
-    
-    // Handle events
-    closeButton.onclick = () => {
-      document.body.removeChild(panel);
-    };
-    
-    copyButton.onclick = () => {
-      navigator.clipboard.writeText(responseTextArea.value);
-      copyButton.textContent = 'Copied!';
-      setTimeout(() => {
-        copyButton.textContent = 'Copy';
-      }, 2000);
-    };
-    
-    // Button to send the message manually
-    sendButton.onclick = async () => {
-      // Change to a loading UI
-      sendButton.textContent = 'Sending...';
-      sendButton.disabled = true;
-      
-      // Send the current message
-      await this.sendMessage(responseTextArea.value);
-      
-      // Update logs
-      this.saveResponseToHistory(context, responseTextArea.value, 'generate-manual');
-      
-      // Close panel
-      document.body.removeChild(panel);
-      
-      // Notify
-      logger.notify('Message sent manually from test mode', 'success');
-    };
-    
-    // Regenerate with new parameters
-    regenerateButton.onclick = async () => {
-      try {
-        // Update configuration with current values
-        const newConfig = {
-          model: modelSelect.value,
-          temperature: parseFloat(tempSlider.value) / 10,
-          maxTokens: parseInt(tokensInput.value)
-        };
-        
-        // Save configuration for future use
-        CONFIG.AI.model = newConfig.model;
-        CONFIG.AI.temperature = newConfig.temperature;
-        CONFIG.AI.maxTokens = newConfig.maxTokens;
-        
-        localStorage.setItem('FB_CHAT_MONITOR_AI_MODEL', newConfig.model);
-        localStorage.setItem('FB_CHAT_MONITOR_AI_TEMP', newConfig.temperature);
-        localStorage.setItem('FB_CHAT_MONITOR_AI_MAX_TOKENS', newConfig.maxTokens);
-        
-        // Change to loading UI
-        regenerateButton.textContent = 'Generating...';
-        regenerateButton.disabled = true;
-        
-        // Generate new response with updated parameters
-        const newResponse = await this.generateAIResponse(context, newConfig);
-        
-        // Update textarea
-        responseTextArea.value = newResponse;
-        
-        // Restore button
-        regenerateButton.textContent = 'Regenerate';
-        regenerateButton.disabled = false;
-        
-      } catch (error) {
-        logger.error(`Error regenerating response: ${error.message}`);
-        regenerateButton.textContent = 'Error';
-        
-        setTimeout(() => {
-          regenerateButton.textContent = 'Regenerate';
-          regenerateButton.disabled = false;
-        }, 2000);
-      }
-    };
-  }
-  
   // Generates a response with the OpenAI API (updated version that accepts configuration)
   async generateAIResponse(context, customConfig = null) {
     // Use custom configuration or default
@@ -2053,13 +1578,12 @@ class ChatManager {
       
       const data = await response.json();
       return data.choices[0]?.message?.content || '';
-      
     } catch (error) {
       logger.error(`Error in AI API: ${error.message}`);
       throw error;
     }
   }
-
+  
   // Implementation of the showSimpleAlert function that was missing
   showSimpleAlert(message, type = 'info') {
     try {
@@ -2141,7 +1665,6 @@ class ChatManager {
 }
 
 // ----- REDIRECTION TO MARKETPLACE -----
-
 // Function to check if we are on messenger.com but not in the marketplace section
 function redirectToMarketplace() {
   if (window.location.hostname === 'www.messenger.com' && 
@@ -2154,7 +1677,6 @@ function redirectToMarketplace() {
 }
 
 // ----- USER INTERFACE -----
-
 // Creates the floating button and control panel
 function createFloatingButton() {
   // Main button
@@ -2198,9 +1720,7 @@ function createFloatingButton() {
   
   // Click to show panel
   button.onclick = toggleControlPanel;
-  
   document.body.appendChild(button);
-  
   return button;
 }
 
@@ -2389,6 +1909,47 @@ function toggleControlPanel() {
   };
   buttonsDiv.appendChild(historyButton);
   
+  // Button “Regenerate Response”
+  const regenBtn = document.createElement('button');
+  regenBtn.textContent = 'Regenerate Response';
+  regenBtn.style.padding = '8px 12px';
+  regenBtn.style.backgroundColor = '#ff9800';
+  regenBtn.style.color = 'white';
+  regenBtn.style.border = 'none';
+  regenBtn.style.borderRadius = '4px';
+  regenBtn.style.cursor = 'pointer';
+  regenBtn.style.marginTop = '10px';
+
+  regenBtn.onclick = async () => {
+    if (!chatManager.currentChatId) {
+      alert('Open a chat first');
+      return;
+    }
+    // Rebuild context from chatHistory
+    const chatData = chatManager.chatHistory.get(chatManager.currentChatId);
+    const context = {
+      messages: chatData.messages,
+      productLink: chatData.productLink,
+      isSeller: chatData.isSeller
+    };
+    await chatManager.handleGenerateMode(context);
+  };
+
+  panel.appendChild(regenBtn);
+
+  // button Pause/Resume Auto
+  const pauseBtn = document.createElement('button');
+  pauseBtn.textContent = 'Pause Auto';
+  pauseBtn.style.padding = '8px'; pauseBtn.style.marginTop = '10px';
+  pauseBtn.onclick = () => {
+    CONFIG.operationMode==='auto'
+      ? (CONFIG.operationMode='manual', pauseBtn.textContent='Resume Auto')
+      : (CONFIG.operationMode='auto', pauseBtn.textContent='Pause Auto');
+    localStorage.setItem('FB_CHAT_MONITOR_MODE', CONFIG.operationMode);
+    logger.notify(`Auto mode ${CONFIG.operationMode==='auto'?'resumed':'paused'}`, 'info');
+  };
+  panel.appendChild(pauseBtn);
+
   panel.appendChild(buttonsDiv);
   document.body.appendChild(panel);
 }
@@ -2439,7 +2000,6 @@ function showConversationHistory(logs) {
     // Header
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    
     const headers = ['Date', 'Mode', 'Message', 'Response', 'Status'];
     
     headers.forEach(text => {
@@ -2451,13 +2011,11 @@ function showConversationHistory(logs) {
       th.style.backgroundColor = '#f5f5f5';
       headerRow.appendChild(th);
     });
-    
     thead.appendChild(headerRow);
     table.appendChild(thead);
     
     // Body
     const tbody = document.createElement('tbody');
-    
     logs.forEach(log => {
       const row = document.createElement('tr');
       row.style.borderBottom = '1px solid #ddd';
@@ -2478,7 +2036,6 @@ function showConversationHistory(logs) {
       modeBadge.style.borderRadius = '10px';
       modeBadge.style.fontSize = '11px';
       modeBadge.style.color = 'white';
-      
       if (log.mode === 'auto') {
         modeBadge.style.backgroundColor = '#4CAF50';
       } else if (log.mode === 'manual') {
@@ -2486,7 +2043,6 @@ function showConversationHistory(logs) {
       } else {
         modeBadge.style.backgroundColor = '#ff9800';
       }
-      
       modeCell.appendChild(modeBadge);
       modeCell.style.padding = '8px';
       row.appendChild(modeCell);
@@ -2514,7 +2070,6 @@ function showConversationHistory(logs) {
       statusBadge.style.fontSize = '11px';
       statusBadge.style.color = 'white';
       statusBadge.style.backgroundColor = log.sent ? '#4CAF50' : '#f44336';
-      
       statusCell.appendChild(statusBadge);
       statusCell.style.padding = '8px';
       row.appendChild(statusCell);
@@ -2528,7 +2083,6 @@ function showConversationHistory(logs) {
       
       tbody.appendChild(row);
     });
-    
     table.appendChild(tbody);
     panel.appendChild(table);
   }
@@ -2709,17 +2263,13 @@ async function runChatMonitor() {
   }
   
   logger.log('Starting chat monitoring');
-  
   try {
     // Scan for unread chats
     const unreadChatsCount = await chatManager.scanForUnreadChats();
-    
     if (unreadChatsCount > 0) {
       logger.log(`Found ${unreadChatsCount} unread chats`);
-      
       // Process the first unread chat
       const opened = await chatManager.openNextPendingChat();
-      
       if (opened) {
         logger.log('Chat opened and processed successfully');
       } else {
@@ -2739,7 +2289,6 @@ async function runChatMonitor() {
 }
 
 // ----- INITIALIZATION -----
-
 // Initialization function
 function initialize() {
   logger.log('Initializing FB Chat Monitor');
@@ -2758,7 +2307,6 @@ function initialize() {
   
   // Welcome message
   logger.notify('FB Chat Monitor initialized', 'success');
-  
   try {
     // Check if we are on the correct page before starting monitoring
     if (window.location.href.includes('/marketplace/')) {
@@ -2895,7 +2443,6 @@ function showAPIDetails() {
     noProduct.style.color = '#f44336';
     productSection.appendChild(noProduct);
   }
-  
   panel.appendChild(productSection);
   
   // Role information
@@ -2970,7 +2517,6 @@ function showAPIDetails() {
     noMessages.style.color = '#f44336';
     historySection.appendChild(noMessages);
   }
-  
   panel.appendChild(historySection);
   
   // Full prompt that would be sent to the API
@@ -3033,7 +2579,6 @@ ${chatData.isSeller ? 'Act as the seller.' : 'Act as the buyer.'}`;
       messages: chatData.messages,
       systemPrompt: systemPrompt
     };
-    
     navigator.clipboard.writeText(JSON.stringify(dataToCopy, null, 2));
     copyButton.textContent = 'Copied!';
     setTimeout(() => {
