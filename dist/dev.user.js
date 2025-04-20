@@ -7,6 +7,7 @@
 // @match        https://www.messenger.com/*
 // @match        https://www.facebook.com/marketplace/inbox*
 // @grant        none
+// @run-at       document-idle
 // ==/UserScript==
 
 (function() {
@@ -99,6 +100,7 @@ const CONFIG = {
       messageInput: 'div[contenteditable="true"][role="textbox"], div[aria-label="Message"], p.xat24cr.xdj266r',
       sendButton: 'span.x3nfvp2:nth-child(3), div[aria-label="Send"], div[aria-label*="enviar"][role="button"]',
       scrollbar: [
+        '.x1uipg7g > div:nth-child(1) > div:nth-child(1)',
         'div[style*="overflow-y: auto"][style*="height"]',
         'div[style*="overflow: auto"][style*="height"]',
         'div.x4k7w5x > div[style*="height"]',
@@ -106,7 +108,6 @@ const CONFIG = {
       ]
         }
       },
-      
   // Logging level
   debug: true,
   
@@ -616,9 +617,12 @@ class ChatManager {
       
       // Get the message container
       const messagesWrapper = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageWrapper);
-      
-      // Scroll to load older messages
-      await domUtils.scrollToTop(messagesWrapper);
+      const scrollContainer = domUtils.findElement(
+        CONFIG.selectors.activeChat.scrollbar,
+        messagesWrapper
+      ) || messagesWrapper;
+      await domUtils.scrollToTop(scrollContainer);
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
       
       // Get the full chat history
       const messages = await this.extractChatHistory(messagesWrapper);
@@ -961,7 +965,7 @@ class ChatManager {
     return /^(Today|Yesterday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Hoy|Ayer|Lunes|Martes|Miércoles|Jueves|Viernes|Sábado|Domingo)$/i.test(text) ||
            /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(text) ||
            /^\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(\w*)\s+\d{2,4}$/i.test(text) ||
-           /^\d{1,2}\s+(Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Sep|Oct|Nov|Dic)(\w*)\s+\d{2,4})?$/i.test(text);
+           /^\d{1,2}\s+(Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Sep|Oct|Nov|Dic)(\w*)(?:\s+\d{2,4})?$/i.test(text);
   }
 
   // Determines if an element is a chat divider (corrected implementation)
@@ -1140,8 +1144,13 @@ class ChatManager {
   async handleAutoMode(context) {
     try {
       const wrapper = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageWrapper);
+      const scrollContainer = domUtils.findElement(
+        CONFIG.selectors.activeChat.scrollbar,
+        wrapper
+      ) || wrapper;
       // load the entire history
-      await domUtils.scrollToTop(wrapper);
+      await domUtils.scrollToTop(scrollContainer);
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
       wrapper.scrollTop = wrapper.scrollHeight;
       await this.delay(500);
 
@@ -1535,7 +1544,7 @@ class ChatManager {
     }
     
     // Get last 10 messages max to avoid overloading the context
-    const recentMessages = context.messages.slice(-10);
+    const recentMessages = context.messages;
     
     // Create prompt for AI
     const prompt = [
@@ -2324,7 +2333,11 @@ function initialize() {
 }
 
 // Run on load
-initialize();
+if (document.readyState !== 'loading') {
+  initialize();
+} else {
+  document.addEventListener('DOMContentLoaded', initialize);
+}
 
 // ----- jQuery-like VERSION FOR :contains() SELECTOR -----
 // This function is necessary for selectors using :contains()
@@ -2601,7 +2614,7 @@ ChatManager.prototype.generateAIResponse = function(context, customConfig = null
   }
   
   // Get last 10 messages max to avoid overloading the context
-  const recentMessages = context.messages.slice(-10);
+  const recentMessages = context.messages;
   
   // NEW: Detailed log of the data being sent
   logger.log('--------- SENDING DATA TO THE API ---------');
