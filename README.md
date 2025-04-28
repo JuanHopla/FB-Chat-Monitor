@@ -1,28 +1,34 @@
 # FB-Chat-Monitor
 
-Monitors and extracts chat data from Facebook Messenger and Facebook Marketplace in real-time using MutationObserver.
+A tool to extract chat data from Messenger and Facebook Marketplace in real time by observing the DOM.
 
 ## Features
 
-- Automatic detection of unread messages in Facebook Marketplace
-- Processing and organization of conversations by user
-- Extraction of product information in conversations
-- Automated responses based on text patterns
-- Debugging interface accessible via browser console
+- Automatic monitoring of unread chats on Facebook Marketplace
+- Message processing with the OpenAI API for automatic responses
+- Operation modes: automatic, manual, and generation
+- User interface for control and configuration
+- Conversation and response logging
 
-## Project Structure
-- main.user.js         // Main script with Tampermonkey metadata
-- src/
-   - config.js         // Constants and selectors
-   - fbMarketplaceScraper.js // Facebook Marketplace specific scraping functions
-   - messengerScraper.js // Messenger specific scraping functions  
-   - observer.js       // Functions to initialize DOM observers
-   - utils.js          // Helper functions
-- build/
-   - bundle.user.js    // (Optional) Generated bundle for installation
+## Overview
 
-## Features
-- Real-time chat monitoring and extraction
-- Works with both Facebook Messenger and Facebook Marketplace
-- Modular architecture for easy maintenance and extension
-- Robust message sender detection
+This project provides a solution for interacting with messages on Facebook Marketplace. The code is distributed only to authorized collaborators and is not publicly available in its full form.
+
+## Usage
+
+To use this tool, you will need to:
+
+1. Receive access to the code from the primary developer  
+2. Configure an OpenAI API key  
+3. Follow the installation instructions provided directly  
+
+## Important Notes
+
+- This project is for personal and educational use only  
+- Respect Facebook’s terms of service  
+- No public support is provided  
+- The full source code is restricted to authorized collaborators  
+
+## Credits
+
+Developed by JuanHopla
