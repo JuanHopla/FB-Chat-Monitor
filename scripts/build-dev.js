@@ -83,12 +83,10 @@ async function buildDevScript() {
     devScript += '(function() {\n';
     devScript += '\'use strict\';\n\n';
 
-    // Add notification function to show when script loads
-    devScript += '// Log script loaded message\n';
+    // Log script loaded
     devScript += 'console.log(\'[FB-Chat-Monitor] Script loaded 🚀\');\n\n';
     
-    // Add visible notification for script loading
-    devScript += '// Add visual notification to confirm script is loaded\n';
+    // Show visual notification when script loads
     devScript += 'const notifyScriptLoaded = () => {\n';
     devScript += '  const div = document.createElement(\'div\');\n';
     devScript += '  div.style.position = \'fixed\';\n';
@@ -106,12 +104,10 @@ async function buildDevScript() {
     devScript += '};\n\n';
     devScript += 'setTimeout(notifyScriptLoaded, 1000);\n\n';
 
-    // Add development flag
-    devScript += '// Development mode enabled\n';
+    // Enable development mode
     devScript += 'const DEBUG_MODE = true;\n\n';
     
-    // Add environment variables
-    devScript += '// Environment variables loaded from .env\n';
+    // Environment variables
     devScript += 'const ENV = {\n';
     devScript += `  OPENAI_API_KEY: localStorage.getItem('FB_CHAT_MONITOR_OPENAI_KEY') || "${envVars.OPENAI_API_KEY || ''}",\n`;
     devScript += `  AI_MODEL: localStorage.getItem('FB_CHAT_MONITOR_AI_MODEL') || "${envVars.AI_MODEL || 'gpt-3.5-turbo'}",\n`;
@@ -122,8 +118,7 @@ async function buildDevScript() {
     devScript += `  LOG_LEVEL: "${envVars.LOG_LEVEL || 'INFO'}"\n`;
     devScript += '};\n\n';
     
-    // Add AI Config directly after ENV
-    devScript += '// AI Configuration\n';
+    // AI Configuration
     devScript += 'const AI_CONFIG = {\n';
     devScript += '  enabled: !!ENV.OPENAI_API_KEY,\n';
     devScript += '  apiKey: ENV.OPENAI_API_KEY,\n';
@@ -133,8 +128,7 @@ async function buildDevScript() {
     devScript += '  maxTokens: ENV.AI_MAX_TOKENS\n';
     devScript += '};\n\n';
     
-    // Add CONFIG module (always first)
-    devScript += '// ----- CONFIG MODULE -----\n';
+    // ----- CONFIG MODULE -----
     const modifiedConfigCode = configCode
       .replace(/import.*envLoader.*/, '')
       .replace(/const ENV = loadEnv\(\);/, '// ENV already defined above')
@@ -146,25 +140,20 @@ async function buildDevScript() {
     
     devScript += modifiedConfigCode + '\n\n';
     
-    // Add UTILS module - remove duplicates
-    devScript += '// ----- UTILS MODULE -----\n';
+    // ----- UTILS MODULE -----
     devScript += removeDuplicates(utilsCode) + '\n\n';
     
-    // Add AI SERVICE module - remove duplicates
-    devScript += '// ----- AI SERVICE MODULE -----\n';
+    // ----- AI SERVICE MODULE -----
     devScript += removeDuplicates(aiServiceCode) + '\n\n';
     
-    // Add CHAT MANAGER module - remove duplicates
-    devScript += '// ----- CHAT MANAGER MODULE -----\n';
+    // ----- CHAT MANAGER MODULE -----
     devScript += removeDuplicates(chatManagerCode) + '\n\n';
     
-    // Add MAIN module - remove duplicates
-    devScript += '// ----- MAIN MODULE -----\n';
+    // ----- MAIN MODULE -----
     devScript += removeDuplicates(indexCode) + '\n\n';
     
-    // Add proper FB_CHAT_MONITOR API exposure
-    devScript += '// ----- API EXPOSURE -----\n';
-    devScript += '// Definir el objeto de monitoreo en el ámbito global de manera definitiva\n';
+    // ----- API EXPOSURE -----
+    // Define the monitoring object permanently in the global scope
     devScript += 'const FB_CHAT_MONITOR_API = {\n';
     devScript += '  chatManager,\n';
     devScript += '  config: CONFIG,\n';
@@ -173,15 +162,14 @@ async function buildDevScript() {
     devScript += '  setLogLevel: (level) => {\n';
     devScript += '    console.log(`[FB-Chat-Monitor] Log level set to ${level}`);\n';
     devScript += '  },\n\n';
-    devScript += '  // Configuración de IA\n';
+    devScript += '  // AI configuration\n';
     devScript += '  configureAI(apiKey, model = \'gpt-3.5-turbo\') {\n';
     devScript += '    localStorage.setItem(\'FB_CHAT_MONITOR_OPENAI_KEY\', apiKey);\n';
     devScript += '    localStorage.setItem(\'FB_CHAT_MONITOR_AI_MODEL\', model);\n';
     devScript += '    AI_CONFIG.apiKey = apiKey;\n';
     devScript += '    AI_CONFIG.model = model;\n';
     devScript += '    AI_CONFIG.enabled = true;\n';
-    devScript += '    console.log(`[FB-Chat-Monitor] IA configurada con modelo: ${model}`);\n\n';
-    devScript += '    // Agregar notificación visual\n';
+    devScript += '    console.log(`[FB-Chat-Monitor] AI configured with model: ${model}`);\n\n';
     devScript += '    const div = document.createElement(\'div\');\n';
     devScript += '    div.style.position = \'fixed\';\n';
     devScript += '    div.style.bottom = \'20px\';\n';
@@ -200,10 +188,10 @@ async function buildDevScript() {
     devScript += '  },\n\n';
     devScript += '  disableAI() {\n';
     devScript += '    AI_CONFIG.enabled = false;\n';
-    devScript += '    console.log(\'[FB-Chat-Monitor] Respuestas de IA desactivadas\');\n';
+    devScript += '    console.log(\'[FB-Chat-Monitor] AI responses disabled\');\n';
     devScript += '    return { success: true, message: "AI responses disabled" };\n';
     devScript += '  },\n\n';
-    devScript += '  // Ver estado actual de la IA\n';
+    devScript += '  // Get current AI status\n';
     devScript += '  getAIStatus() {\n';
     devScript += '    return {\n';
     devScript += '      enabled: AI_CONFIG.enabled,\n';
@@ -211,7 +199,7 @@ async function buildDevScript() {
     devScript += '      hasApiKey: !!AI_CONFIG.apiKey\n';
     devScript += '    };\n';
     devScript += '  },\n\n';
-    devScript += '  // Método de diagnóstico\n';
+    devScript += '  // Diagnostic method\n';
     devScript += '  debug() {\n';
     devScript += '    console.log(\'[FB-Chat-Monitor] Debug information:\');\n';
     devScript += '    console.log(\'- Script loaded: Yes\');\n';
@@ -221,11 +209,11 @@ async function buildDevScript() {
     devScript += '    return "FB Chat Monitor is working! You can use this API.";\n';
     devScript += '  }\n';
     devScript += '};\n\n';
-    devScript += '// Asegurar que el objeto se exponga correctamente en el ámbito global\n';
+    // Ensure correct exposure in global scope
     devScript += 'window.FB_CHAT_MONITOR = FB_CHAT_MONITOR_API;\n\n';
-    devScript += '// Método alternativo de exposición del API para mayor compatibilidad\n';
+    // Alternative API exposure for compatibility
     devScript += 'document.FB_CHAT_MONITOR = FB_CHAT_MONITOR_API;\n\n';
-    devScript += '// Auto-verificación tras la carga\n';
+    // Auto-verification after load
     devScript += 'setTimeout(() => {\n';
     devScript += '  if (window.FB_CHAT_MONITOR) {\n';
     devScript += '    console.log(\'[FB-Chat-Monitor] API successfully exposed to global scope\');\n';
@@ -234,13 +222,12 @@ async function buildDevScript() {
     devScript += '  }\n';
     devScript += '}, 2000);\n\n';
     
-    // Initialize
-    devScript += '// Initialize based on current URL\n';
+    // Initialize based on current URL
     devScript += 'if (window.location.href.includes(\'facebook.com/marketplace\')) {\n';
     devScript += '  // Small delay to ensure the page is loaded\n';
     devScript += '  setTimeout(runMarketplaceMonitor, 2000);\n';
     devScript += '} else if (window.location.href.includes(\'messenger.com\')) {\n';
-    devScript += '  // We\'ll focus on Marketplace for now\n';
+    devScript += '  // We’ll focus on Marketplace for now\n';
     devScript += '  console.log(\'[FB-Chat-Monitor] Messenger support coming soon!\');\n';
     devScript += '}\n\n';
     
