@@ -1,246 +1,143 @@
-/**
- * Utility functions for FB-Chat-Monitor
- * @module utils
- */
-import { CONFIG } from './config.js';
+// ----- UTILITIES -----
 
-// Log levels
-export const LOG_LEVELS = {
-  ERROR: 0,
-  INFO: 1,
-  DEBUG: 2
+// Logging system
+const logger = {
+  log(message) {
+    console.log(`[FB-Chat-Monitor] ${message}`);
+  },
+  
+  debug(message) {
+    if (CONFIG.debug) {
+      console.log(`[FB-Chat-Monitor][DEBUG] ${message}`);
+    }
+  },
+  
+  error(message) {
+    console.error(`[FB-Chat-Monitor][ERROR] ${message}`);
+  },
+  
+  notify(message, type = 'success') {
+    // Visual notification
+    const div = document.createElement('div');
+    div.style.position = 'fixed';
+    div.style.bottom = '20px';
+    div.style.right = '20px';
+    div.style.padding = '10px';
+    div.style.color = 'white';
+    div.style.borderRadius = '5px';
+    div.style.zIndex = '9999';
+    div.style.opacity = '0.9';
+    
+    if (type === 'success') {
+      div.style.backgroundColor = '#4CAF50';
+    } else if (type === 'error') {
+      div.style.backgroundColor = '#f44336';
+    } else if (type === 'warning') {
+      div.style.backgroundColor = '#ff9800';
+    } else if (type === 'info') {
+      div.style.backgroundColor = '#2196F3';
+    }
+    
+    div.textContent = message;
+    document.body.appendChild(div);
+    
+    setTimeout(() => {
+      document.body.removeChild(div);
+    }, 3000);
+  }
 };
 
-// Current log level
-let currentLogLevel = LOG_LEVELS.INFO;
-
-/**
- * Log a message with the specified level
- * @param {string} message - The message to log
- * @param {number} level - The log level (from LOG_LEVELS)
- */
-export function log(message, level = LOG_LEVELS.INFO) {
-  if (level <= currentLogLevel) {
-    const prefix = '[FB-Chat-Monitor]';
-    console.log(`${prefix} ${message}`);
-  }
-}
-
-export function logInfo(message) {
-  log(message, LOG_LEVELS.INFO);
-}
-
-export function logDebug(message) {
-  log(message, LOG_LEVELS.DEBUG);
-}
-
-export function logError(message) {
-  log(message, LOG_LEVELS.ERROR);
-}
-
-export function setLogLevel(level) {
-  currentLogLevel = level;
-}
-
-// Utility functions for selector resilience - para ser exportados y usados en toda la app
-export const SELECTOR_UTILS = {
-  // Try multiple selectors in sequence until one works
+// DOM utility
+const domUtils = {
+  // Finds an element by selector (supports multiple selectors)
   findElement(selectors, parent = document) {
-    for (const selector of selectors) {
-      try {
-        const element = parent.querySelector(selector);
-        if (element) return element;
-      } catch (e) {
-        console.warn(`Selector failed: ${selector}`, e);
+    // If it's an array of selectors, try them one by one
+    if (Array.isArray(selectors)) {
+      for (const selector of selectors) {
+        try {
+          const element = parent.querySelector(selector);
+          if (element) return element;
+        } catch (e) {
+          logger.debug(`Error with selector "${selector}": ${e.message}`);
+        }
       }
-    }
-    return null;
-  },
-  
-  // Try multiple selectors for finding all matching elements
-  findAllElements(selectors, parent = document) {
-    for (const selector of selectors) {
-      try {
-        const elements = parent.querySelectorAll(selector);
-        if (elements.length > 0) return Array.from(elements);
-      } catch (e) {
-        console.warn(`Selector failed: ${selector}`, e);
-      }
-    }
-    return [];
-  },
-  
-  // Find element by text content
-  findElementByText(text, elementType = '*', parent = document) {
-    const elements = parent.querySelectorAll(elementType);
-    for (const el of elements) {
-      if (el.textContent.includes(text)) return el;
-    }
-    return null;
-  },
-  
-  // Check if an element is unread based on multiple possible indicators
-  isUnreadChat(chatElement) {
-    // Unread indicator method 1: specific class
-    const hasUnreadIndicator = !!chatElement.querySelector('div[class*="xwnonoy"]');
-    
-    // Unread indicator method 2: text style
-    const nameSpan = chatElement.querySelector('span[dir="auto"] span > div');
-    if (nameSpan) {
-      const nameClasses = nameSpan.parentElement?.className || '';
-      const hasUnreadTextStyle = nameClasses.includes('x1s688f');
-      const hasReadTextStyle = nameClasses.includes('xk50ysn');
-      if (hasUnreadTextStyle && !hasReadTextStyle) return true;
+      return null;
     }
     
-    return hasUnreadIndicator;
+    // If it's a single selector
+    try {
+      return parent.querySelector(selectors);
+    } catch (e) {
+      logger.debug(`Error with selector "${selectors}": ${e.message}`);
+      return null;
+    }
+  },
+  
+  // Finds all elements matching a selector
+  findAllElements(selector, parent = document) {
+    try {
+      return [...parent.querySelectorAll(selector)];
+    } catch (e) {
+      logger.debug(`Error with selector "${selector}": ${e.message}`);
+      return [];
+    }
+  },
+  
+  // Waits for an element to appear in the DOM
+  waitForElement(selector, timeout = CONFIG.waitElementTimeout) {
+    return new Promise((resolve, reject) => {
+      const checkInterval = 100;
+      let elapsed = 0;
+      
+      const check = () => {
+        const element = this.findElement(selector);
+        if (element) {
+          resolve(element);
+          return;
+        }
+        
+        elapsed += checkInterval;
+        if (elapsed >= timeout) {
+          reject(new Error(`Timeout waiting for element: ${selector}`));
+          return;
+        }
+        
+        setTimeout(check, checkInterval);
+      };
+      
+      check();
+    });
+  },
+  
+  // Scrolls to the top to load older messages
+  scrollToTop(container) {
+    return new Promise((resolve) => {
+      let lastScrollHeight = container.scrollHeight;
+      let noChangeCount = 0;
+      
+      const scrollStep = () => {
+        container.scrollTop = 0; // Scroll up
+        
+        setTimeout(() => {
+          if (container.scrollHeight === lastScrollHeight) {
+            noChangeCount++;
+            if (noChangeCount >= 3) {
+              // If no changes after several attempts, assume we've reached the top
+              resolve();
+              return;
+            }
+          } else {
+            // If height changed, reset the counter
+            noChangeCount = 0;
+            lastScrollHeight = container.scrollHeight;
+          }
+          
+          scrollStep();
+        }, 300);
+      };
+      
+      scrollStep();
+    });
   }
 };
 
-// Export other utility functions...
-/**
- * Wait for an element to appear in the DOM
- * @param {string|Array} selector - CSS selector or array of selectors to try
- * @param {number} timeout - Maximum time to wait in milliseconds
- * @returns {Promise<Element>} The found element
- */
-export function waitForElement(selector, timeout = CONFIG.waitElementTimeout) {
-  return new Promise((resolve, reject) => {
-    const interval = CONFIG.waitElementCheckInterval;
-    let elapsed = 0;
-    const check = () => {
-      let el;
-      if (Array.isArray(selector)) {
-        el = SELECTOR_UTILS.findElement(selector);
-      } else {
-        el = document.querySelector(selector);
-      }
-      if (el) return resolve(el);
-      elapsed += interval;
-      if (elapsed >= timeout) return reject(`Element not found: ${selector}`);
-      setTimeout(check, interval);
-    };
-    check();
-  });
-}
-
-/**
- * Automatically scroll a container to load more content
- * @param {Element} container - The container element to scroll
- * @param {Function} callback - Function to call when scrolling is complete
- * @param {number} maxAttempts - Maximum number of scroll attempts
- */
-export function autoScroll(container, callback, maxAttempts = CONFIG.scrollAttempts) {
-  let lastScrollHeight = 0;
-  let attempts = 0;
-  
-  function scrollStep() {
-    if (attempts >= maxAttempts) {
-      logInfo('End of scroll');
-      return callback();
-    }
-    
-    const currentHeight = container.scrollHeight;
-    if (currentHeight !== lastScrollHeight) {
-      lastScrollHeight = currentHeight;
-      container.scrollTop = 0; // Scroll upward
-      attempts++;
-      setTimeout(scrollStep, CONFIG.scrollInterval);
-    } else {
-      attempts++;
-      setTimeout(scrollStep, CONFIG.scrollInterval);
-    }
-  }
-  
-  scrollStep();
-}
-
-/**
- * Format a timestamp in a user-friendly way (e.g., "8:50 AM")
- * @param {string} timestamp - ISO string or timestamp
- * @returns {string} Formatted time string
- */
-export function formatTime(timestamp) {
-  try {
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  } catch (e) {
-    return timestamp; // Return original if parsing fails
-  }
-}
-
-/**
- * Format a conversation message for console display
- * @param {object} message - Message object with sender, timestamp, content
- * @returns {string} Formatted message string
- */
-export function formatChatMessage(message) {
-  const time = formatTime(message.timestamp);
-  const sender = message.isSentByYou ? "You" : message.sender;
-  return `${sender} ${time}\n${message.content}`;
-}
-
-/**
- * Utility debugging functions
- */
-export const DEBUG = {
-  /**
-   * Show current status of monitored chats
-   */
-  showStatus(chatManager) {
-    console.group('FB-Chat-Monitor Status');
-    
-    // Show active chats
-    const chats = chatManager.getAllChats();
-    console.log(`Active chats: ${chats.length}`);
-    
-    chats.forEach(chat => {
-      console.group(`Chat: ${chat.userName} (${chat.id})`);
-      console.log(`Messages: ${chat.messageCount}`);
-      console.log(`Last activity: ${chat.lastActivity}`);
-      console.log(`Unread: ${chat.unreadMessages ? 'Yes' : 'No'}`);
-      if (chat.productInfo) {
-        console.log(`Product: ${chat.productInfo.title || 'Unknown'}`);
-      }
-      console.groupEnd();
-    });
-    
-    // Show current chat
-    if (chatManager.currentChatId) {
-      console.log(`Current chat: ${chatManager.currentChatId}`);
-    } else {
-      console.log('No current chat');
-    }
-    
-    console.groupEnd();
-  },
-  
-  /**
-   * Show messages for a specific chat
-   */
-  showMessages(chatManager, chatId) {
-    if (!chatId && chatManager.currentChatId) {
-      chatId = chatManager.currentChatId;
-    }
-    
-    if (!chatId) {
-      console.error('No chat ID provided and no current chat');
-      return;
-    }
-    
-    const messages = chatManager.getConversationHistory(chatId);
-    
-    console.group(`Messages for chat ${chatId} (${messages.length})`);
-    
-    messages.forEach((msg, index) => {
-      console.log(`[${index}] ${msg.sender} (${formatTime(msg.timestamp)}): ${msg.content}`);
-    });
-    
-    console.groupEnd();
-  }
-};
-
-// Exponer para pruebas
-if (typeof window !== 'undefined') {
-  window.FB_CHAT_DEBUG = DEBUG;
-}
