@@ -1,171 +1,125 @@
-// Configuration object with all necessary constants
-export const CONFIG = {
-  // General settings
-  scrollAttempts: 20,
-  scrollInterval: 300,
+// ----- BASIC CONFIGURATION -----
+const CONFIG = {
+  // operationMode: 'auto', 'manual', 'generate'
+  operationMode: 'manual',
+  
+  // Scan interval (ms)
+  scanInterval: 10000,
+  
+  // Maximum wait time for elements in the DOM (ms)
   waitElementTimeout: 10000,
-  waitElementCheckInterval: 100,
   
-  // Facebook Marketplace selectors
-  MARKETPLACE: {
-    // Navigation
-    navigation: {
-      // Multiple options for each selector for resilience
-      inboxLink: [
-        'a[href*="/marketplace/inbox/"]',
-        'div[role="navigation"] a[href*="marketplace"][href*="inbox"]'
-      ],
-      buyingTab: [
-        'div[role="tab"]:nth-child(3)',
-        'div[role="tab"][tabindex="0"]:not([aria-selected="true"])'
-      ],
-      sellingTab: [
-        'div[role="tab"]:nth-child(2)',
-        'div[role="tab"][aria-selected="true"]'
-      ]
-    },
-    
-    // Chat list 
+  // OpenAI API
+  AI: {
+    enabled: false,
+    apiKey: localStorage.getItem('FB_CHAT_MONITOR_OPENAI_KEY') || "",
+    model: localStorage.getItem('FB_CHAT_MONITOR_AI_MODEL') || "gpt-3.5-turbo",
+    endpoint: "https://api.openai.com/v1/chat/completions",
+    temperature: parseFloat(localStorage.getItem('FB_CHAT_MONITOR_AI_TEMP') || "0.7"),
+    maxTokens: parseInt(localStorage.getItem('FB_CHAT_MONITOR_AI_MAX_TOKENS') || "150")
+  },
+  
+  // DOM selectors for Marketplace
+  selectors: {
+    // Chat list
     chatList: {
-      container: [
-        'div[role="main"]',
-        'div[class*="x78zum5"][class*="xdt5ytf"]',
-        'div.x1yztbdb.xw7yly9.xh8yej3 > div > div > div > div > div'
-      ],
-      chatItem: [
-        'div[role="button"][tabindex="0"]',
-        'div[role="row"]',
-        'div[class*="x1n2onr6"]'
-      ],
-      unreadIndicator: [
-        'div[class*="xwnonoy"]',
-        'span[dir="auto"] span > div[class*="x1s688f"]',
-        'div[aria-label*="unread"]'
-      ],
-      chatUserName: [
-        'span[dir="auto"][class*="x1lliihq"]',
-        'span[dir="auto"] span > div'
-      ],
-      lastMessagePreview: [
-        'span[class*="x1s688f"]',
-        'span[dir="auto"]:not([class*="x1lliihq"])'
-      ]
+      container: 'div[class*="x78zum5"][class*="xdt5ytf"], div[role="main"]',
+      chatItem: 'a[href*="/marketplace/t/"][role="link"]',
+      unreadIndicator: 'span[class*="x6s0dn4"][data-visualcompletion="ignore"]',
+      // Updated selectors for usernames with a filtering function
+      chatUserName: {
+        selector: [
+          'span.x1lliihq.x193iq5w.x6ikm8r.x10wlt62.xlyipyv.xuxw1ft:not(.x1j85h84)', 
+          'span[dir="auto"][class*="x1lliihq"]:not([class*="x1j85h84"])'
+        ],
+        filter: (elements) => {
+          return Array.from(elements).filter(elem => {
+            const text = elem.innerText || "";
+            return text.includes("·") && !text.includes(":");
+          });
+        }
+      },
+      // Updated selectors for last message previews with a filtering function
+      timestamp: 'span[aria-hidden="true"]',
+      // Updated selectors for previews with a filtering function
+      messagePreview: {
+        selector: 'span[dir="auto"]:not([class*="x1lliihq"])',
+        filter: (elements) => {
+          return Array.from(elements).filter(elem => {
+            const text = elem.innerText || "";
+            // Exclude timestamps (patterns like "3m", "2h", "1d")
+            const isTimestamp = /^\s*\d+[smhdwy]\s*$/i.test(text);
+            // Exclude Marketplace notifications
+            const isMarketplaceNotification = text.includes("Marketplace ·");
+            // Keep elements that seem like real messages
+            const isMessage = text.includes(":") || text.length > 8;
+            
+            return !isTimestamp && !isMarketplaceNotification && isMessage;
+          });
+        }
+      }
     },
     
-    // Active chat window
+    // Active chat
     activeChat: {
-      container: [
-        'div.x1ey2m1c.xds687c.xixxii4.x1vjfegm',
-        'div[role="main"] > div > div > div:last-child'
+      container: 'div.x1ey2m1c.xds687c.xixxii4.x1vjfegm, div[role="main"] > div > div > div:last-child',
+      // Improved message selectors
+      messageWrapper: 'div.x4k7w5x > div > div > div, div[role="main"] > div > div > div:last-child > div',
+      messageRow: 'div[role="row"] div[dir="auto"], div[role="row"] span.x1lliihq > div[dir="auto"]',
+      messageContent: 'div[dir="auto"], span[class*="x1lliihq"]',
+      messageTimestamp: 'span[class*="x4k7w5x"] span[class*="x1lliihq"], span[class*="x1lliihq"]:last-child',
+      // Role detectors (seller/buyer)
+      sellerIndicators: [
+        'div[aria-label="Mark as pending"]',
+        'span:contains("Mark as pending")',
+        'div[aria-label="Create plan"]',
+        'div[aria-label="Mark as available"]',
+        'div[aria-label="Mark as sold"]'
       ],
-      messagesWrapper: [
-        'div.x1ey2m1c.x78zum5.x164qtfw.xixxii4.x1vjfegm',
-        'div[role="main"] > div > div > div:last-child > div'
+      buyerIndicators: [
+        'a[aria-label="See details"]',
+        'span:contains("See details")'
       ],
-      messageRow: [
-        'div[role="row"]',
-        'div[class*="x1n2onr6"]'
-      ],
-      messageContent: [
-        'div[dir="auto"]',
-        'span[class*="x1lliihq"]'
-      ],
-      messageTimestamp: [
-        'span[class*="x4k7w5x"] span[class*="x1lliihq"]',
-        'span[class*="x1lliihq"]:last-child'
-      ],
-      
-      // Product information
-      productInfo: [
-        'div[class*="x1sliqq"]',
-        'div[role="main"] > div > div > div:first-child'
-      ],
-      productTitle: [
-        'span[class*="x1lliihq"]',
-        'div[role="heading"]'
-      ],
-      productPrice: [
-        'span[class*="x193iq5w"]',
-        'span:not([class*="x1lliihq"]):not([class*="xjbqb8w"])'
-      ],
-      productImage: [
-        'img[class*="x1rg5ohu"]',
-        'img[alt]'
-      ],
-      
-      // Input area
-      messageInput: [
-        'div[contenteditable="true"][role="textbox"]',
-        'div[aria-label*="Message"]'
-      ],
-      sendButton: [
-        'div[aria-label="Send"]',
-        'div[role="button"]:has(svg)'
+      productLink: 'a[href*="/marketplace/item/"]',
+      productInfo: 'div[class*="x1sliqq"], div[role="main"] > div > div > div:first-child',
+      // Input and send - UPDATED with specific selector
+      messageInput: 'div[contenteditable="true"][role="textbox"], div[aria-label="Message"], p.xat24cr.xdj266r',
+      sendButton: 'span.x3nfvp2:nth-child(3), div[aria-label="Send"], div[aria-label*="enviar"][role="button"]',
+      scrollbar: [
+        '.x1uipg7g > div:nth-child(1) > div:nth-child(1)',
+        'div[style*="overflow-y: auto"][style*="height"]',
+        'div[style*="overflow: auto"][style*="height"]',
+        'div.x4k7w5x > div[style*="height"]',
+        'div[role="main"] div.x1n2onr6[style*="height"]'
       ]
     }
   },
+  // Logging level
+  debug: true,
   
-  // Messenger selectors - For compatibility
-  MESSENGER: {
-    // Placeholder for future Messenger-specific selectors
-  }
-};
+  // Enable debug visualization in interface – set to false to disable visual effects
+  visualDebug: false,
 
-// Utility functions for selector resilience - to be used in our DOM interactions
-export const SELECTOR_UTILS = {
-  // Try multiple selectors in sequence until one works
-  findElement(selectors, parent = document) {
-    for (const selector of selectors) {
-      try {
-        const element = parent.querySelector(selector);
-        if (element) return element;
-      } catch (e) {
-        console.warn(`Selector failed: ${selector}`, e);
-      }
-    }
-    return null;
+  // Human simulation timing configuration
+  humanSimulation: {
+    // Base typing speed (ms per character)
+    baseTypingSpeed: 70,
+    // Random variation in typing speed (ms)
+    typingVariation: 20,
+    // Minimum wait time before responding (ms)
+    minResponseDelay: 1500,
+    // Maximum wait time before responding (ms)
+    maxResponseDelay: 4000
   },
-  
-  // Try multiple selectors for finding all matching elements
-  findAllElements(selectors, parent = document) {
-    for (const selector of selectors) {
-      try {
-        const elements = parent.querySelectorAll(selector);
-        if (elements.length > 0) return Array.from(elements);
-      } catch (e) {
-        console.warn(`Selector failed: ${selector}`, e);
-      }
-    }
-    return [];
-  },
-  
-  // Find element by text content
-  findElementByText(text, elementType = '*', parent = document) {
-    const elements = parent.querySelectorAll(elementType);
-    for (const el of elements) {
-      if (el.textContent.includes(text)) return el;
-    }
-    return null;
-  },
-  
-  // Check if an element is unread based on multiple possible indicators
-  isUnreadChat(chatElement) {
-    // Unread indicator method 1: specific class
-    const hasUnreadIndicator = !!chatElement.querySelector('div[class*="xwnonoy"]');
-    
-    // Unread indicator method 2: text style
-    const nameSpan = chatElement.querySelector('span[dir="auto"] span > div');
-    if (nameSpan) {
-      const nameClasses = nameSpan.parentElement?.className || '';
-      const hasUnreadTextStyle = nameClasses.includes('x1s688f');
-      const hasReadTextStyle = nameClasses.includes('xk50ysn');
-      if (hasUnreadTextStyle && !hasReadTextStyle) return true;
-    }
-    
-    return hasUnreadIndicator;
-  }
-};
 
-// For backward compatibility
-export const FB_MARKETPLACE_SELECTORS = CONFIG.MARKETPLACE;
-export const MESSENGER_SELECTORS = CONFIG.MESSENGER;
+  // Conversation logging
+  logging: {
+    // Whether to save conversations
+    saveConversations: true,
+    // Maximum number of conversations to save
+    maxStoredConversations: 50
+  },
+
+  // Manual mode timeout duration (ms)
+  manualModeTimeout: 60000
+};
