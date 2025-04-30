@@ -1,6 +1,5 @@
 // ----- CHAT MANAGEMENT -----
 
-
 // Class to manage the chat queue and processing
 class ChatManager {
   constructor() {
@@ -305,7 +304,9 @@ class ChatManager {
     }
   }
   
-  // Processes the current chat
+  /**
+   * Process current chat with enhanced data extraction
+   */
   async processCurrentChat() {
     if (!this.currentChatId) {
       logger.error('No active chat to process');
@@ -322,13 +323,13 @@ class ChatManager {
       const isSeller = this.determineIfSeller(chatContainer);
       logger.log(`Role in chat: ${isSeller ? 'seller' : 'buyer'}`);
       
-      // Extract product link (only for sellers)
-      let productLink = null;
-      if (isSeller) {
-        productLink = this.extractProductLink(chatContainer);
-        if (productLink) {
-          logger.log(`Product link: ${productLink}`);
-        }
+      // Extract product ID and details using the new extractor
+      const productId = productExtractor.extractProductIdFromCurrentChat();
+      let productDetails = null;
+      
+      if (productId) {
+        logger.log(`Product ID found: ${productId}`);
+        productDetails = await productExtractor.getProductDetails(productId);
       }
       
       // Get the message container
@@ -337,55 +338,268 @@ class ChatManager {
         CONFIG.selectors.activeChat.scrollbar,
         messagesWrapper
       ) || messagesWrapper;
+      
+      // Scroll to load full history
       await domUtils.scrollToTop(scrollContainer);
       scrollContainer.scrollTop = scrollContainer.scrollHeight;
       
-      // Get the full chat history
+      // Get the full chat history with enhanced content extraction
       const messages = await this.extractChatHistory(messagesWrapper);
       logger.log(`Extracted ${messages.length} messages from chat`);
       
       // Store in history
       this.chatHistory.set(this.currentChatId, {
         messages,
-        productLink,
+        productDetails,
         isSeller,
         lastUpdated: new Date()
       });
       
       // Generate response based on configured mode
-      await this.handleResponse(messages, productLink, isSeller);
+      const context = {
+        chatId: this.currentChatId,
+        role: isSeller ? 'seller' : 'buyer',
+        messages,
+        productDetails
+      };
+      
+      await this.handleResponse(context);
       
     } catch (error) {
       logger.error(`Error processing chat: ${error.message}`);
     }
   }
-  
-  // Determines if we are the seller in this chat using the new indicators
-  determineIfSeller(chatContainer) {
-    try {
-      // Check seller indicators
-      for (const selector of CONFIG.selectors.activeChat.sellerIndicators) {
-        if (domUtils.findElement(selector, chatContainer)) {
-          logger.debug('Role detected: SELLER');
-          return true;
+
+  /**
+   * Extract full chat history with rich content
+   * @param {HTMLElement} messagesWrapper - Message container
+   * @returns {Array} Array of processed messages
+   */
+  async extractChatHistory(messagesWrapper) {
+    logger.debug('Starting enhanced chat history extraction...');
+    
+    // Ensure the container is fully loaded
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    // Use existing code for message element detection
+    // ...existing code...
+    
+    const messages = [];
+    
+    // Find all message elements
+    const messageElements = domUtils.findAllElements(CONFIG.selectors.activeChat.messageRow, messagesWrapper);
+    
+    // Process each message with enhanced content extraction
+    for (let i = 0; i < messageElements.length; i++) {
+      try {
+        const msgElement = messageElements[i];
+        const msgText = msgElement.innerText || '';
+        
+        // Skip empty elements
+        if (!msgText) continue;
+        
+        // Check if it's a divider
+        if (this.isDividerElement(msgElement)) continue;
+        
+        // Extract basic content
+        let contentElement = this.findMessageContentElement(msgElement);
+        let content = contentElement ? contentElement.innerText.trim() : msgText.trim();
+        
+        // Skip system messages
+        if (this.isSystemMessage(content)) continue;
+        
+        // Determine sender
+        const sentByUs = this.isMessageSentByUs(msgElement);
+        
+        // Extract timestamp
+        let timestamp = new Date().toISOString();
+        const timestampElement = this.findTimestampElement(msgElement);
+        if (timestampElement) {
+          timestamp = timestampElement.getAttribute('title') || 
+                     timestampElement.getAttribute('aria-label') || 
+                     timestamp;
         }
+        
+        // Extract rich content
+        const richContent = {
+          text: content,
+          images: this.extractImageURLs(msgElement),
+          audio: this.extractAudioURLs(msgElement),
+          location: this.extractLocationData(msgElement),
+          attachments: this.extractAttachmentInfo(msgElement)
+        };
+        
+        // Add the processed message
+        messages.push({
+          content: richContent,
+          sentByUs,
+          timestamp,
+          sender: sentByUs ? 'You' : 'Other',
+          isSentByYou: sentByUs
+        });
+        
+      } catch (err) {
+        logger.error(`Error processing message element: ${err.message}`);
       }
-      
-      // Check buyer indicators
-      for (const selector of CONFIG.selectors.activeChat.buyerIndicators) {
-        if (domUtils.findElement(selector, chatContainer)) {
-          logger.debug('Role detected: BUYER');
-          return false;
-        }
-      }
-      
-      // If no clear indicators, use the old heuristic
-      logger.debug('No clear role indicators found, using alternative heuristic');
-      return false;
-    } catch (error) {
-      logger.error(`Error determining role: ${error.message}`);
-      return false;
     }
+    
+    return messages;
+  }
+
+  /**
+   * Find message content element
+   * @param {HTMLElement} messageElement - Message element to search in
+   * @returns {HTMLElement|null} Content element or null
+   */
+  findMessageContentElement(messageElement) {
+    // Try multiple selectors for content
+    const contentSelectors = Array.isArray(CONFIG.selectors.activeChat.messageContent) 
+      ? CONFIG.selectors.activeChat.messageContent 
+      : [CONFIG.selectors.activeChat.messageContent];
+    
+    for (const selector of contentSelectors) {
+      const element = messageElement.querySelector(selector);
+      if (element) return element;
+    }
+    
+    return null;
+  }
+
+  /**
+   * Find timestamp element
+   * @param {HTMLElement} messageElement - Message element
+   * @returns {HTMLElement|null} Timestamp element or null
+   */
+  findTimestampElement(messageElement) {
+    // Try multiple selectors for timestamp
+    const timestampSelectors = Array.isArray(CONFIG.selectors.activeChat.messageTimestamp) 
+      ? CONFIG.selectors.activeChat.messageTimestamp 
+      : [CONFIG.selectors.activeChat.messageTimestamp];
+    
+    for (const selector of timestampSelectors) {
+      const element = messageElement.querySelector(selector);
+      if (element) return element;
+    }
+    
+    return null;
+  }
+
+  /**
+   * Extract image URLs from a message
+   * @param {HTMLElement} messageElement - Message element
+   * @returns {Array} Array of image URLs
+   */
+  extractImageURLs(messageElement) {
+    const images = [];
+    const imgElements = messageElement.querySelectorAll('img:not(.emoji):not(.sticker)');
+    
+    imgElements.forEach(img => {
+      // Filter out avatars and small icons
+      if (img.offsetWidth > 50 && img.offsetHeight > 50) {
+        const highResSrc = img.getAttribute('data-large-preview') || 
+                         img.getAttribute('data-full-size') || 
+                         img.src.replace(/\/[sc]\d+x\d+\//, '/');
+        images.push(highResSrc);
+      }
+    });
+    
+    return images;
+  }
+
+  /**
+   * Extract audio URLs from a message
+   * @param {HTMLElement} messageElement - Message element
+   * @returns {Array} Array of audio URLs
+   */
+  extractAudioURLs(messageElement) {
+    const audioURLs = [];
+    const audioElements = messageElement.querySelectorAll('audio, [data-audio-uri]');
+    
+    audioElements.forEach(audio => {
+      if (audio.tagName === 'AUDIO') {
+        const source = audio.querySelector('source');
+        if (source && source.src) audioURLs.push(source.src);
+        else if (audio.src) audioURLs.push(audio.src);
+      } else {
+        const audioURI = audio.getAttribute('data-audio-uri');
+        if (audioURI) audioURLs.push(audioURI);
+      }
+    });
+    
+    return audioURLs;
+  }
+
+  /**
+   * Extract location data from a message
+   * @param {HTMLElement} messageElement - Message element
+   * @returns {Object|null} Location data or null
+   */
+  extractLocationData(messageElement) {
+    const locationContainers = messageElement.querySelectorAll('.location-attachment, [data-geo]');
+    if (locationContainers.length === 0) return null;
+    
+    const locationData = {};
+    
+    for (const container of locationContainers) {
+      // Place name
+      const nameEl = container.querySelector('.location-name');
+      if (nameEl) locationData.placeName = nameEl.textContent.trim();
+      
+      // Coordinates
+      const geoData = container.getAttribute('data-geo');
+      if (geoData) {
+        try {
+          const geo = JSON.parse(geoData);
+          locationData.latitude = geo.latitude;
+          locationData.longitude = geo.longitude;
+        } catch (e) {
+          logger.error('Error parsing location data', e);
+        }
+      }
+    }
+    
+    return Object.keys(locationData).length > 0 ? locationData : null;
+  }
+
+  /**
+   * Extract attachment information
+   * @param {HTMLElement} messageElement - Message element
+   * @returns {Array} Array of attachment objects
+   */
+  extractAttachmentInfo(messageElement) {
+    const attachments = [];
+    const attachmentElements = messageElement.querySelectorAll('[data-attachment], [role="button"][aria-label*="file"]');
+    
+    attachmentElements.forEach(element => {
+      try {
+        const label = element.getAttribute('aria-label') || '';
+        const fileType = this.determineFileType(label);
+        
+        attachments.push({
+          type: fileType,
+          name: label.replace('file', '').trim(),
+          url: element.getAttribute('href') || ''
+        });
+      } catch (e) {
+        // Ignore errors for individual attachments
+      }
+    });
+    
+    return attachments;
+  }
+  
+  /**
+   * Determine file type from label
+   * @param {string} label - Attachment label
+   * @returns {string} File type
+   */
+  determineFileType(label) {
+    label = label.toLowerCase();
+    if (label.includes('.pdf')) return 'pdf';
+    if (label.includes('.doc') || label.includes('.word')) return 'document';
+    if (label.includes('.xls') || label.includes('.excel')) return 'spreadsheet';
+    if (label.includes('.zip') || label.includes('.rar')) return 'archive';
+    return 'file';
   }
   
   // Extracts the product link
@@ -622,69 +836,39 @@ class ChatManager {
     }
   }
   
-  // Determines if a message is mine based on position and style
-  determineIfMessageIsMine(element) {
+  /**
+   * Determines if we are the seller in this chat using the new indicators
+   */
+  determineIfSeller(chatContainer) {
     try {
-      // Check horizontal alignment
-      const rect = element.getBoundingClientRect();
-      const parentRect = element.parentElement?.getBoundingClientRect() || document.body.getBoundingClientRect();
-      
-      // If it's closer to the right edge than the left, it's probably ours
-      if (parentRect.right - rect.right < rect.left - parentRect.left) {
-        return true;
+      // Check seller indicators
+      for (const selector of CONFIG.selectors.activeChat.sellerIndicators) {
+        if (domUtils.findElement(selector, chatContainer)) {
+          logger.debug('Role detected: SELLER');
+          return true;
+        }
       }
       
-      // Check common classes for own messages on Facebook
-      const classes = element.className || '';
-      if (classes.includes('x1q0g3np') || classes.includes('x78zum5')) {
-        return true;
+      // Check buyer indicators
+      for (const selector of CONFIG.selectors.activeChat.buyerIndicators) {
+        if (domUtils.findElement(selector, chatContainer)) {
+          logger.debug('Role detected: BUYER');
+          return false;
+        }
       }
       
-      // Check if it's aligned to the right by style
-      const style = window.getComputedStyle(element);
-      if (style.textAlign === 'right' || style.alignSelf === 'flex-end') {
-        return true;
-      }
-      
+      // If no clear indicators, use the old heuristic
+      logger.debug('No clear role indicators found, using alternative heuristic');
       return false;
     } catch (error) {
-      logger.error(`Error determining if message is mine: ${error.message}`);
-      return false; // By default, assume it's not ours
+      logger.error(`Error determining role: ${error.message}`);
+      return false;
     }
   }
   
-  // Detects if an element looks like a UI control and not a message
-  looksLikeUIControl(element) {
-    // Check typical control attributes
-    if (element.hasAttribute('aria-label') || 
-        element.hasAttribute('aria-disabled') || 
-        element.hasAttribute('aria-selected')) {
-      return true;
-    }
-    
-    // Check if it has interactive functions
-    if (element.onclick || 
-        element.getAttribute('role') === 'button' || 
-        element.getAttribute('role') === 'menuitem' ||
-        element.getAttribute('role') === 'tab') {
-      return true;
-    }
-    
-    // Check typical UI control text
-    const text = element.innerText || '';
-    return /^(Send|Like|React|Reply|More|Enviar|Me gusta|Más)$/i.test(text);
-  }
-  
-  // Checks if a text looks like a date or a separator
-  looksLikeDate(text) {
-    // Common date patterns
-    return /^(Today|Yesterday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Hoy|Ayer|Lunes|Martes|Miércoles|Jueves|Viernes|Sábado|Domingo)$/i.test(text) ||
-           /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(text) ||
-           /^\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(\w*)\s+\d{2,4}$/i.test(text) ||
-           /^\d{1,2}\s+(Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Sep|Oct|Nov|Dic)(\w*)(?:\s+\d{2,4})?$/i.test(text);
-  }
-
-  // Determines if an element is a chat divider (corrected implementation)
+  /**
+   * Determines if an element is a divider (date, separator, etc.)
+   */
   isDividerElement(element) {
     try {
       // Detailed log for debugging
@@ -724,7 +908,6 @@ class ChatManager {
         return true;
       }
       
-      // IMPORTANT: For this specific bug, temporarily mark as NOT divider all elements
       return false;
     } catch (error) {
       logger.error(`Error in isDividerElement: ${error.message}`);
@@ -732,68 +915,196 @@ class ChatManager {
     }
   }
 
-  // Determines if a message is a system message (corrected implementation)
+  /**
+   * Determines if a message is a system message
+   */
   isSystemMessage(messageText) {
-    try {
-      if (!messageText) return false;
-      logger.debug(`Analyzing if it's a system message: "${messageText.substring(0, 30)}..."`);
-      
-      // Always false (we do not detect system messages)
-      return false;
-    } catch (error) {
-      logger.error(`Error in isSystemMessage: ${error.message}`);
-      return false;
-    }
+    if (!messageText) return false;
+    
+    // Common system message patterns
+    const systemPatterns = [
+      /^You sent an attachment\.$/i,
+      /^You set the nickname for .* to .*$/i,
+      /^You changed the chat colors\.$/i,
+      /^You named the group .*$/i,
+      /^You added .* to the group\.$/i,
+      /^You removed .* from the group\.$/i,
+      /^.* left the group\.$/i,
+      /^Enviaste un adjunto\.$/i,
+      /^Cambiaste los colores del chat\.$/i,
+    ];
+    
+    return systemPatterns.some(pattern => pattern.test(messageText));
   }
-
-  // Also need to add the isMessageSentByUs function that is used but not implemented
-  isMessageSentByUs(msgElement) {
-    // Determine if a message was sent by us (usually based on position or CSS class)
+  
+  /**
+   * Determines if a message was sent by the current user
+   */
+  isMessageSentByUs(messageElement) {
+    const alignRight = messageElement.querySelector('[style*="flex-end"]');
+    const hasRightClass = messageElement.matches('[style*="margin-left:auto"]');
+    return !!(alignRight || hasRightClass);
+  }
+  
+  /**
+   * Determines if position is owned by current user in alternative extraction
+   */
+  determineIfMessageIsMine(div) {
+    // Check position on screen - right side is typically user's messages
+    const rect = div.getBoundingClientRect();
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+    
+    // If positioned in the right 60% of screen, likely from the user
+    return rect.left > viewportWidth * 0.4;
+  }
+  
+  /**
+   * Checks if text looks like a date
+   */
+  looksLikeDate(text) {
+    return /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(text) || 
+           /^(Today|Yesterday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)$/i.test(text) ||
+           /^(Hoy|Ayer|Lunes|Martes|Miércoles|Jueves|Viernes|Sábado|Domingo)$/i.test(text);
+  }
+  
+  /**
+   * Checks if element looks like UI control
+   */
+  looksLikeUIControl(element) {
+    // UI controls often have these attributes
+    if (element.getAttribute('role') === 'button' || 
+        element.getAttribute('role') === 'tab' ||
+        element.tagName === 'BUTTON') {
+      return true;
+    }
+    
+    // Or contain these terms
+    const text = element.innerText.toLowerCase();
+    return text.includes('send') || 
+           text.includes('attach') || 
+           text.includes('enviar') || 
+           text.includes('adjuntar');
+  }
+  
+  /**
+   * Process the response according to the configured mode
+   */
+  async handleResponse(context) {
     try {
-      // On Facebook, messages sent by us are usually aligned to the right
-      // or have specific classes
-      const hasRightAlignmentClass = msgElement.classList.contains('x1q0g3np') || 
-                                    msgElement.classList.contains('x78zum5') ||
-                                    msgElement.getAttribute('class')?.includes('right');
-      
-      if (hasRightAlignmentClass) return true;
-      
-      // Check by position (if it's aligned to the right)
-      const rect = msgElement.getBoundingClientRect();
-      const parentRect = msgElement.parentElement?.getBoundingClientRect();
-      
-      if (parentRect && rect) {
-        // If the message is closer to the right edge than the left, it's probably ours
-        const distanceFromRight = parentRect.right - rect.right;
-        const distanceFromLeft = rect.left - parentRect.left;
-        
-        if (distanceFromRight < distanceFromLeft) return true;
+      // Only respond if the last message is not from us
+      const lastMessage = context.messages[context.messages.length - 1];
+      if (!lastMessage || lastMessage.sentByUs) {
+        logger.debug("No need to respond - last message is ours or no messages");
+        return;
       }
       
-      // 3. Check by content (look for common indicators)
-      const text = msgElement.innerText || '';
-      if (text.includes("You:") || text.includes("Tú:")) return true;
+      // Enhance context with conversation analysis
+      const analysis = conversationAnalyzer.analyzeConversation(context.messages, context.productDetails);
+      context.analysis = analysis;
       
-      // If none of the previous checks worked, assume it's from the other user
-      return false;
+      logger.debug(`Conversation analysis: Stage=${analysis.stage}, Sentiment=${analysis.sentiment}`);
+      
+      // Act based on the operation mode
+      switch (CONFIG.operationMode) {
+        case 'auto':
+          await this.handleAutoMode(context);
+          break;
+          
+        case 'manual':
+          await this.handleManualMode(context);
+          break;
+          
+        case 'generate':
+          await this.handleGenerateMode(context);
+          break;
+      }
+      
+      // Log the interaction
+      this.logConversation(context);
+      
     } catch (error) {
-      logger.error(`Error determining if the message is ours: ${error.message}`);
-      return false; // In case of error, assume it's not ours
+      logger.error(`Error handling response: ${error.message}`);
     }
   }
 
-  // Method getFallbackResponse that is called in case of error with the API
-  getFallbackResponse(messages) {
+  /**
+   * Handles auto mode response generation and sending
+   */
+  async handleAutoMode(context) {
+    try {
+      // Add human-like delay before responding
+      const responseDelay = humanSimulator.calculateTypingTime(humanSimulator.getAverageMessageLength());
+      
+      logger.debug(`Waiting ${responseDelay}ms before responding (human simulation)`);
+      await this.delay(responseDelay);
+      
+      // Start the typing indicator
+      await humanSimulator.startTypingIndicator();
+      
+      // Generate the response using the OpenAI Manager
+      let responseText;
+      try {
+        responseText = await openAIManager.generateResponse(context);
+        logger.debug(`AI response generated: "${responseText.substring(0, 30)}..."`);
+      } catch (error) {
+        logger.error(`Error generating AI response: ${error.message}`);
+        responseText = this.getFallbackResponse(context.messages, context.analysis);
+      }
+      
+      // Calculate realistic typing time
+      const typingTime = humanSimulator.calculateTypingTime(responseText);
+      logger.debug(`Simulating typing for ${Math.round(typingTime/1000)} seconds`);
+      await this.delay(typingTime);
+      
+      // Stop typing indicator
+      await humanSimulator.stopTypingIndicator();
+      
+      // Send the message with human-like behavior
+      await this.sendMessageWithHumanBehavior(responseText);
+      
+      logger.log('Message sent automatically');
+      
+      // Record in history
+      this.saveResponseToHistory(context.chatId, responseText, 'auto');
+      
+    } catch (error) {
+      logger.error(`Auto mode error: ${error.message}`);
+      await humanSimulator.stopTypingIndicator();
+    }
+  }
+
+  /**
+   * Method getFallbackResponse that is called in case of error with the API
+   */
+  getFallbackResponse(messages, analysis = null) {
     // Emergency response for when AI generation fails
     try {
+      // If we have conversation analysis, use it for better fallback responses
+      if (analysis) {
+        // Get suggestions based on analysis
+        const suggestions = conversationAnalyzer.generateResponseSuggestions(analysis);
+        if (suggestions.length > 0) {
+          // Select a random suggestion
+          return suggestions[Math.floor(Math.random() * suggestions.length)];
+        }
+      }
+      
+      // Otherwise fall back to language detection in the last message
       // Determine the language based on the last received message
       const lastMessage = messages[messages.length - 1]?.content || '';
       
-      // Detect if it's Spanish (simple responses)
-      if (/[áéíóúñ¿¡]/i.test(lastMessage) || 
-          /\b(hola|gracias|buenos días|buenas tardes|disponible)\b/i.test(lastMessage)) {
-        return "Hello! Thank you for your message. I’ll reply as soon as possible.";
-      } 
+      // Detect if it's Spanish
+      if (typeof lastMessage === 'string') {
+        if (/[áéíóúñ¿¡]/i.test(lastMessage) || 
+            /\b(hola|gracias|buenos días|buenas tardes|disponible)\b/i.test(lastMessage)) {
+          return "Hola! Gracias por tu mensaje. Te responderé lo antes posible.";
+        } 
+      } else if (lastMessage.text) {
+        if (/[áéíóúñ¿¡]/i.test(lastMessage.text) || 
+            /\b(hola|gracias|buenos días|buenas tardes|disponible)\b/i.test(lastMessage.text)) {
+          return "Hola! Gracias por tu mensaje. Te responderé lo antes posible.";
+        }
+      }
       
       // If not Spanish, respond in English
       return "Hello! Thank you for your message. I'll get back to you as soon as possible.";
@@ -802,420 +1113,37 @@ class ChatManager {
       return "Thank you for your message. I'll respond soon.";
     }
   }
-  
-  // New helper: send by pressing Enter in the field
-  async sendViaEnter(inputField) {
-    inputField.focus();
-    ['keydown','keypress','keyup'].forEach(type => {
-      inputField.dispatchEvent(new KeyboardEvent(type, {
-        key: 'Enter', code: 'Enter', bubbles: true
-      }));
-    });
-  }
 
-  // Handles the response according to the configured mode
-  async handleResponse(messages, productLink, isSeller) {
-    // Only respond if the last message is not ours
-    if (messages.length === 0 || messages[messages.length - 1].sentByUs) {
-      logger.log('No need to respond - the last message is ours or there are no messages');
-      return;
-    }
-    
-    // Prepare the context for generating the response
-    const context = {
-      messages,
-      productLink,
-      isSeller,
-      // Add time information for logging
-      timestamp: new Date().toISOString()
-    };
-    
-    // Act according to the configured mode
-    switch (CONFIG.operationMode) {
-      case 'auto':
-        // Fully automatic mode
-        await this.handleAutoMode(context);
-        break;
-        
-      case 'manual':
-        // Manually supervised mode
-        await this.handleManualMode(context);
-        break;
-        
-      case 'generate':
-        // Test and adjustment mode
-        await this.handleGenerateMode(context);
-        break;
-    }
-    
-    // Log the interaction if enabled
-    if (CONFIG.logging.saveConversations) {
-      this.logConversation(context);
-    }
-  }
-  
-  // Handles the automatic mode
-  async handleAutoMode(context) {
-    try {
-      const wrapper = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageWrapper);
-      const scrollContainer = domUtils.findElement(
-        CONFIG.selectors.activeChat.scrollbar,
-        wrapper
-      ) || wrapper;
-      // load the entire history
-      await domUtils.scrollToTop(scrollContainer);
-      scrollContainer.scrollTop = scrollContainer.scrollHeight;
-      wrapper.scrollTop = wrapper.scrollHeight;
-      await this.delay(500);
-
-      // collect initial messages
-      let collected = [...context.messages];
-      const observer = new MutationObserver(muts => {
-        muts.forEach(m => {
-          m.addedNodes.forEach(node => {
-            if (node.nodeType===1 && node.innerText) {
-              collected.push({
-                content: node.innerText.trim(),
-                sentByUs: this.isMessageSentByUs(node),
-                timestamp: new Date().toISOString()
-              });
-            }
-          });
-        });
-      });
-      observer.observe(wrapper, { childList: true, subtree: true });
-
-      // random wait 30–60s
-      const waitTime = 30000 + Math.random()*30000;
-      logger.log(`Collecting messages for ${Math.round(waitTime/1000)}s before auto-response`);
-      await this.delay(waitTime);
-      observer.disconnect();
-
-      // update context
-      context.messages = collected;
-
-      // generate and send
-      await this.startTypingIndicator();
-      let responseText;
-      try {
-        responseText = await this.generateAIResponse(context);
-      } catch {
-        responseText = this.getFallbackResponse(context.messages);
-      }
-      await this.delay(this.calculateTypingTime(responseText));
-      await this.stopTypingIndicator();
-
-      // insert and send
-      const inputField = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageInput);
-      inputField.click(); inputField.focus();
-      this.insertTextDirectly(inputField, responseText);
-
-      await this.delay(200);
-      // now reuse the helper
-      await this.sendViaEnter(inputField);
-
-      logger.notify('Message sent automatically', 'success');
-      this.saveResponseToHistory(context, responseText, 'auto');
-    } catch (e) {
-      // Log the specific error message
-      logger.error(`Error in auto mode: ${e.message}`); 
-      // Add stack trace for more details if available
-      if (e.stack) {
-        logger.error(e.stack);
-      }
-      await this.stopTypingIndicator();
-      logger.notify('Error processing automatic message', 'error');
-    }
-  }
-  
-  // Handles the manual mode - MODIFIED FOR MORE RELIABLE INSERTION
-  async handleManualMode(context) {
-    try {
-      await this.startTypingIndicator();
-      let responseText;
-      try {
-        responseText = await this.generateAIResponse(context);
-        logger.log('Response successfully generated in manual mode');
-      } catch (error) {
-        logger.error(`Error generating response in manual mode: ${error.message}`);
-        responseText = this.getFallbackResponse(context.messages);
-      }
-      await this.stopTypingIndicator();
-
-      // 4. Prepare manual insertion with highlighting and timeout
-      const inputField = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageInput);
-      inputField.click(); inputField.focus(); await this.delay(300);
-
-      // Highlight input field
-      inputField.style.border = '2px solid #4267B2';
-      inputField.style.boxShadow = '0 0 8px rgba(66,103,178,0.6)';
-
-      // Attempt insertion
-      const inserted = this.insertTextDirectly(inputField, responseText);
-      if (!inserted) { /* fallback clipboard/prompt... */ }
-
-      await this.delay(500);
-      const alertElement = this.showSimpleAlert(
-        'Response generated and ready to send. Press Send or edit.', 
-        'info'
-      );
-
-      // start manual mode timeout
-      this.manualTimeoutId = setTimeout(() => {
-        alertElement?.remove();
-        inputField.style.border = '';
-        inputField.style.boxShadow = '';
-        logger.notify('Manual mode timeout reached, response discarded', 'warning');
-      }, CONFIG.manualModeTimeout);
-
-      // set up events to clear timeout and styles
-      const onSendClick = () => {
-        clearTimeout(this.manualTimeoutId);
-        inputField.style.border = '';
-        inputField.style.boxShadow = '';
-        const finalText = inputField.innerText || inputField.textContent || responseText;
-        this.saveResponseToHistory(context, finalText, 'manual');
-        logger.notify('Message sent manually', 'success');
-        alertElement?.remove();
-        sendButton.removeEventListener('click', onSendClick);
-      };
-      const onInputClick = () => {
-        clearTimeout(this.manualTimeoutId);
-        inputField.style.border = '';
-        inputField.style.boxShadow = '';
-        alertElement?.remove();
-        inputField.removeEventListener('click', onInputClick);
-      };
-
-      const sendButton = await domUtils.waitForElement(CONFIG.selectors.activeChat.sendButton, 2000);
-      if (sendButton) {
-        sendButton.addEventListener('click', onSendClick);
-        inputField.addEventListener('click', onInputClick);
-      }
-
-      logger.notify('Response generated and ready to send', 'info');
-    } catch (error) {
-      logger.error(`Error in manual mode: ${error.message}`);
-      await this.stopTypingIndicator();
-      logger.notify('Error processing manual message', 'error');
-    }
-  }
-
-  // New improved method for direct text insertion
-  insertTextDirectly(element, text) {
-    try {
-      // Log the state before insertion
-      const previousContent = element.innerText || element.textContent || '';
-      logger.debug(`State before insertion: ${previousContent.length > 0 ? 'Field with content' : 'Empty field'}`);
-      
-      // Method 1: Use innerHTML/innerText based on the type of element
-      if (element.tagName.toLowerCase() === 'div') {
-        // For contenteditable divs, innerText usually works better
-        element.innerText = text;
-        logger.debug('Text inserted using innerText in div');
-      } 
-      else if (element.tagName.toLowerCase() === 'p') {
-        // For p elements, innerHTML may work better
-        element.innerHTML = text;
-        logger.debug('Text inserted using innerHTML in p');
-      }
-      // Method 2: Use textContent as an alternative
-      else {
-        element.textContent = text;
-        logger.debug('Text inserted using textContent');
-      }
-      
-      // Method 3: Use execCommand as a backup
-      try {
-        // First select all existing text
-        document.execCommand('selectAll', false, null);
-        // Then insert the new text
-        element.focus();
-        document.execCommand('insertText', false, text);
-        logger.debug('Text inserted using execCommand');
-      } catch (e) {
-        logger.debug(`execCommand failed: ${e.message}`);
-      }
-      
-      // Method 4: Low-level DOM manipulation
-      try {
-        // Create a text node
-        const textNode = document.createTextNode(text);
-        
-        // Clear existing content
-        while (element.firstChild) {
-          element.removeChild(element.firstChild);
-        }
-        
-        // Insert the new text node
-        element.appendChild(textNode);
-        logger.debug('Text inserted via DOM text node');
-      } catch (e) {
-        logger.debug(`DOM insertion failed: ${e.message}`);
-      }
-      
-      // Trigger multiple events to ensure Facebook detects the change
-      const events = ['input', 'change', 'keyup', 'keydown', 'keypress'];
-      events.forEach(eventType => {
-        element.dispatchEvent(new Event(eventType, { bubbles: true }));
-      });
-      
-      // Check if it was inserted correctly
-      const currentContent = element.innerText || element.textContent || '';
-      const inserted = currentContent.length > 0;
-      
-      logger.debug(`Direct insertion verification: ${inserted ? 'Text inserted' : 'No text detected'}`);
-      
-      // Simulate a key press at the end to trigger Facebook events
-      element.focus();
-      const keyEvent = new KeyboardEvent('keypress', {
-        key: ' ',
-        code: 'Space',
-        bubbles: true
-      });
-      element.dispatchEvent(keyEvent);
-      
-      return inserted;
-    } catch (error) {
-      logger.error(`Error inserting text directly: ${error.message}`);
-      return false;
-    }
-  }
-  
-  // Handles the test mode (generate)
-  async handleGenerateMode(context) {
-    try {
-      // Generate response with AI
-      let responseText;
-      try {
-        responseText = await this.generateAIResponse(context);
-        logger.log('Response successfully generated in generate mode');
-      } catch (error) {
-        logger.error(`Error generating response in generate mode: ${error.message}`);
-        responseText = this.getFallbackResponse(context.messages);
-      }
-
-      // Insert directly into the field
-      const inputField = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageInput);
-      inputField.click(); inputField.focus();
-      this.insertTextDirectly(inputField, responseText);
-
-      logger.notify('Response generated (generate mode)', 'info');
-    } catch (error) {
-      logger.error(`Error in generate mode: ${error.message}`);
-      logger.notify('Error generating test response', 'error');
-    }
-  }
-  
-  // Simulates a natural delay for automatic responses
-  getRandomResponseDelay() {
-    return Math.floor(
-      Math.random() * 
-      (CONFIG.humanSimulation.maxResponseDelay - CONFIG.humanSimulation.minResponseDelay) + 
-      CONFIG.humanSimulation.minResponseDelay
-    );
-  }
-  
-  // Calculates typing time based on message length
+  /**
+   * Calculates typing time based on message length - could be removed as we now use humanSimulator
+   */
   calculateTypingTime(message) {
-    const baseTime = message.length * CONFIG.humanSimulation.baseTypingSpeed;
-    const variation = Math.random() * CONFIG.humanSimulation.typingVariation * message.length;
-    return Math.max(CONFIG.humanSimulation.minResponseDelay, baseTime + variation);
+    // Delegate to humanSimulator for consistency
+    return humanSimulator.calculateTypingTime(message);
   }
   
-  // Helper function for delay
-  delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-  
-  // Starts the "typing..." indicator
+  /**
+   * Starts a typing indicator in the chat - could be removed as we now use humanSimulator
+   */
   async startTypingIndicator() {
-    try {
-      // Find input field to activate typing indicator
-      const inputField = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageInput);
-      
-      // Focus the field to start the typing session
-      inputField.focus();
-      
-      // Send keyboard events to activate the "typing..." indicator
-      this.typingState.isTyping = true;
-      this.typingState.chatId = this.currentChatId;
-      
-      // Maintain a "typing..." indicator by simulating periodic activity
-      this.typingState.intervalId = setInterval(() => {
-        if (inputField && this.typingState.isTyping) {
-          // Simulate key presses to keep the indicator active
-          const keyEvent = new KeyboardEvent('keypress', {
-            bubbles: true,
-            cancelable: true,
-            key: ' ',
-            code: 'Space'
-          });
-          inputField.dispatchEvent(keyEvent);
-          
-          // Alternate between adding and removing a space to keep the indicator
-          if (inputField.innerText.endsWith(' ')) {
-            inputField.innerText = inputField.innerText.slice(0, -1);
-          } else {
-            inputField.innerText += ' ';
-          }
-          
-          // Trigger input event for FB to detect activity
-          inputField.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-      }, 2000);
-      
-      logger.debug('Typing indicator activated');
-      return true;
-    } catch (error) {
-      logger.error(`Error activating typing indicator: ${error.message}`);
-      return false;
-    }
+    return await humanSimulator.startTypingIndicator();
   }
   
-  // Stops the "typing..." indicator
+  /**
+   * Stops the typing indicator - could be removed as we now use humanSimulator
+   */
   async stopTypingIndicator() {
-    try {
-      // Stop the typing simulation interval
-      if (this.typingState.intervalId) {
-        clearInterval(this.typingState.intervalId);
-        this.typingState.intervalId = null;
-      }
-      
-      this.typingState.isTyping = false;
-      
-      // Clear text field if necessary
-      try {
-        const inputField = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageInput, 1000);
-        if (inputField && inputField.innerText) {
-          inputField.innerText = '';
-          inputField.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-        // Remove focus to completely stop the indicator
-        inputField.blur();
-      } catch (e) {
-        // If we don't find the field, ignore the error
-      }
-      
-      logger.debug('Typing indicator deactivated');
-      return true;
-    } catch (error) {
-      logger.error(`Error deactivating typing indicator: ${error.message}`);
-      return false;
-    }
+    return await humanSimulator.stopTypingIndicator();
   }
-  
-  // Saves a response in the history
-  saveResponseToHistory(context, responseText, mode) {
+
+  /**
+   * Saves a response in the history
+   */
+  saveResponseToHistory(chatId, responseText, mode) {
     const log = {
-      chatId: this.currentChatId,
+      chatId: chatId || this.currentChatId,
       timestamp: new Date().toISOString(),
       mode: mode,
-      context: {
-        isSeller: context.isSeller,
-        productLink: context.productLink,
-        lastMessage: context.messages[context.messages.length - 1]?.content || ''
-      },
       response: responseText,
       sent: mode !== 'generate'
     };
@@ -1231,174 +1159,211 @@ class ChatManager {
     // Save in localStorage
     localStorage.setItem('FB_CHAT_MONITOR_LOGS', JSON.stringify(this.conversationLogs));
   }
-  
-  // Logs the complete conversation
+
+  /**
+   * Logs the complete conversation
+   */
   logConversation(context) {
+    if (!CONFIG.logging.saveConversations) return;
+
     // Extract relevant information
     const log = {
-      chatId: this.currentChatId,
+      chatId: context.chatId || this.currentChatId,
       timestamp: new Date().toISOString(),
-      userName: context.messages.find(m => !m.sentByUs)?.sender || 'Unknown',
-      messageCount: context.messages.length,
-      isSeller: context.isSeller,
-      productLink: context.productLink,
-      lastMessageContent: context.messages[context.messages.length - 1]?.content || ''
+      role: context.role || 'unknown',
+      messageCount: context.messages?.length || 0,
+      product: context.productDetails ? {
+        id: context.productDetails.id,
+        title: context.productDetails.title,
+        price: context.productDetails.price
+      } : null
     };
     
     logger.debug(`Conversation logged: ${JSON.stringify(log)}`);
   }
   
-  // Generates a response with the OpenAI API (updated version that accepts configuration)
-  async generateAIResponse(context, customConfig = null) {
-    // Use custom configuration or default
-    const config = customConfig || CONFIG.AI;
+  /**
+   * Sends a message to the current chat
+   * @param {string} message - Message to send
+   * @returns {Promise<boolean>} Success flag
+   */
+  async sendMessage(message) {
+    if (!this.currentChatId) return logger.error('No active chat to send message to'), false;
     
-    if (!config.enabled || !config.apiKey) {
-      throw new Error('AI API not configured');
+    try {
+      const inputField = domUtils.findElement(CONFIG.selectors.activeChat.messageInput);
+      if (!inputField) return logger.error('Message input field not found'), false;
+      
+      inputField.focus();
+      document.execCommand('insertText', false, message);
+      
+      // If execCommand didn't work, try setting the innerText
+      if (!inputField.innerText || inputField.innerText.trim() === '') {
+        inputField.innerText = message;
+        inputField.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      const sendButton = domUtils.findElement(CONFIG.selectors.activeChat.sendButton);
+      if (!sendButton) return logger.error('Send button not found'), false;
+      
+      sendButton.click();
+      logger.log(`Message sent: "${message.substring(0, 30)}${message.length > 30 ? '...' : ''}"`);
+      
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      await this.processCurrentChat();
+      
+      return true;
+    } catch (error) {
+      logger.error(`Error sending message: ${error.message}`);
+      return false;
     }
-    
-    // Get last 10 messages max to avoid overloading the context
-    const recentMessages = context.messages;
-    
-    // NEW: Detailed log of the data being sent
-    logger.log('--------- SENDING DATA TO THE API ---------');
-    logger.log(`Role: ${context.isSeller ? 'SELLER' : 'BUYER'}`);
-    logger.log(`Product URL: ${context.productLink || 'Not available'}`);
-    logger.log(`Total messages: ${context.messages.length}`);
-    logger.log(`Messages sent to the API: ${recentMessages.length}`);
-    
-    // Show summary of the last messages
-    recentMessages.forEach((msg, idx) => {
-      logger.log(`Message #${idx + 1}: [${msg.sentByUs ? 'YOU' : 'OTHER'}] "${msg.content.substring(0, 50)}${msg.content.length > 50 ? '...' : ''}"`);
-    });
-    
-    // Create prompt for AI
-    const prompt = [
-      {
-        role: 'system',
-        content: `You are an assistant helping to ${context.isSeller ? 'sell' : 'buy'} on Facebook Marketplace. 
-                 ${context.productLink ? `The product is: ${context.productLink}` : ''}
-                 Respond in a friendly and concise manner in the same language as the last message.
-                 ${context.isSeller ? 'Act as the seller.' : 'Act as the buyer.'}`
-      }
-    ];
-    
-    // Add conversation history
-    recentMessages.forEach(msg => {
-      prompt.push({
-        role: msg.sentByUs ? 'assistant' : 'user',
-        content: msg.content
-      });
-    });
-    
-    logger.log('--------- END OF DATA TO BE SENT ---------');
-    
-    // Call the API
-    return fetch(config.endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.apiKey}`
-      },
-      body: JSON.stringify({
-        model: config.model,
-        messages: prompt,
-        temperature: config.temperature,
-        max_tokens: config.maxTokens
-      })
-    })
-    .then(response => {
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-      return response.json();
-    })
-    .then(data => {
-      logger.log('API response received successfully');
-      return data.choices[0]?.message?.content || '';
-    })
-    .catch(error => {
-      logger.error(`Error in AI API: ${error.message}`);
-      throw error;
-    });
   }
   
-  // Implementation of the showSimpleAlert function that was missing
-  showSimpleAlert(message, type = 'info') {
-    try {
-      // Remove existing alert if any
-      const existingAlert = document.querySelector('#fb-chat-monitor-simple-alert');
-      if (existingAlert) {
-        existingAlert.remove();
+  /**
+   * Sends a message with human-like behavior (typos, corrections, etc.)
+   */
+  async sendMessageWithHumanBehavior(text) {
+    const inputField = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageInput);
+    if (!inputField) {
+      throw new Error("Message input field not found");
+    }
+    
+    // Split into fragments if needed
+    const fragments = humanSimulator.shouldSplitMessage(text) ? 
+                    humanSimulator.splitTextIntoFragments(text) : 
+                    [text];
+    
+    // Send each fragment
+    for (let i = 0; i < fragments.length; i++) {
+      if (i > 0) {
+        // Delay between fragments
+        const fragmentDelay = Math.floor(
+          CONFIG.AI.humanSimulation.fragmentDelay[0] + 
+          Math.random() * (CONFIG.AI.humanSimulation.fragmentDelay[1] - CONFIG.AI.humanSimulation.fragmentDelay[0])
+        );
+        
+        logger.debug(`Waiting ${fragmentDelay}ms between message fragments`);
+        await this.delay(fragmentDelay);
+        
+        // Start typing again for subsequent fragments
+        await humanSimulator.startTypingIndicator();
+        await this.delay(humanSimulator.calculateTypingTime(fragments[i]) / 2); // Shorter times for follow-ups
+        await humanSimulator.stopTypingIndicator();
       }
       
-      // Create new alert element
-      const alertDiv = document.createElement('div');
-      alertDiv.id = 'fb-chat-monitor-simple-alert';
-      alertDiv.style.position = 'fixed';
-      alertDiv.style.bottom = '70px';
-      alertDiv.style.right = '20px';
-      alertDiv.style.padding = '10px 15px';
-      alertDiv.style.borderRadius = '4px';
-      alertDiv.style.maxWidth = '300px';
-      alertDiv.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
-      alertDiv.style.zIndex = '10000';
-      alertDiv.style.fontSize = '14px';
-      alertDiv.style.fontFamily = 'Arial, sans-serif';
+      // Insert text with possible typo simulation
+      const fragment = fragments[i];
       
-      // Set colors according to type
-      if (type === 'error') {
-        alertDiv.style.backgroundColor = '#f44336';
-        alertDiv.style.color = 'white';
-      } else if (type === 'success') {
-        alertDiv.style.backgroundColor = '#4CAF50';
-        alertDiv.style.color = 'white';
-      } else if (type === 'warning') {
-        alertDiv.style.backgroundColor = '#ff9800';
-        alertDiv.style.color = 'white';
+      // Possibly introduce a typo that will be corrected
+      if (CONFIG.AI.humanSimulation.typingErrors.enabled && 
+          Math.random() < CONFIG.AI.humanSimulation.typingErrors.probability && 
+          fragment.length > 10) {
+        await this.simulateTypoAndCorrection(inputField, fragment);
       } else {
-        // info
-        alertDiv.style.backgroundColor = '#2196F3';
-        alertDiv.style.color = 'white';
+        // Normal typing
+        this.insertTextIntoField(inputField, fragment);
       }
       
-      // Add icon according to type
-      let icon = '✓'; // Default
-      if (type === 'error') icon = '✕';
-      if (type === 'warning') icon = '⚠';
-      if (type === 'info') icon = 'ℹ';
+      // Send with Enter key
+      await this.sendViaEnter(inputField);
       
-      // Add content
-      alertDiv.innerHTML = `<span style="margin-right: 8px; font-weight: bold;">${icon}</span> ${message}`;
-      
-      // Add close button
-      const closeBtn = document.createElement('span');
-      closeBtn.innerHTML = '&times;';
-      closeBtn.style.position = 'absolute';
-      closeBtn.style.top = '5px';
-      closeBtn.style.right = '8px';
-      closeBtn.style.cursor = 'pointer';
-      closeBtn.style.fontSize = '18px';
-      closeBtn.style.fontWeight = 'bold';
-      closeBtn.onclick = () => alertDiv.remove();
-      alertDiv.appendChild(closeBtn);
-      
-      // Add to DOM
-      document.body.appendChild(alertDiv);
-      
-      // Auto-remove after 5 seconds
-      setTimeout(() => {
-        if (document.body.contains(alertDiv)) {
-          alertDiv.remove();
-        }
-      }, 5000);
-      
-      return alertDiv;
-    } catch (error) {
-      logger.error(`Error showing simple alert: ${error.message}`);
-      // Use notification as fallback
-      logger.notify(message, type);
-      return null;
+      // Brief pause after sending
+      await this.delay(300);
     }
   }
+
+  /**
+   * Simulates typing a message with a typo and then correcting it
+   */
+  async simulateTypoAndCorrection(inputField, correctText) {
+    // Create a typo version
+    const typoVersion = humanSimulator.createTypoVersion(correctText);
+    
+    if (typoVersion !== correctText) {
+      // Type the typo version first
+      this.insertTextIntoField(inputField, typoVersion);
+      
+      // Wait a moment before correction
+      const correctionDelay = Math.floor(
+        CONFIG.AI.humanSimulation.typingErrors.correctionDelay[0] + 
+        Math.random() * (
+          CONFIG.AI.humanSimulation.typingErrors.correctionDelay[1] - 
+          CONFIG.AI.humanSimulation.typingErrors.correctionDelay[0]
+        )
+      );
+      
+      await this.delay(correctionDelay);
+      
+      // Clear and correct it
+      inputField.innerText = '';
+      inputField.dispatchEvent(new Event('input', { bubbles: true }));
+      this.insertTextIntoField(inputField, correctText);
+    } else {
+      // Just type it normally if no typo was created
+      this.insertTextIntoField(inputField, correctText);
+    }
+  }
+
+  /**
+   * Inserts text into input field
+   */
+  insertTextIntoField(inputField, text) {
+    // Focus the field
+    inputField.focus();
+    
+    // Try several methods to insert text for compatibility
+    if (document.execCommand) {
+      document.execCommand('insertText', false, text);
+    }
+    
+    // If execCommand didn't work, try setting the innerText
+    if (!inputField.innerText || inputField.innerText.trim() === '') {
+      inputField.innerText = text;
+      inputField.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }
+
+  /**
+   * Sends the current input via Enter key
+   */
+  async sendViaEnter(inputField) {
+    // Focus the input
+    inputField.focus();
+    
+    // Send Enter key event
+    const enterEvent = new KeyboardEvent('keypress', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13
+    });
+    inputField.dispatchEvent(enterEvent);
+    
+    // If Enter doesn't work, try clicking send button
+    setTimeout(async () => {
+      if (inputField.innerText && inputField.innerText.trim() !== '') {
+        const sendButton = domUtils.findElement(CONFIG.selectors.activeChat.sendButton);
+        if (sendButton) {
+          sendButton.click();
+          logger.debug('Used send button as fallback');
+        }
+      }
+    }, 300);
+  }
+
+  /**
+   * Helper method for delay/sleep
+   */
+  async delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
 }
+
+// Expose the ChatManager instance globally
+const chatManager = new ChatManager();
+// only one global instance:
+window.chatManager = chatManager;

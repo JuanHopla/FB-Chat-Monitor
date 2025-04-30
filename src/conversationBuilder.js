@@ -1,6 +1,6 @@
 import { CONFIG } from './config.js';
 import { logInfo } from './utils.js';
-import { chatManager } from './chatManager.js';
+import { ChatManager } from './chatManager.js';
 
 /**
  * Process a container with messages to build a conversation thread
@@ -27,7 +27,7 @@ export function buildConversationThread(chatContainer, chatId) {
   
   // Update conversation history
   messages.forEach(message => {
-    chatManager.addMessageToHistory(chatId, message);
+    ChatManager.addMessageToHistory(chatId, message);
   });
   
   return messages;
@@ -56,9 +56,9 @@ function extractProductInfo(container) {
  * Update the product info for a specific chat
  */
 function updateChatProductInfo(chatId, productInfo) {
-  if (!chatManager.activeChats.has(chatId)) return;
+  if (!ChatManager.activeChats.has(chatId)) return;
   
-  const chatData = chatManager.activeChats.get(chatId);
+  const chatData = ChatManager.activeChats.get(chatId);
   chatData.productInfo = productInfo;
   logInfo(`Updated product info for chat ${chatId}: ${productInfo.title}`);
 }
