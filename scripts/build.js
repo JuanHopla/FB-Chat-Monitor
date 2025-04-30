@@ -65,13 +65,22 @@ if (isProduction && !fs.existsSync(path.join(templatesDir, 'header-prod.js'))) {
 const fileOrder = [
     'config.js',
     'utils.js',
+    // New feature modules
+    'conversation-analyzer.js',
+    'responseManager.js',
+    'human-simulator.js',
+    'product-extractor.js',
+    'openai-manager.js',
+    'assistant-manager-ui.js',
+    // Core components
     'ChatManager.js',
-    'marketplace.js', // New file for redirection
+    'marketplace.js',
     'ui.js',
     'main.js',
     'init.js',
+    'entry.js',
     'extensions.js',
-    'diagnostics.js'  // New file with diagnostic functions
+    'diagnostics.js'
 ];
 
 // Start script content with IIFE
@@ -169,6 +178,13 @@ function getDescriptiveSectionName(fileName) {
         case 'init.js': return 'INITIALIZATION';
         case 'extensions.js': return 'jQuery-like VERSION FOR :contains() SELECTOR';
         case 'diagnostics.js': return 'API DIAGNOSTIC FUNCTION';
+        // New modules descriptive names
+        case 'conversation-analyzer.js': return 'CONVERSATION ANALYSIS AND CONTEXT DETECTION';
+        case 'responseManager.js': return 'RESPONSE MANAGEMENT AND HANDLING';
+        case 'human-simulator.js': return 'HUMAN BEHAVIOR SIMULATION';
+        case 'product-extractor.js': return 'PRODUCT INFORMATION EXTRACTION';
+        case 'openai-manager.js': return 'OPENAI INTEGRATION';
+        case 'assistant-manager-ui.js': return 'ASSISTANT MANAGEMENT UI';
         default: return fileName.toUpperCase().replace('.JS', '');
     }
 }

@@ -1,3 +1,5 @@
+// ----- REDIRECTION TO MARKETPLACE -----
+
 // ----- MARKETPLACE FUNCTIONS -----
 // This file contains marketplace-specific functions
 
