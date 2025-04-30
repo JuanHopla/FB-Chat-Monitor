@@ -12,13 +12,34 @@ const essentialFiles = [
   // Essential source code files
   'src/config.js',
   'src/utils.js',
+  'src/conversation-analyzer.js',
+  'src/responseManager.js',
+  'src/human-simulator.js',
+  'src/product-extractor.js',
+  'src/openai-manager.js',
+  'src/assistant-manager-ui.js',
   'src/ChatManager.js',
   'src/marketplace.js',
   'src/ui.js',
   'src/main.js',
   'src/init.js',
-  'src/extensions.js', 
+  'src/entry.js',          
+  'src/extensions.js',
   'src/diagnostics.js',
+  
+  // New essential files created during implementation
+  'src/conversation-analyzer.js',
+  'src/responseManager.js',
+  'src/human-simulator.js',
+  'src/product-extractor.js',
+  'src/openai-manager.js',
+  'src/assistant-manager-ui.js',
+  'src/index.js',     
+  'src/envLoader.js', 
+  
+  // UI Components
+  'src/ui/controlPanel.js',
+  'src/ui/floatingControls.js',
   
   // Build scripts
   'scripts/build.js',
@@ -75,17 +96,15 @@ essentialDirs.forEach(dir => {
 // Look for potentially obsolete files
 console.log('\nLooking for potentially obsolete files:');
 const obsoletePatterns = [
-  'src/index.js',
   'src/fbMarketplaceScraper.js',
   'src/storage.js',
   'src/messengerScraper.js',
   'src/observer.js',
   'src/aiService.js',
-  'src/envLoader.js',
-  'src/ui',
   'build',
   'main.user.js',
-  'diagnostic.js'
+  'diagnostic.js',
+  'src/response-manager.js'
 ];
 
 let obsoleteCount = 0;
