@@ -1,5 +1,8 @@
 /**
- * Debug script for FB-Chat-Monitor
+ * FB-Chat-Monitor Diagnostic Tool
+ * 
+ * This script helps diagnose initialization issues with the FB-Chat-Monitor script
+ * Run this in the console to check component initialization status
  */
 
 function diagnoseScriptIssues() {
@@ -24,35 +27,76 @@ function diagnoseScriptIssues() {
   // Verify selectors
   try {
     console.log('Checking critical selectors:');
-    const selectors = [
-      'div[role="main"]',
-      'div[role="tab"]',
-      'div[role="button"][tabindex="0"]',
-      'div[contenteditable="true"][role="textbox"]'
-    ];
+    const selectors = window.CONFIG?.selectors || {};
     
-    selectors.forEach(selector => {
-      const found = document.querySelector(selector);
-      console.log(`${selector}: ${found ? 'FOUND' : 'NOT FOUND'}`);
-    });
+    // Check chat list selectors
+    const chatListContainer = document.querySelector(selectors.chatList?.container);
+    console.log(`- Chat list container: ${chatListContainer ? 'FOUND' : 'NOT FOUND'}`);
+    
+    // Check active chat selectors
+    const activeChatContainer = document.querySelector(selectors.activeChat?.container);
+    console.log(`- Active chat container: ${activeChatContainer ? 'FOUND' : 'NOT FOUND'}`);
+    
+    // Check message input
+    const messageInput = document.querySelector(selectors.activeChat?.messageInput);
+    console.log(`- Message input: ${messageInput ? 'FOUND' : 'NOT FOUND'}`);
   } catch (e) {
     console.error('Error checking selectors:', e);
   }
   
-  // Verify application state
-  if (window.FBChatMonitor && window.APP_STATE) {
-    console.log(`APP_STATE.isRunning: ${window.APP_STATE.isRunning}`);
-    console.log(`APP_STATE.initialized: ${window.APP_STATE.initialized}`);
-    console.log(`APP_STATE.scanInterval: ${window.APP_STATE.scanInterval ? 'Active' : 'Inactive'}`);
+  // Check initialization functions
+  console.log('Checking initialization functions:');
+  console.log(`- initialize: ${typeof initialize === 'function' ? 'AVAILABLE' : 'NOT AVAILABLE'}`);
+  console.log(`- runMarketplaceMonitor: ${typeof runMarketplaceMonitor === 'function' ? 'AVAILABLE' : 'NOT AVAILABLE'}`);
+  console.log(`- FBChatMonitor.initialize: ${window.FBChatMonitor?.initialize ? 'AVAILABLE' : 'NOT AVAILABLE'}`);
+  
+  // Check monitoring state
+  console.log('Checking monitoring state:');
+  if (window.FBChatMonitor) {
+    try {
+      const stats = window.FBChatMonitor.getMonitoringStats ? window.FBChatMonitor.getMonitoringStats() : 'Function not available';
+      console.log('- Monitoring stats:', stats);
+    } catch (e) {
+      console.error('Error getting monitoring stats:', e);
+    }
   }
   
-  console.log('=== End of Diagnostics ===');
+  return 'Diagnostics complete';
 }
 
-// To run manually in the browser console:
-// diagnoseScriptIssues();
-
-// Export in case it's needed in the main script
-if (typeof module !== 'undefined') {
-  module.exports = { diagnoseScriptIssues };
+// Provide fix for initialization issues
+function fixInitialization() {
+  console.log('Attempting to fix initialization issues...');
+  
+  try {
+    // Check if scripts loaded but didn't initialize properly
+    if (typeof initialize === 'function' && !window.FB_CHAT_MONITOR_INITIALIZED) {
+      console.log('Calling initialize() function manually...');
+      initialize();
+    } else if (window.FBChatMonitor && typeof window.FBChatMonitor.initialize === 'function') {
+      console.log('Calling FBChatMonitor.initialize() manually...');
+      window.FBChatMonitor.initialize();
+    }
+    
+    // Check if we're on marketplace and should start monitoring
+    if (window.location.href.includes('/marketplace') && 
+        window.FBChatMonitor && 
+        typeof window.FBChatMonitor.runMarketplaceMonitor === 'function') {
+      console.log('Starting marketplace monitor manually...');
+      window.FBChatMonitor.runMarketplaceMonitor();
+    }
+    
+    return 'Fix attempt complete';
+  } catch (e) {
+    console.error('Error during fix attempt:', e);
+    return 'Fix attempt failed';
+  }
 }
+
+// Expose utilities globally for console use
+window.fbChatMonitorDiagnostics = {
+  diagnose: diagnoseScriptIssues,
+  fix: fixInitialization
+};
+
+console.log('FB-Chat-Monitor diagnostic tools loaded. Use fbChatMonitorDiagnostics.diagnose() to run diagnostics.');

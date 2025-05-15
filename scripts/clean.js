@@ -23,7 +23,10 @@ const filesToRemove = [
   ...findAllFilesInDirectory(path.join(__dirname, '..', 'src', 'ui')),
   // Redundant files in root
   'main.user.js', // Redundant, already exists in dist/
-  'diagnostic.js' // Not essential for build process
+  'diagnostic.js', // Not essential for build process
+  'conversationBuilder.js',
+  'src/conversation-analyzer.js',
+  'src/extensions.js'
 ];
 
 // Directories to remove if they exist and are empty
