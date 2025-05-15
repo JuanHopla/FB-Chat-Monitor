@@ -15,51 +15,30 @@ if (!fs.existsSync(srcDir)) {
     fs.mkdirSync(srcDir, { recursive: true });
 }
 
-// Structure of source files to create with improved patterns
+// Structure of source files to create - UPDATED to match exactly what's in dev.user.js
+// These section names must match the exact comments in dev.user.js: // ----- SECTION NAME -----
 const sourceFiles = [
-    { 
-        name: 'config.js', 
-        pattern: /\/\/ ----- BASIC CONFIGURATION -----[\s\S]*?const CONFIG = \{[\s\S]*?\};/m 
-    },
-    { 
-        name: 'utils.js', 
-        pattern: /\/\/ ----- UTILITIES -----[\s\S]*?(\/\/ ----- CHAT MANAGEMENT -----)/m,
-        replaceLast: true
-    },
-    { 
-        name: 'ChatManager.js', 
-        pattern: /\/\/ ----- CHAT MANAGEMENT -----[\s\S]*?class ChatManager[\s\S]*?(\/\/ ----- REDIRECTION TO MARKETPLACE -----)/m,
-        replaceLast: true
-    },
-    { 
-        name: 'marketplace.js', 
-        pattern: /\/\/ ----- REDIRECTION TO MARKETPLACE -----[\s\S]*?(\/\/ ----- USER INTERFACE -----)/m,
-        replaceLast: true
-    },
-    { 
-        name: 'ui.js', 
-        pattern: /\/\/ ----- USER INTERFACE -----[\s\S]*?(\/\/ ----- MAIN PROCESS -----)/m,
-        replaceLast: true
-    },
-    { 
-        name: 'main.js', 
-        pattern: /\/\/ ----- MAIN PROCESS -----[\s\S]*?(\/\/ ----- INITIALIZATION -----)/m,
-        replaceLast: true
-    },
-    { 
-        name: 'init.js', 
-        pattern: /\/\/ ----- INITIALIZATION -----[\s\S]*?(\/\/ ----- jQuery-like VERSION)/m,
-        replaceLast: true
-    },
-    { 
-        name: 'extensions.js', 
-        pattern: /\/\/ ----- jQuery-like VERSION[\s\S]*?(\/\/ ----- API DIAGNOSTIC FUNCTION -----)/m,
-        replaceLast: true
-    },
-    { 
-        name: 'diagnostics.js', 
-        pattern: /\/\/ ----- API DIAGNOSTIC FUNCTION -----[\s\S]*?$/m 
-    }
+    // Main config
+    { name: 'config.js', sectionName: 'BASIC CONFIGURATION' },
+    
+    // Main modules
+    { name: 'utils.js', sectionName: 'UTILITIES' },
+    { name: 'conversation-analyzer.js', sectionName: 'CONVERSATION ANALYSIS AND CONTEXT DETECTION' },
+    { name: 'responseManager.js', sectionName: 'RESPONSE MANAGEMENT AND HANDLING' },
+    { name: 'human-simulator.js', sectionName: 'HUMAN BEHAVIOR SIMULATION' },
+    { name: 'product-extractor.js', sectionName: 'PRODUCT INFORMATION EXTRACTION' },
+    { name: 'openai-manager.js', sectionName: 'OPENAI INTEGRATION' },
+    { name: 'assistant-manager-ui.js', sectionName: 'ASSISTANT MANAGEMENT UI' },
+    { name: 'ChatManager.js', sectionName: 'CHAT MANAGEMENT' },
+    { name: 'marketplace.js', sectionName: 'REDIRECTION TO MARKETPLACE' },
+    { name: 'ui.js', sectionName: 'USER INTERFACE' },
+    { name: 'main.js', sectionName: 'MAIN PROCESS' },
+    { name: 'init.js', sectionName: 'INITIALIZATION' },
+    { name: 'entry.js', sectionName: 'ENTRY' },
+    
+    // Additional files that might exist
+    { name: 'extensions.js', sectionName: 'jQuery-like VERSION FOR :contains() SELECTOR' },
+    { name: 'diagnostics.js', sectionName: 'API DIAGNOSTIC FUNCTION' }
 ];
 
 // Extract the header
@@ -73,30 +52,61 @@ function extractHeader(fileContent) {
     }
 }
 
-// Extract source code according to the improved patterns
+// Extract source code according to the section markers
 function extractSourceFiles(fileContent) {
     console.log('Extracting source files...');
 
-    sourceFiles.forEach(file => {
+    for (let i = 0; i < sourceFiles.length; i++) {
+        const currentFileSpec = sourceFiles[i];
+        const nextFileSpec = sourceFiles[i + 1];
+
+        // Escape special characters in section names for use in RegExp
+        const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        
+        // Look for section headers with exact format: // ----- SECTION NAME -----
+        const startDelimiter = `// ----- ${escapeRegExp(currentFileSpec.sectionName)} -----`;
+        let pattern;
+
+        if (nextFileSpec) {
+            const nextDelimiter = `// ----- ${escapeRegExp(nextFileSpec.sectionName)} -----`;
+            // Regex to capture from startDelimiter up to (but not including) nextDelimiter
+            pattern = new RegExp(`${startDelimiter}[\\s\\S]*?(?=\\n*${nextDelimiter})`, 'm');
+        } else {
+            // Last file: capture from startDelimiter to the end of the IIFE
+            pattern = new RegExp(`${startDelimiter}[\\s\\S]*?(?=\\s*^\\}\\)\\(\\);\\s*$)`, 'm');
+        }
+
+        console.log(`Buscando sección: ${currentFileSpec.sectionName}`);
+
         try {
-            const match = fileContent.match(file.pattern);
-            if (match) {
-                // Determine content, removing the last captured group if needed
-                let content = file.replaceLast ? match[0].replace(match[1], '') : match[0];
+            const match = fileContent.match(pattern);
+            if (match && match[0]) {
+                let content = match[0];
                 
-                // Remove section comments at the beginning for cleaner files
-                content = content.replace(/\/\/ ----- [A-Z\s]+ -----\n\n?/, '');
+                // Remove the initial section comment
+                const initialCommentPattern = new RegExp(`^// ----- ${escapeRegExp(currentFileSpec.sectionName)} -----\\r?\\n(\\r?\\n)?`, '');
+                content = content.replace(initialCommentPattern, '');
                 
-                const filePath = path.join(srcDir, file.name);
+                // Trim leading/trailing whitespace
+                content = content.trim();
+                
+                // Create directory if needed
+                const filePath = path.join(srcDir, currentFileSpec.name);
+                const dirPath = path.dirname(filePath);
+                if (!fs.existsSync(dirPath)) {
+                    fs.mkdirSync(dirPath, { recursive: true });
+                }
+                
                 fs.writeFileSync(filePath, content, 'utf8');
-                console.log(`✅ File created: ${file.name} (${content.length} bytes)`);
+                console.log(`✅ File created: ${currentFileSpec.name} (${content.length} bytes)`);
+                console.log(`✅ Sección encontrada: ${currentFileSpec.sectionName}`);
             } else {
-                console.warn(`⚠️ Could not extract content for: ${file.name}`);
+                console.warn(`⚠️ No se encontró la sección: ${currentFileSpec.sectionName}`);
             }
         } catch (error) {
-            console.error(`❌ Error extracting ${file.name}:`, error.message);
+            console.error(`❌ Error extracting ${currentFileSpec.name}:`, error.message);
         }
-    });
+    }
 }
 
 // Main function

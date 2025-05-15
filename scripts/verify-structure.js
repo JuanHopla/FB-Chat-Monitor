@@ -6,53 +6,43 @@ const path = require('path');
 
 // Essential files for the build process
 const essentialFiles = [
-  // Tampermonkey header
   'tampermonkey-header.js',
-  
-  // Essential source code files
+
+  // Config modules
+  'src/config/basicConfig.js',
+  'src/config/aiConfig.js',
+  'src/config/productConfig.js',
+  'src/config/audioTranscriptionConfig.js',
+  'src/config/selectors.js',
   'src/config.js',
+
+  // Essential source code files
   'src/utils.js',
-  'src/conversation-analyzer.js',
   'src/responseManager.js',
   'src/human-simulator.js',
+  'src/ChatManager.js',
   'src/product-extractor.js',
   'src/openai-manager.js',
   'src/assistant-manager-ui.js',
-  'src/ChatManager.js',
   'src/marketplace.js',
   'src/ui.js',
   'src/main.js',
   'src/init.js',
-  'src/entry.js',          
-  'src/extensions.js',
-  'src/diagnostics.js',
-  
-  // New essential files created during implementation
-  'src/conversation-analyzer.js',
-  'src/responseManager.js',
-  'src/human-simulator.js',
-  'src/product-extractor.js',
-  'src/openai-manager.js',
-  'src/assistant-manager-ui.js',
-  'src/index.js',     
-  'src/envLoader.js', 
-  
-  // UI Components
-  'src/ui/controlPanel.js',
-  'src/ui/floatingControls.js',
-  
+  'src/entry.js',
+  'src/audio-transcriber.js',
+
   // Build scripts
   'scripts/build.js',
   'scripts/build-dev.js',
   'scripts/extract-source.js',
   'scripts/clean.js',
   'scripts/verify-structure.js',
-  
+
   // Configuration files
   'package.json',
   'package-lock.json',
   '.gitignore',
-  
+
   // Documentation
   'README.md',
   'CONTRIBUTING.md'

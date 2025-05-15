@@ -1,470 +1,603 @@
-// ----- FACEBOOK PRODUCT EXTRACTION -----
+/**
+ * Product Extractor Module
+ *
+ * Extracts detailed information from Facebook Marketplace products
+ */
+
+// Cache to store already extracted products and avoid repeated requests
+const productCache = {};
+
+// Load stored cache
+(function loadCachedProducts() {
+  try {
+    const savedCache = storageUtils.get('PRODUCT_CACHE', {});
+    Object.assign(productCache, savedCache);
+    logger.debug(`Loaded ${Object.keys(productCache).length} cached products from storage`);
+  } catch (error) {
+    logger.error('Error loading product cache', error);
+  }
+})();
+
+// Save cache periodically
+setInterval(() => {
+  try {
+    storageUtils.set('PRODUCT_CACHE', productCache);
+    logger.debug(`Saved ${Object.keys(productCache).length} product cache entries to storage`);
+  } catch (error) {
+    logger.error('Error saving product cache', error);
+  }
+}, 60000); // Every minute
 
 /**
- * Product Extractor - Handles extraction of product details from Facebook Marketplace
- * Uses Facebook's internal GraphQL API to extract comprehensive product data
+ * Extract product ID from URL
+ * @param {string} url - Product URL
+ * @returns {string|null} Product ID or null if not found
  */
-class ProductExtractor {
-  constructor() {
-    // Use CONFIG for cache settings instead of hardcoded values
-    this.productCache = new Map();
-    this.cacheTTL = CONFIG.product?.cacheTTL || 24 * 60 * 60 * 1000; // Default 24h if not in config
-    
-    // GraphQL query document IDs - could also come from config
-    this.docIds = CONFIG.graphQL?.docIds || {
-      productDetails: '5531412743583276',
-      productImages: '7129541003741089',
-      sellerInfo: '6218156281622605'
-    };
-    
-    // Statistics
-    this.stats = {
-      totalExtracted: 0,
-      cacheHits: 0,
-      cacheMisses: 0,
-      apiErrors: 0
-    };
-    
-    // Load cache from localStorage if available
-    this.loadCache();
-    
-    // Use CONFIG for cleanup interval timing
-    const cleanupInterval = CONFIG.product?.cleanupInterval || 60 * 60 * 1000; // Default 1h
-    setInterval(() => this.cleanupCache(), cleanupInterval);
-  }
-  
-  /**
-   * Extract product ID from current chat/conversation
-   * @returns {String|null} Product ID or null if not found
-   */
-  extractProductIdFromCurrentChat() {
-    try {
-      logger.debug('Attempting to extract product ID from current chat');
-      
-      // Method 1: Look for product links in the page
-      const productLinks = document.querySelectorAll('a[href*="/marketplace/item/"]');
-      if (productLinks.length > 0) {
-        for (const link of productLinks) {
-          const match = link.href.match(/\/marketplace\/item\/(\d+)/);
-          if (match && match[1]) {
-            logger.debug(`Found product ID ${match[1]} from link`);
-            return match[1];
-          }
-        }
-      }
-      
-      // Method 2: Look for data attributes that may contain product ID
-      const elements = document.querySelectorAll('[data-marketplace-id], [data-ft*="mf_story_key"]');
-      for (const element of elements) {
-        // Try data-marketplace-id attribute
-        const marketplaceId = element.getAttribute('data-marketplace-id');
-        if (marketplaceId) {
-          logger.debug(`Found product ID ${marketplaceId} from data-marketplace-id`);
-          return marketplaceId;
-        }
-        
-        // Try data-ft attribute which may contain product info in JSON
-        const dataFt = element.getAttribute('data-ft');
-        if (dataFt) {
-          try {
-            const ftData = JSON.parse(dataFt);
-            if (ftData.mf_story_key) {
-              logger.debug(`Found product ID ${ftData.mf_story_key} from data-ft`);
-              return ftData.mf_story_key;
-            }
-          } catch (e) {
-            // Ignore JSON parse errors
-          }
-        }
-      }
-      
-      // Method 3: Look for product ID in the URL
-      const urlMatch = window.location.href.match(/\/marketplace\/item\/(\d+)/);
-      if (urlMatch && urlMatch[1]) {
-        logger.debug(`Found product ID ${urlMatch[1]} from URL`);
-        return urlMatch[1];
-      }
-      
-      // Method 4: Look for meta tags that might contain product info
-      const metaTags = document.querySelectorAll('meta[property^="og:"]');
-      for (const tag of metaTags) {
-        const content = tag.getAttribute('content') || '';
-        if (content.includes('/marketplace/item/')) {
-          const metaMatch = content.match(/\/marketplace\/item\/(\d+)/);
-          if (metaMatch && metaMatch[1]) {
-            logger.debug(`Found product ID ${metaMatch[1]} from meta tag`);
-            return metaMatch[1];
-          }
-        }
-      }
-      
-      logger.debug('No product ID found in current chat');
-      return null;
-    } catch (error) {
-      logger.error(`Error extracting product ID: ${error.message}`);
-      return null;
-    }
-  }
-  
-  /**
-   * Get detailed product information using GraphQL API
-   * @param {String} productId - The product ID
-   * @returns {Promise<Object|null>} Product details or null if not found
-   */
-  async getProductDetails(productId) {
-    try {
-      if (!productId) {
-        logger.error('Cannot get product details: No product ID provided');
-        return null;
-      }
-      
-      logger.debug(`Getting product details for ID: ${productId}`);
-      
-      // Check cache first
-      if (this.productCache.has(productId)) {
-        const cachedProduct = this.productCache.get(productId);
-        // Check if cache is still valid
-        if (Date.now() - cachedProduct.timestamp < this.cacheTTL) {
-          logger.debug(`Product cache hit for ID: ${productId}`);
-          this.stats.cacheHits++;
-          return cachedProduct.data;
-        } else {
-          logger.debug(`Product cache expired for ID: ${productId}`);
-          this.productCache.delete(productId);
-        }
-      }
-      
-      this.stats.cacheMisses++;
-      
-      // Fetch product details using GraphQL
-      const productDetails = await this.fetchProductDetailsFromGraphQL(productId);
-      if (!productDetails) {
-        logger.error(`Failed to fetch product details for ID: ${productId}`);
-        return null;
-      }
-      
-      // Fetch additional high-res images if needed
-      if (productDetails.imageUrls && productDetails.imageUrls.length > 0) {
-        try {
-          const highResImages = await this.fetchHighResImages(productId);
-          if (highResImages && highResImages.length > 0) {
-            productDetails.highResImageUrls = highResImages;
-          }
-        } catch (imageError) {
-          logger.warn(`Could not fetch high-res images: ${imageError.message}`);
-        }
-      }
-      
-      // Cache the product
-      this.cacheProduct(productId, productDetails);
-      
-      // Update stats
-      this.stats.totalExtracted++;
-      
-      return productDetails;
-    } catch (error) {
-      this.stats.apiErrors++;
-      logger.error(`Error getting product details: ${error.message}`);
-      return null;
-    }
-  }
-  
-  /**
-   * Fetch product details using Facebook's GraphQL API
-   * @param {String} productId - The product ID
-   * @returns {Promise<Object|null>} Product details
-   */
-  async fetchProductDetailsFromGraphQL(productId) {
-    try {
-      logger.debug(`Fetching GraphQL data for product ID: ${productId}`);
-      
-      // Prepare GraphQL request
-      const variables = {
-        targetId: productId,
-        scale: 3,
-        environmentInfo: { isFullscreenModal: false }
-      };
-      
-      // Create form data for the request
-      const formData = new URLSearchParams();
-      formData.append('variables', JSON.stringify(variables));
-      formData.append('doc_id', this.docIds.productDetails);
-      
-      // Make the request
-      const response = await fetch('https://www.facebook.com/api/graphql/', {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: formData
-      });
-      
-      if (!response.ok) {
-        throw new Error(`GraphQL request failed with status: ${response.status}`);
-      }
-      
-      const result = await response.json();
-      
-      // Check for errors in the response
-      if (result.errors) {
-        throw new Error(`GraphQL errors: ${result.errors.map(e => e.message).join(', ')}`);
-      }
-      
-      // Extract product data
-      return this.parseProductData(result.data);
-    } catch (error) {
-      logger.error(`GraphQL request failed: ${error.message}`);
-      return null;
-    }
-  }
-  
-  /**
-   * Parse product data from GraphQL response
-   * @param {Object} data - GraphQL response data
-   * @returns {Object} Parsed product details
-   */
-  parseProductData(data) {
-    if (!data || !data.marketplace_product_details) {
-      throw new Error('Invalid product data structure');
-    }
-    
-    const product = data.marketplace_product_details;
-    
-    // Extract basic product details
-    const productDetails = {
-      id: product.id,
-      title: product.marketplace_listing_title || '',
-      price: product.listing_price?.formatted_amount || '',
-      description: product.description || '',
-      condition: product.condition || '',
-      location: product.location?.reverse_geocode?.city || '',
-      category: product.primary_listing_category?.name || '',
-      createdTime: product.creation_time || 0,
-      updatedTime: product.updated_time || 0,
-      url: `https://www.facebook.com/marketplace/item/${product.id}/`,
-      availability: product.availability_status || 'available',
-      currency: product.listing_price?.currency || 'USD'
-    };
-    
-    // Extract seller information
-    if (product.marketplace_listing_seller) {
-      productDetails.seller = {
-        id: product.marketplace_listing_seller.id || '',
-        name: product.marketplace_listing_seller.name || '',
-        profileUrl: product.marketplace_listing_seller.url || '',
-        profilePicture: product.marketplace_listing_seller.profile_picture?.uri || '',
-        verified: !!product.marketplace_listing_seller.is_verified
-      };
-    }
-    
-    // Extract images
-    productDetails.imageUrls = [];
-    if (product.listing_photos && product.listing_photos.length > 0) {
-      productDetails.imageUrls = product.listing_photos
-        .map(photo => photo.image?.uri)
-        .filter(uri => !!uri);
-    }
-    
-    // Extract additional attributes
-    productDetails.attributes = {};
-    if (product.custom_attributes && product.custom_attributes.length > 0) {
-      product.custom_attributes.forEach(attr => {
-        if (attr.name && attr.value) {
-          productDetails.attributes[attr.name] = attr.value;
-        }
-      });
-    }
-    
-    return productDetails;
-  }
-  
-  /**
-   * Fetch high-resolution images for a product
-   * @param {String} productId - The product ID
-   * @returns {Promise<Array<String>>} Array of high-res image URLs
-   */
-  async fetchHighResImages(productId) {
-    try {
-      // Prepare GraphQL request for high-res images
-      const variables = {
-        targetId: productId,
-        scale: 6 // Request higher scale for better resolution
-      };
-      
-      // Create form data for the request
-      const formData = new URLSearchParams();
-      formData.append('variables', JSON.stringify(variables));
-      formData.append('doc_id', this.docIds.productImages);
-      
-      // Make the request
-      const response = await fetch('https://www.facebook.com/api/graphql/', {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: formData
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Image request failed with status: ${response.status}`);
-      }
-      
-      const result = await response.json();
-      
-      // Extract image URLs
-      if (result.data && result.data.node && result.data.node.listing_photos) {
-        return result.data.node.listing_photos
-          .map(photo => photo.image?.uri)
-          .filter(uri => !!uri);
-      }
-      
-      return [];
-    } catch (error) {
-      logger.warn(`Failed to fetch high-res images: ${error.message}`);
-      return [];
-    }
-  }
-  
-  /**
-   * Cache a product for future reference
-   * @param {String} productId - The product ID
-   * @param {Object} productData - The product data
-   */
-  cacheProduct(productId, productData) {
-    this.productCache.set(productId, {
-      data: productData,
-      timestamp: Date.now()
-    });
-    
-    // Save to localStorage (with size limit)
-    this.saveCache();
-    
-    logger.debug(`Product ${productId} cached`);
-  }
-  
-  /**
-   * Clean up expired entries from cache
-   */
-  cleanupCache() {
-    const now = Date.now();
-    let removedCount = 0;
-    
-    for (const [productId, entry] of this.productCache.entries()) {
-      if (now - entry.timestamp > this.cacheTTL) {
-        this.productCache.delete(productId);
-        removedCount++;
+function extractProductIdFromUrl(url) {
+  try {
+    if (!url) return null;
+
+    // Try various URL patterns
+    const patterns = [
+      /marketplace\/item\/(\d+)/i,
+      /marketplace\/item\.php\?id=(\d+)/i,
+      /item\/(\d+)/i
+    ];
+
+    for (const pattern of patterns) {
+      const match = url.match(pattern);
+      if (match && match[1]) {
+        return match[1];
       }
     }
-    
-    if (removedCount > 0) {
-      logger.debug(`Cleaned up ${removedCount} expired product cache entries`);
-      this.saveCache();
-    }
-  }
-  
-  /**
-   * Load product cache from localStorage
-   */
-  loadCache() {
-    try {
-      const cachedData = localStorage.getItem('FB_CHAT_MONITOR_PRODUCT_CACHE');
-      if (cachedData) {
-        const parsed = JSON.parse(cachedData);
-        Object.entries(parsed).forEach(([id, entry]) => {
-          this.productCache.set(id, entry);
-        });
-        logger.debug(`Loaded ${this.productCache.size} product cache entries from storage`);
-      }
-    } catch (error) {
-      logger.error(`Failed to load product cache: ${error.message}`);
-      // Initialize empty cache if load fails
-      this.productCache = new Map();
-    }
-  }
-  
-  /**
-   * Save product cache to localStorage
-   */
-  saveCache() {
-    try {
-      // Convert Map to object for storage
-      const cacheObject = {};
-      for (const [id, data] of this.productCache.entries()) {
-        cacheObject[id] = data;
-      }
-      
-      // Check size and trim if necessary (localStorage has ~5MB limit)
-      const jsonData = JSON.stringify(cacheObject);
-      if (jsonData.length > 4 * 1024 * 1024) { // 4MB limit
-        logger.warn('Product cache exceeds 4MB, trimming older entries');
-        this.trimCacheToFit(3 * 1024 * 1024); // Trim to 3MB
-      } else {
-        localStorage.setItem('FB_CHAT_MONITOR_PRODUCT_CACHE', jsonData);
-        logger.debug(`Saved ${this.productCache.size} product cache entries to storage`);
-      }
-    } catch (error) {
-      logger.error(`Failed to save product cache: ${error.message}`);
-    }
-  }
-  
-  /**
-   * Trim cache to fit within size limit
-   * @param {Number} maxSize - Maximum size in bytes
-   */
-  trimCacheToFit(maxSize) {
-    // Convert entries to array and sort by timestamp (oldest first)
-    const entries = Array.from(this.productCache.entries())
-      .sort((a, b) => a[1].timestamp - b[1].timestamp);
-    
-    // Create new object and add entries until we reach the size limit
-    const newCache = {};
-    let currentSize = 0;
-    let entriesAdded = 0;
-    
-    for (const [id, data] of entries) {
-      const entrySize = JSON.stringify({[id]: data}).length;
-      if (currentSize + entrySize <= maxSize) {
-        newCache[id] = data;
-        currentSize += entrySize;
-        entriesAdded++;
-      } else {
-        this.productCache.delete(id);
-      }
-    }
-    
-    // Update the cache Map to match
-    this.productCache = new Map(Object.entries(newCache));
-    
-    localStorage.setItem('FB_CHAT_MONITOR_PRODUCT_CACHE', JSON.stringify(newCache));
-    logger.debug(`Trimmed cache to ${entriesAdded} entries (${Math.round(currentSize/1024)}KB)`);
-  }
-  
-  /**
-   * Get statistics about product extraction
-   * @returns {Object} Statistics
-   */
-  getStats() {
-    return {
-      ...this.stats,
-      cacheSize: this.productCache.size,
-      cacheHitRate: this.stats.totalExtracted > 0 ? 
-        Math.round(this.stats.cacheHits / (this.stats.cacheHits + this.stats.cacheMisses) * 100) : 0
-    };
-  }
-  
-  /**
-   * Clear product cache
-   */
-  clearCache() {
-    this.productCache.clear();
-    localStorage.removeItem('FB_CHAT_MONITOR_PRODUCT_CACHE');
-    logger.log('Product cache cleared');
+
+    return null;
+  } catch (error) {
+    logger.error('Error extracting product ID from URL', error);
+    return null;
   }
 }
 
-// Create and export the Product Extractor instance
-const productExtractor = new ProductExtractor();
-// only one global instance:
-window.productExtractor = productExtractor;
+/**
+ * Extract product details from HTML using embedded JSON
+ * @param {Document} doc - HTML Document
+ * @param {string} originalUrl - Original product URL
+ * @returns {Object|null} Product details or null if not found
+ */
+function extractFromInlineJson(doc, originalUrl) {
+  logger.debug('[ProductExtractor] Extracting data from embedded JSON...');
+  const scripts = doc.querySelectorAll('script');
+  let mainJsonData = null;
+  let mediaJsonData = null;
+  const mainPrefix = 'adp_MarketplacePDPContainerQueryRelayPreloader_';
+  const mediaPrefix = 'adp_MarketplacePDPC2CMediaViewerWithImagesQueryRelayPreloader_';
+
+  for (const script of scripts) {
+    const scriptContent = script.textContent;
+    if (!scriptContent) continue;
+
+    const mainSearchKey = '"' + mainPrefix;
+    const mediaSearchKey = '"' + mediaPrefix;
+
+    let keyStartIndex = -1;
+    let isMainData = false;
+
+    // Search for main JSON
+    if (!mainJsonData) {
+      keyStartIndex = scriptContent.indexOf(mainSearchKey);
+      if (keyStartIndex !== -1) isMainData = true;
+    }
+
+    // Search for media JSON
+    if (keyStartIndex === -1 && !mediaJsonData) {
+      keyStartIndex = scriptContent.indexOf(mediaSearchKey);
+      if (keyStartIndex !== -1) isMainData = false;
+    }
+
+    if (keyStartIndex === -1) continue;
+
+    try {
+      // Find JSON object delimiters
+      const keyEndIndex = scriptContent.indexOf('"', keyStartIndex + 1);
+      if (keyEndIndex === -1) continue;
+      const commaIndex = scriptContent.indexOf(',', keyEndIndex);
+      if (commaIndex === -1) continue;
+      const openBraceIndex = scriptContent.indexOf('{', commaIndex);
+      if (openBraceIndex === -1) continue;
+
+      let braceCount = 1;
+      let currentPos = openBraceIndex + 1;
+      // Manually search for closing brace, ignoring string content
+      while (currentPos < scriptContent.length && braceCount > 0) {
+        const char = scriptContent[currentPos];
+        if (char === '{') braceCount++;
+        else if (char === '}') braceCount--;
+        else if (char === '"') { // Skip strings
+          currentPos++;
+          while (currentPos < scriptContent.length) {
+            if (scriptContent[currentPos] === '\\') currentPos++; // Skip escaped character
+            else if (scriptContent[currentPos] === '"') break; // End of string
+            currentPos++;
+          }
+        }
+        currentPos++;
+      }
+
+      if (braceCount === 0) {
+        const closeBraceIndex = currentPos - 1;
+        const potentialJsonString = scriptContent.substring(openBraceIndex, closeBraceIndex + 1);
+        try {
+          const parsedJson = JSON.parse(potentialJsonString);
+          logger.debug(`[ProductExtractor] Parsed JSON (${isMainData ? 'Main' : 'Media'}).`);
+
+          if (isMainData) {
+            if (parsedJson?.__bbox?.result?.data?.viewer?.marketplace_product_details_page?.target) {
+              mainJsonData = parsedJson;
+            } else logger.debug('[ProductExtractor] Incorrect main structure.');
+          } else {
+            if (parsedJson?.__bbox?.result?.data?.viewer?.marketplace_product_details_page?.target?.listing_photos) {
+              mediaJsonData = parsedJson;
+            } else logger.debug('[ProductExtractor] Incorrect media structure.');
+          }
+          if (mainJsonData && mediaJsonData) break; // Exit if we have both
+        } catch (parseError) {
+          logger.warn(`[ProductExtractor] Error parsing JSON (${isMainData ? 'Main' : 'Media'}):`, parseError);
+        }
+      }
+    } catch (e) {
+      logger.error(`[ProductExtractor] Error processing script (${isMainData ? 'Main' : 'Media'}):`, e);
+    }
+  }
+
+  // Process data if main JSON was found
+  if (mainJsonData) {
+    try {
+      const target = mainJsonData.__bbox.result.data.viewer.marketplace_product_details_page.target;
+      const seller = target.marketplace_listing_seller;
+      const location = target.location?.reverse_geocode_detailed;
+
+      let allImages = [];
+      // Extract images from media JSON if it exists
+      if (mediaJsonData) {
+        try {
+          const photos = mediaJsonData.__bbox.result.data.viewer.marketplace_product_details_page.target.listing_photos;
+          if (photos && Array.isArray(photos)) {
+            allImages = photos.map(photo => photo?.image?.uri).filter(Boolean);
+          }
+        } catch (e) {
+          logger.warn('[ProductExtractor] Error extracting images from media JSON:', e);
+        }
+      }
+
+      // Ensure the primary image is in the list
+      const primaryImageUri = target.primary_listing_photo?.listing_image?.uri;
+      if (primaryImageUri && !allImages.includes(primaryImageUri)) {
+        allImages.unshift(primaryImageUri);
+      }
+
+      // Format the price when it is present in amount but not in formatted_price
+      let formattedPrice = target.formatted_price?.text || '';
+      const amount = target.listing_price?.amount || '';
+      const currency = target.listing_price?.currency || '';
+
+      // If the formatted price is empty but we have amount and currency, create a custom format
+      if (!formattedPrice && amount) {
+        // Format the price according to the currency
+        if (currency === 'COP') {
+          formattedPrice = `$${parseInt(amount).toLocaleString('es-CO')} COP`;
+        } else if (currency === 'USD') {
+          formattedPrice = `$${parseInt(amount).toLocaleString('en-US')}`;
+        } else if (currency === 'EUR') {
+          formattedPrice = `€${parseInt(amount).toLocaleString('de-DE')}`;
+        } else {
+          // Generic format for other currencies
+          formattedPrice = `${currency} ${parseInt(amount).toLocaleString()}`;
+        }
+        logger.debug(`[ProductExtractor] Manually formatted price: ${formattedPrice}`);
+      }
+
+      const result = {
+        source: 'inline_json',
+        title: target.marketplace_listing_title || '',
+        description: target.redacted_description?.text || '',
+        price: formattedPrice, // Use the formatted price (original or generated)
+        currency: target.listing_price?.currency || '',
+        amount: target.listing_price?.amount || '',
+        url: target.story?.url || originalUrl,
+        listingId: target.id || '',
+        image: allImages.length > 0 ? allImages[0] : '',
+        imageUrls: allImages,
+        sellerName: seller?.name || '',
+        sellerId: seller?.id || '',
+        sellerProfilePic: seller?.profile_picture?.uri || '',
+        categoryName: target.marketplace_listing_category_name || '',
+        isSold: target.is_sold || false,
+        isLive: target.is_live || false,
+        city: location?.city || '',
+        state: location?.state || '',
+        postalCode: location?.postal_code || '',
+        extractedFrom: 'inline_json'
+      };
+      logger.debug('[ProductExtractor] Extraction completed from embedded JSON.');
+      return result;
+    } catch (error) {
+      logger.error('[ProductExtractor] Error processing main JSON data:', error);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extract product details from the DOM as a fallback
+ * @param {Document} doc - HTML Document
+ * @param {string} productId - Product ID
+ * @returns {Object} Product details
+ */
+function extractFromDOM(doc, productId) {
+  logger.debug('[ProductExtractor] Extracting basic data from DOM...');
+
+  try {
+    // Try to extract the title
+    let title = 'Marketplace';
+    const titleElements = doc.querySelectorAll('h1, span.x193iq5w');
+    for (const el of titleElements) {
+      if (el.textContent && el.textContent.trim().length > 0 && el.textContent.trim() !== 'Marketplace') {
+        title = el.textContent.trim();
+        break;
+      }
+    }
+
+    // Try to extract the price
+    let price = '';
+    const priceElements = doc.querySelectorAll('.x193iq5w.xeuugli.x13faqbe.x1vvkbs, span[dir="auto"] > span');
+    for (const el of priceElements) {
+      if (el.textContent && /\$|€|£|¥|₹|₽|¢|₩|₴|₦|₫|₱/i.test(el.textContent)) {
+        price = el.textContent.trim();
+        break;
+      }
+    }
+
+    // Try to extract the description
+    let description = '';
+    const descElements = doc.querySelectorAll('span[dir="auto"], div[data-ad-comet-preview="message"], div[data-contents="true"]');
+    for (const el of descElements) {
+      if (el.textContent && el.textContent.length > 50 && !el.textContent.includes('Marketplace')) {
+        description = el.textContent.trim();
+        break;
+      }
+    }
+
+    // If a long description was not found, use text from the chat
+    if (!description || description.length < 50) {
+      // Try to get it from the message content
+      const chatElements = doc.querySelectorAll('div[role="row"] div[dir="auto"]');
+      if (chatElements.length > 0) {
+        // Use the last message as an approximate description
+        description = chatElements[chatElements.length - 1].textContent.trim();
+      }
+    }
+
+    // Try to extract images
+    const imageUrls = [];
+    const imageElements = doc.querySelectorAll('img[src*="scontent"], img[src*="fbcdn"]');
+    for (const img of imageElements) {
+      if (img.src && !img.src.includes('profile') && !imageUrls.includes(img.src)) {
+        imageUrls.push(img.src);
+        if (imageUrls.length >= 5) break; // Limit to 5 images
+      }
+    }
+
+    const result = {
+      id: productId,
+      title,
+      price,
+      description,
+      imageUrls,
+      extractedFromDOM: true,
+      extractedFrom: 'dom-fallback'
+    };
+
+    logger.debug('[ProductExtractor] Extracted basic product details from DOM', result);
+    return result;
+  } catch (error) {
+    logger.error('[ProductExtractor] Error extracting from DOM', error);
+    return {
+      id: productId,
+      title: 'Marketplace',
+      price: '',
+      description: '',
+      imageUrls: [],
+      extractedFromDOM: true,
+      extractedFrom: 'dom-error'
+    };
+  }
+}
+
+/**
+ * Fetch product details using GM_xmlhttpRequest
+ * @param {string} productId - Product ID
+ * @param {string} url - URL to get the details
+ * @returns {Promise<Object>} Product details
+ */
+function fetchProductWithGM(productId, url) {
+  return new Promise((resolve, reject) => {
+    logger.debug('[ProductExtractor] Using GM_xmlhttpRequest to fetch HTML for product:', { productId, url });
+
+    // Check if it is already cached
+    if (productCache[productId]) {
+      logger.debug(`[ProductExtractor] Product ${productId} found in cache`);
+      // Show the complete details of the product in cache
+      console.log("--- CACHED PRODUCT DATA ---");
+      console.log(JSON.stringify(productCache[productId], null, 2));
+      console.log("--- END PRODUCT DATA ---");
+      return resolve(productCache[productId]);
+    }
+
+    // Use GM_xmlhttpRequest to get the HTML of the product page
+    if (typeof GM_xmlhttpRequest !== 'function') {
+      return reject(new Error('GM_xmlhttpRequest not available'));
+    }
+
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: url,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+      },
+      timeout: 15000,
+      onload: function (response) {
+        if (response.status >= 200 && response.status < 300) {
+          try {
+            const doc = new DOMParser().parseFromString(response.responseText, 'text/html');
+
+            // First try to extract data from the embedded JSON
+            let productDetails = extractFromInlineJson(doc, url);
+
+            // If JSON extraction failed, extract basic data from the DOM
+            if (!productDetails) {
+              logger.warn('[ProductExtractor] Inline JSON extraction failed for ' + productId + ', trying DOM extraction fallback');
+              productDetails = extractFromDOM(doc, productId);
+            }
+
+            // Store in cache
+            productCache[productId] = productDetails;
+            logger.debug(`[ProductExtractor] Product ${productId} cached`);
+
+            // Show the complete details of the extracted product
+            console.log("--- EXTRACTED PRODUCT DATA ---");
+            console.log(JSON.stringify(productDetails, null, 2));
+            console.log("--- END PRODUCT DATA ---");
+
+            resolve(productDetails);
+          } catch (error) {
+            logger.error('[ProductExtractor] Error parsing product HTML', error);
+
+            // Try DOM fallback even if parsing fails
+            try {
+              const fallbackDetails = extractFromDOM(new DOMParser().parseFromString(response.responseText, 'text/html'), productId);
+              productCache[productId] = fallbackDetails;
+
+              // Show fallback details
+              console.log("--- PRODUCT DATA (FALLBACK) ---");
+              console.log(JSON.stringify(fallbackDetails, null, 2));
+              console.log("--- END PRODUCT DATA ---");
+
+              resolve(fallbackDetails);
+            } catch (fallbackError) {
+              reject(fallbackError);
+            }
+          }
+        } else {
+          reject(new Error(`HTTP Error: ${response.status}`));
+        }
+      },
+      onerror: function (error) {
+        logger.error('[ProductExtractor] GM_xmlhttpRequest network error for product ' + productId, { error: JSON.stringify(error) });
+        reject(error);
+      },
+      ontimeout: function () {
+        reject(new Error('Request timeout'));
+      }
+    });
+  });
+}
+
+/**
+ * Extracts product details from the current page's DOM in chat
+ * @returns {Object|null} Product details or null if not found
+ */
+function extractProductDetailsFromCurrentPage() {
+  logger.debug('[ProductExtractor] Attempting DOM extraction fallback for product details');
+
+  try {
+    // Get product ID from the current URL
+    let productId = null;
+    const productLink = document.querySelector('a[href*="/marketplace/item/"]');
+
+    if (productLink) {
+      productId = extractProductIdFromUrl(productLink.href);
+    }
+
+    if (!productId) {
+      logger.warn('[ProductExtractor] No product ID found in current page');
+      return null;
+    }
+
+    // If the product is cached, return it
+    if (productCache[productId]) {
+      // Show the product details in cache
+      console.log("--- CACHED PRODUCT DATA (DOM) ---");
+      console.log(JSON.stringify(productCache[productId], null, 2));
+      console.log("--- END PRODUCT DATA ---");
+      return productCache[productId];
+    }
+
+    // Extract basic details from the DOM
+    const result = extractFromDOM(document, productId);
+
+    // Save to cache
+    productCache[productId] = result;
+    logger.debug(`[ProductExtractor] Product ${productId} cached from DOM extraction`);
+
+    // Show the product details extracted from the DOM
+    console.log("--- PRODUCT DATA EXTRACTED FROM DOM ---");
+    console.log(JSON.stringify(result, null, 2));
+    console.log("--- END PRODUCT DATA ---");
+
+    return result;
+  } catch (error) {
+    logger.error('[ProductExtractor] Error extracting product details from current page', error);
+    return null;
+  }
+}
+
+/**
+ * Extract product ID from the current chat by searching for links in the DOM
+ * @returns {string|null} Product ID or null if not found
+ */
+function extractProductIdFromCurrentChat() {
+  try {
+    logger.debug('Attempting to extract product ID from current chat');
+
+    // Search for Marketplace product links in the current conversation
+    const productLinks = document.querySelectorAll('a[href*="/marketplace/item/"]');
+
+    if (productLinks.length === 0) {
+      // If no direct links were found, search in text elements
+      const marketplaceRefs = document.querySelectorAll('div[role="row"] div[dir="auto"] a');
+      for (const ref of marketplaceRefs) {
+        if (ref.href && ref.href.includes('/marketplace/item/')) {
+          const productId = extractProductIdFromUrl(ref.href);
+          if (productId) {
+            logger.debug(`Found product ID ${productId} from text reference`);
+            return productId;
+          }
+        }
+      }
+
+      // Search in iframe or embedded elements
+      const embeddedLinks = document.querySelectorAll('iframe[src*="marketplace"], div[data-testid*="marketplace"]');
+      for (const embed of embeddedLinks) {
+        const src = embed.src || embed.getAttribute('data-testid');
+        if (src) {
+          const matches = src.match(/marketplace\/item\/(\d+)/i);
+          if (matches && matches[1]) {
+            logger.debug(`Found product ID ${matches[1]} from embedded element`);
+            return matches[1];
+          }
+        }
+      }
+
+      logger.debug('No product links found in current chat');
+      return null;
+    }
+
+    // Get the product link (use the first one found)
+    const productLink = productLinks[0].href;
+    const productId = extractProductIdFromUrl(productLink);
+
+    if (productId) {
+      logger.debug(`Found product ID ${productId} from link`);
+      logger.debug(`Product link found: ${productLink}`);
+      return productId;
+    }
+
+    logger.debug('Could not extract product ID from link');
+    return null;
+  } catch (error) {
+    logger.error('Error extracting product ID from current chat:', error);
+    return null;
+  }
+}
+
+/**
+ * Gets details of a product by its ID
+ * @param {string} productId - Product ID
+ * @param {string} [url] - Optional product URL
+ * @returns {Promise<Object>} Product details
+ */
+async function getProductDetails(productId, url = null) {
+  try {
+    if (!productId) {
+      throw new Error('Product ID is required');
+    }
+
+    // If the product is already cached, return the cached version
+    if (productCache[productId]) {
+      logger.debug(`Retrieved product ${productId} from cache`);
+      return productCache[productId];
+    }
+
+    // Build URL if not provided
+    if (!url) {
+      url = `https://www.facebook.com/marketplace/item/${productId}/`;
+    }
+
+    logger.debug(`Fetching product details for ID: ${productId} from URL: ${url}`);
+
+    try {
+      // Try to get details using GM_xmlhttpRequest
+      const productDetails = await fetchProductWithGM(productId, url);
+      return productDetails;
+    } catch (error) {
+      // If the request fails, try to extract details from the DOM of the current page
+      logger.warn(`Failed to fetch product ${productId} from URL: ${error.message}`);
+      logger.debug('Attempting DOM extraction fallback');
+
+      const fallbackDetails = extractProductDetailsFromCurrentPage() || {
+        id: productId,
+        title: 'Unknown Product',
+        price: '',
+        description: '',
+        imageUrls: [],
+        extractedFromDOM: true,
+        extractedFrom: 'fallback-error'
+      };
+
+      // Save even limited details to the cache
+      productCache[productId] = fallbackDetails;
+
+      // If it is a default extraction, show it too
+      if (fallbackDetails.extractedFrom === 'fallback-error') {
+        console.log("--- PRODUCT DATA (DEFAULT FALLBACK) ---");
+        console.log(JSON.stringify(fallbackDetails, null, 2));
+        console.log("--- END PRODUCT DATA ---");
+      }
+
+      return fallbackDetails;
+    }
+  } catch (error) {
+    logger.error(`Error getting product details for ${productId}:`, error);
+    throw error;
+  }
+}
+
+// Add a function to manually inspect a product
+function inspectProduct(productId) {
+  if (!productId) {
+    const productLink = document.querySelector('a[href*="/marketplace/item/"]');
+    if (productLink) {
+      productId = extractProductIdFromUrl(productLink.href);
+    }
+  }
+
+  if (productId && productCache[productId]) {
+    console.log("--- MANUAL PRODUCT INSPECTION ---");
+    console.log(JSON.stringify(productCache[productId], null, 2));
+    console.log("--- END INSPECTION ---");
+    return productCache[productId];
+  } else {
+    console.error("No product with ID " + productId + " in cache to inspect");
+    return null;
+  }
+}
+
+// Export functions
+window.productExtractor = {
+  getProductDetails,
+  extractProductIdFromUrl,
+  extractProductIdFromCurrentChat,
+  inspectProduct  // New function for manual inspection
+};
