@@ -22,7 +22,7 @@ jobs:
       run: npm install
       
     - name: Build
-      run: npm run build-optimized
+      run: npm run rebuild:prod
       
     - name: Deploy to GitHub Pages
       if: github.ref == 'refs/heads/main'
@@ -31,8 +31,7 @@ jobs:
         git config --global user.email 'actions@github.com'
         git checkout -b gh-pages
         git rm -rf .
-        mkdir -p dist
-        cp dist/main.user.js main.user.js
-        git add main.user.js
+        cp dist/main.user.js . # Copy to root
+        git add main.user.js # Add the script
         git commit -m "Automated deployment $(date)"
         git push -f origin gh-pages
