@@ -4,12 +4,31 @@ const dotenv = require('dotenv');
 
 // File paths
 const headerPath = path.join(__dirname, '..', 'tampermonkey-header.js');
-const srcIndexPath = path.join(__dirname, '..', 'src', 'index.js');
-const srcUtilsPath = path.join(__dirname, '..', 'src', 'utils.js');
+// Corrected and extended source file paths to match extract-source.js and build.js
 const srcConfigPath = path.join(__dirname, '..', 'src', 'config.js');
-const srcChatManagerPath = path.join(__dirname, '..', 'src', 'chatManager.js');
-const srcAiServicePath = path.join(__dirname, '..', 'src', 'aiService.js');
-const srcEnvLoaderPath = path.join(__dirname, '..', 'src', 'envLoader.js');
+const srcUtilsPath = path.join(__dirname, '..', 'src', 'utils.js');
+const srcResponseManagerPath = path.join(__dirname, '..', 'src', 'responseManager.js');
+const srcHumanSimulatorPath = path.join(__dirname, '..', 'src', 'human-simulator.js');
+const srcProductExtractorPath = path.join(__dirname, '..', 'src', 'product-extractor.js');
+const srcOpenAIManagerPath = path.join(__dirname, '..', 'src', 'openai-manager.js');
+const srcAssistantManagerUiPath = path.join(__dirname, '..', 'src', 'assistant-manager-ui.js');
+const srcChatManagerPath = path.join(__dirname, '..', 'src', 'ChatManager.js'); // Corrected capitalization
+const srcMarketplacePath = path.join(__dirname, '..', 'src', 'marketplace.js');
+const srcUiPath = path.join(__dirname, '..', 'src', 'ui.js');
+const srcMainPath = path.join(__dirname, '..', 'src', 'main.js'); // Replaces srcIndexPath
+const srcInitPath = path.join(__dirname, '..', 'src', 'init.js');
+const srcEntryPath = path.join(__dirname, '..', 'src', 'entry.js');
+const srcExtensionsPath = path.join(__dirname, '..', 'src', 'extensions.js');
+const srcDiagnosticsPath = path.join(__dirname, '..', 'src', 'diagnostics.js');
+const srcAudioTranscriberPath = path.join(__dirname, '..', 'src', 'audio-transcriber.js');
+// const srcEnvLoaderPath = path.join(__dirname, '..', 'src', 'envLoader.js'); // Removed
+
+// Comment regarding file inclusion:
+// - audio-transcriber.js is now included in the build flow.
+// - aiService.js remains excluded as its functionality should be integrated elsewhere if needed.
+// - envLoader.js has been removed from the dev build as it's not actively used;
+//   config.js is modified to use a globally defined ENV object for development.
+
 const envPath = path.join(__dirname, '..', '.env');
 const outputPath = path.join(__dirname, '..', 'dist', 'dev.user.js');
 
@@ -31,17 +50,20 @@ function cleanModuleCode(code) {
   // Remove imports
   let cleaned = code.replace(/import\s+.*?from\s+['"].*?['"]\s*;?/g, '');
   cleaned = cleaned.replace(/import\s*{.*?}\s*from\s+['"].*?['"]\s*;?/g, '');
-  
+
   // Remove exports but keep definitions
+  cleaned = cleaned.replace(/export\s+default\s+/g, ''); // Handle export default
   cleaned = cleaned.replace(/export\s+const\s+(\w+)/g, 'const $1');
   cleaned = cleaned.replace(/export\s+function\s+(\w+)/g, 'function $1');
   cleaned = cleaned.replace(/export\s+class\s+(\w+)/g, 'class $1');
   cleaned = cleaned.replace(/export\s+async\s+function\s+(\w+)/g, 'async function $1');
-  
+
   // Remove export groups
   cleaned = cleaned.replace(/export\s*{[^}]*}/g, '');
-  
+
   return cleaned;
+  // Esta función elimina los imports/exports y los adapta para funcionar en un contexto global
+  // Es necesaria para tu enfoque actual
 }
 
 // Function to remove duplicate variable declarations
@@ -49,7 +71,7 @@ function removeDuplicates(code, isNotConfigModule = true) {
   if (isNotConfigModule) {
     // Remove any SELECTOR_UTILS redefinition
     code = code.replace(/const\s+SELECTOR_UTILS\s*=\s*{[\s\S]*?};/, '// Using SELECTOR_UTILS defined in CONFIG module');
-    
+
     // Remove duplicate backwards compatibility constants
     code = code.replace(/const\s+FB_MARKETPLACE_SELECTORS\s*=\s*CONFIG\.MARKETPLACE;/, '// FB_MARKETPLACE_SELECTORS already defined');
     code = code.replace(/const\s+MESSENGER_SELECTORS\s*=\s*CONFIG\.MESSENGER;/, '// MESSENGER_SELECTORS already defined');
@@ -60,24 +82,115 @@ function removeDuplicates(code, isNotConfigModule = true) {
 // Main function
 async function buildDevScript() {
   console.log('Creating development version for testing...');
-  
+
   try {
     // Read files
     const header = fs.readFileSync(headerPath, 'utf8');
-    
+
     // Read and clean modules
-    const configCode = cleanModuleCode(fs.readFileSync(srcConfigPath, 'utf8'));
-    const utilsCode = cleanModuleCode(fs.readFileSync(srcUtilsPath, 'utf8'));
-    const chatManagerCode = cleanModuleCode(fs.readFileSync(srcChatManagerPath, 'utf8'));
-    const aiServiceCode = cleanModuleCode(fs.readFileSync(srcAiServicePath, 'utf8'));
-    let envLoaderCode = '';
-    try {
-      envLoaderCode = cleanModuleCode(fs.readFileSync(srcEnvLoaderPath, 'utf8'));
-    } catch (err) {
-      console.log('envLoader.js not found, continuing without it');
+    // This list should mirror the one in extract-source.js for consistency, plus new files
+    const modules = [
+      // Config modular
+      { path: path.join(__dirname, '..', 'src', 'config', 'basicConfig.js'), sectionName: 'BASIC CONFIGURATION', varName: 'basicConfigCode' },
+      { path: path.join(__dirname, '..', 'src', 'config', 'aiConfig.js'), sectionName: 'AI CONFIGURATION', varName: 'aiConfigCode' },
+      { path: path.join(__dirname, '..', 'src', 'config', 'productConfig.js'), sectionName: 'PRODUCT CONFIGURATION', varName: 'productConfigCode' },
+      { path: path.join(__dirname, '..', 'src', 'config', 'audioTranscriptionConfig.js'), sectionName: 'AUDIO TRANSCRIPTION CONFIGURATION', varName: 'audioTranscriptionConfigCode' },
+      { path: path.join(__dirname, '..', 'src', 'config', 'selectors.js'), sectionName: 'SELECTORS CONFIGURATION', varName: 'selectorsConfigCode' },
+      { path: srcConfigPath, sectionName: 'CONFIGURATION', varName: 'configCode' },
+      
+      // Utils submodules
+      { path: path.join(__dirname, '..', 'src', 'utils/logger.js'), sectionName: 'UTILS - LOGGER', varName: 'utilsLoggerCode' },
+      { path: path.join(__dirname, '..', 'src', 'utils/domUtils.js'), sectionName: 'UTILS - DOM UTILS', varName: 'utilsDomUtilsCode' },
+      { path: path.join(__dirname, '..', 'src', 'utils/storageUtils.js'), sectionName: 'UTILS - STORAGE UTILS', varName: 'utilsStorageUtilsCode' },
+      { path: path.join(__dirname, '..', 'src', 'utils/userActivityTracker.js'), sectionName: 'UTILS - USER ACTIVITY TRACKER', varName: 'utilsUserActivityTrackerCode' },
+      { path: path.join(__dirname, '..', 'src', 'utils/retryUtils.js'), sectionName: 'UTILS - RETRY UTILS', varName: 'utilsRetryUtilsCode' },
+      { path: path.join(__dirname, '..', 'src', 'utils/timeUtils.js'), sectionName: 'UTILS - TIME UTILS', varName: 'utilsTimeUtilsCode' },
+      { path: path.join(__dirname, '..', 'src', 'utils/pageUtils.js'), sectionName: 'UTILS - PAGE UTILS', varName: 'utilsPageUtilsCode' },
+      { path: path.join(__dirname, '..', 'src', 'utils/facebookUtils.js'), sectionName: 'UTILS - FACEBOOK UTILS', varName: 'utilsFacebookUtilsCode' },
+      { path: path.join(__dirname, '..', 'src', 'utils/generalUtils.js'), sectionName: 'UTILS - GENERAL UTILS', varName: 'utilsGeneralUtilsCode' },
+      { path: srcUtilsPath, sectionName: 'UTILITIES', varName: 'utilsCode' },
+      
+      // Product-extractor submodules
+      { path: path.join(__dirname, '..', 'src', 'product-extractor', 'cacheManager.js'), sectionName: 'PRODUCT EXTRACTOR - CACHE MANAGER', varName: 'productExtractorCacheManagerCode' },
+      { path: path.join(__dirname, '..', 'src', 'product-extractor', 'idExtractor.js'), sectionName: 'PRODUCT EXTRACTOR - ID EXTRACTOR', varName: 'productExtractorIdExtractorCode' },
+      { path: path.join(__dirname, '..', 'src', 'product-extractor', 'detailsExtractor.js'), sectionName: 'PRODUCT EXTRACTOR - DETAILS EXTRACTOR', varName: 'productExtractorDetailsExtractorCode' },
+      { path: path.join(__dirname, '..', 'src', 'product-extractor', 'htmlExtractor.js'), sectionName: 'PRODUCT EXTRACTOR - HTML EXTRACTOR', varName: 'productExtractorHtmlExtractorCode' },
+      { path: path.join(__dirname, '..', 'src', 'product-extractor', 'utils.js'), sectionName: 'PRODUCT EXTRACTOR - UTILS', varName: 'productExtractorUtilsCode' },
+      { path: srcProductExtractorPath, sectionName: 'PRODUCT INFORMATION EXTRACTION', varName: 'productExtractorCode' },
+      { path: path.join(__dirname, '..', 'src', 'openai-manager/apiKeyManager.js'), sectionName: 'OPENAI MANAGER - API KEY MANAGER', varName: 'openAIapiKeyManagerCode' },
+      { path: path.join(__dirname, '..', 'src', 'openai-manager/assistantManager.js'), sectionName: 'OPENAI MANAGER - ASSISTANT MANAGER', varName: 'openAIassistantManagerCode' },
+      { path: path.join(__dirname, '..', 'src', 'openai-manager/threadManager.js'), sectionName: 'OPENAI MANAGER - THREAD MANAGER', varName: 'openAIthreadManagerCode' },
+      { path: path.join(__dirname, '..', 'src', 'openai-manager/messageHandler.js'), sectionName: 'OPENAI MANAGER - MESSAGE HANDLER', varName: 'openAImessageHandlerCode' },
+      { path: srcOpenAIManagerPath, sectionName: 'OPENAI INTEGRATION', varName: 'openAICode' },
+      { path: path.join(__dirname, '..', 'src', 'AudioTranscriber', 'audioCache.js'), sectionName: 'AUDIO TRANSCRIBER - AUDIO CACHE', varName: 'audioCacheCode' },
+      { path: path.join(__dirname, '..', 'src', 'AudioTranscriber', 'audioDetector.js'), sectionName: 'AUDIO TRANSCRIBER - AUDIO DETECTOR', varName: 'audioDetectorCode' },
+      { path: path.join(__dirname, '..', 'src', 'AudioTranscriber', 'audioNotifier.js'), sectionName: 'AUDIO TRANSCRIBER - AUDIO NOTIFIER', varName: 'audioNotifierCode' },
+      { path: path.join(__dirname, '..', 'src', 'AudioTranscriber', 'audioObserver.js'), sectionName: 'AUDIO TRANSCRIBER - AUDIO OBSERVER', varName: 'audioObserverCode' },
+      { path: path.join(__dirname, '..', 'src', 'AudioTranscriber', 'audioTranscriptionService.js'), sectionName: 'AUDIO TRANSCRIBER - AUDIO TRANSCRIPTION SERVICE', varName: 'audioTranscriptionServiceCode' },
+      { path: srcAudioTranscriberPath, sectionName: 'AUDIO TRANSCRIBER CORE', varName: 'audioTranscriberCode' },
+      // AssistantManagerUI new modules
+      { path: path.join(__dirname, '..', 'src', 'AssistantManagerUI', 'createStyles.js'), sectionName: 'ASSISTANT MANAGER UI - CREATE STYLES', varName: 'assistantManagerUiCreateStylesCode' },
+      { path: path.join(__dirname, '..', 'src', 'AssistantManagerUI', 'createPanel.js'), sectionName: 'ASSISTANT MANAGER UI - CREATE PANEL', varName: 'assistantManagerUiCreatePanelCode' },
+      { path: path.join(__dirname, '..', 'src', 'AssistantManagerUI', 'attachEvents.js'), sectionName: 'ASSISTANT MANAGER UI - ATTACH EVENTS', varName: 'assistantManagerUiAttachEventsCode' },
+      { path: path.join(__dirname, '..', 'src', 'AssistantManagerUI', 'saveAssistant.js'), sectionName: 'ASSISTANT MANAGER UI - SAVE ASSISTANT', varName: 'assistantManagerUiSaveAssistantCode' },
+      { path: path.join(__dirname, '..', 'src', 'AssistantManagerUI', 'showStatus.js'), sectionName: 'ASSISTANT MANAGER UI - SHOW STATUS', varName: 'assistantManagerUiShowStatusCode' },
+      { path: srcAssistantManagerUiPath, sectionName: 'ASSISTANT MANAGEMENT UI CORE', varName: 'assistantManagerUiCode' },
+      // ChatManager new modules
+      { path: path.join(__dirname, '..', 'src', 'ChatManager/helpers/timeConverter.js'), sectionName: 'CHAT MANAGER - TIME CONVERTER', varName: 'chatManagerTimeConverterCode' },
+      { path: path.join(__dirname, '..', 'src', 'ChatManager/helpers/chatStateUtils.js'), sectionName: 'CHAT MANAGER - CHAT STATE UTILS', varName: 'chatManagerChatStateUtilsCode' },
+      { path: path.join(__dirname, '..', 'src', 'ChatManager/helpers/audioUtils.js'), sectionName: 'CHAT MANAGER - AUDIO UTILS', varName: 'chatManagerAudioUtilsCode' },
+      { path: path.join(__dirname, '..', 'src', 'ChatManager/extractors/chatDataExtractor.js'), sectionName: 'CHAT MANAGER - CHAT DATA EXTRACTOR', varName: 'chatManagerChatDataExtractorCode' },
+      { path: path.join(__dirname, '..', 'src', 'ChatManager/scanners/inboxScanner.js'), sectionName: 'CHAT MANAGER - INBOX SCANNER', varName: 'chatManagerInboxScannerCode' },
+      { path: path.join(__dirname, '..', 'src', 'ChatManager/processors/chatOperations.js'), sectionName: 'CHAT MANAGER - CHAT OPERATIONS', varName: 'chatManagerChatOperationsCode' },
+      { path: srcChatManagerPath, sectionName: 'CHAT MANAGEMENT', varName: 'chatManagerCode' },
+      { path: srcMarketplacePath, sectionName: 'REDIRECTION TO MARKETPLACE', varName: 'marketplaceCode' },
+      // UI submodules
+      { path: path.join(__dirname, '..', 'src', 'ui/state.js'), sectionName: 'UI - STATE', varName: 'uiStateCode' },
+      { path: path.join(__dirname, '..', 'src', 'ui/styles.js'), sectionName: 'UI - STYLES', varName: 'uiStylesCode' },
+      { path: path.join(__dirname, '..', 'src', 'ui/utils.js'), sectionName: 'UI - UTILS', varName: 'uiUtilsCode' },
+      { path: path.join(__dirname, '..', 'src', 'ui/components/floatingButton.js'), sectionName: 'UI - FLOATING BUTTON', varName: 'uiFloatingButtonCode' },
+      { path: path.join(__dirname, '..', 'src', 'ui/components/controlPanel.js'), sectionName: 'UI - CONTROL PANEL', varName: 'uiControlPanelCode' },
+      { path: path.join(__dirname, '..', 'src', 'ui/components/tabs/dashboard.js'), sectionName: 'UI - TAB DASHBOARD', varName: 'uiTabDashboardCode' },
+      { path: path.join(__dirname, '..', 'src', 'ui/components/tabs/assistants.js'), sectionName: 'UI - TAB ASSISTANTS', varName: 'uiTabAssistantsCode' },
+      { path: path.join(__dirname, '..', 'src', 'ui/components/tabs/config.js'), sectionName: 'UI - TAB CONFIG', varName: 'uiTabConfigCode' },
+      { path: path.join(__dirname, '..', 'src', 'ui/components/tabs/logs.js'), sectionName: 'UI - TAB LOGS', varName: 'uiTabLogsCode' },
+      { path: path.join(__dirname, '..', 'src', 'ui/components/tabs/history.js'), sectionName: 'UI - TAB HISTORY', varName: 'uiTabHistoryCode' },
+      { path: path.join(__dirname, '..', 'src', 'ui/handlers/eventHandlers.js'), sectionName: 'UI - EVENT HANDLERS', varName: 'uiEventHandlersCode' },
+      { path: path.join(__dirname, '..', 'src', 'ui/handlers/assistantHandler.js'), sectionName: 'UI - ASSISTANT HANDLER', varName: 'uiAssistantHandlerCode' },
+      { path: path.join(__dirname, '..', 'src', 'ui/handlers/configHandler.js'), sectionName: 'UI - CONFIG HANDLER', varName: 'uiConfigHandlerCode' },
+      { path: path.join(__dirname, '..', 'src', 'ui/handlers/logsHandler.js'), sectionName: 'UI - LOGS HANDLER', varName: 'uiLogsHandlerCode' },
+      { path: path.join(__dirname, '..', 'src', 'ui/handlers/historyHandler.js'), sectionName: 'UI - HISTORY HANDLER', varName: 'uiHistoryHandlerCode' },
+      { path: srcUiPath, sectionName: 'USER INTERFACE', varName: 'uiCode' },
+      // Main flow modules
+      { path: path.join(__dirname, '..', 'src', 'main', 'createUI.js'), sectionName: 'CREATE UI', varName: 'mainCreateUICode' },
+      { path: path.join(__dirname, '..', 'src', 'main', 'initialize.js'), sectionName: 'INITIALIZE', varName: 'mainInitializeCode' },
+      { path: path.join(__dirname, '..', 'src', 'main', 'loadSavedSettings.js'), sectionName: 'LOAD SAVED SETTINGS', varName: 'mainLoadSavedSettingsCode' },
+      { path: path.join(__dirname, '..', 'src', 'main', 'setupAdaptiveMonitoring.js'), sectionName: 'SETUP ADAPTIVE MONITORING', varName: 'mainSetupAdaptiveMonitoringCode' },
+      { path: path.join(__dirname, '..', 'src', 'main', 'updateScanInterval.js'), sectionName: 'UPDATE SCAN INTERVAL', varName: 'mainUpdateScanIntervalCode' },
+      { path: path.join(__dirname, '..', 'src', 'main', 'toggleMonitoring.js'), sectionName: 'TOGGLE MONITORING', varName: 'mainToggleMonitoringCode' },
+      { path: path.join(__dirname, '..', 'src', 'main', 'updateMonitoringUI.js'), sectionName: 'UPDATE MONITORING UI', varName: 'mainUpdateMonitoringUICode' },
+      { path: path.join(__dirname, '..', 'src', 'main', 'runChatMonitor.js'), sectionName: 'RUN CHAT MONITOR', varName: 'mainRunChatMonitorCode' },
+      { path: path.join(__dirname, '..', 'src', 'main', 'resetMonitoringInterval.js'), sectionName: 'RESET MONITORING INTERVAL', varName: 'mainResetMonitoringIntervalCode' },
+      { path: path.join(__dirname, '..', 'src', 'main', 'incrementErrorCount.js'), sectionName: 'INCREMENT ERROR COUNT', varName: 'mainIncrementErrorCountCode' },
+      { path: path.join(__dirname, '..', 'src', 'main', 'getMonitoringStats.js'), sectionName: 'GET MONITORING STATS', varName: 'mainGetMonitoringStatsCode' },
+      { path: path.join(__dirname, '..', 'src', 'main', 'manualScan.js'), sectionName: 'MANUAL SCAN', varName: 'mainManualScanCode' },
+      { path: path.join(__dirname, '..', 'src', 'main', 'setupTranscriptionUpdates.js'), sectionName: 'SETUP TRANSCRIPTION UPDATES', varName: 'mainSetupTranscriptionUpdatesCode' },
+      { path: srcMainPath, sectionName: 'MAIN PROCESS', varName: 'mainCode' },
+      { path: srcInitPath, sectionName: 'INITIALIZATION', varName: 'initCode' },
+      { path: srcEntryPath, sectionName: 'ENTRY', varName: 'entryCode' },
+      { path: srcDiagnosticsPath, sectionName: 'API DIAGNOSTIC FUNCTION', varName: 'diagnosticsCode' },
+    ];
+
+    const loadedModules = {};
+    for (const moduleInfo of modules) {
+      try {
+        loadedModules[moduleInfo.varName] = cleanModuleCode(fs.readFileSync(moduleInfo.path, 'utf8'));
+      } catch (err) {
+        console.warn(`Warning: Could not read or clean module ${moduleInfo.path}: ${err.message}`);
+        loadedModules[moduleInfo.varName] = `// Module ${moduleInfo.path} not found or failed to load\n`;
+      }
     }
-    const indexCode = cleanModuleCode(fs.readFileSync(srcIndexPath, 'utf8'));
-    
+
     // Create development script
     let devScript = header + '\n\n';
     devScript += '(function() {\n';
@@ -85,7 +198,7 @@ async function buildDevScript() {
 
     // Log script loaded
     devScript += 'console.log(\'[FB-Chat-Monitor] Script loaded 🚀\');\n\n';
-    
+
     // Show visual notification when script loads
     devScript += 'const notifyScriptLoaded = () => {\n';
     devScript += '  const div = document.createElement(\'div\');\n';
@@ -106,7 +219,7 @@ async function buildDevScript() {
 
     // Enable development mode
     devScript += 'const DEBUG_MODE = true;\n\n';
-    
+
     // Environment variables
     devScript += 'const ENV = {\n';
     devScript += `  OPENAI_API_KEY: localStorage.getItem('FB_CHAT_MONITOR_OPENAI_KEY') || "${envVars.OPENAI_API_KEY || ''}",\n`;
@@ -117,7 +230,7 @@ async function buildDevScript() {
     devScript += `  DEBUG_MODE: ${envVars.DEBUG_MODE === 'true'},\n`;
     devScript += `  LOG_LEVEL: "${envVars.LOG_LEVEL || 'INFO'}"\n`;
     devScript += '};\n\n';
-    
+
     // AI Configuration
     devScript += 'const AI_CONFIG = {\n';
     devScript += '  enabled: !!ENV.OPENAI_API_KEY,\n';
@@ -127,37 +240,41 @@ async function buildDevScript() {
     devScript += '  temperature: ENV.AI_TEMPERATURE,\n';
     devScript += '  maxTokens: ENV.AI_MAX_TOKENS\n';
     devScript += '};\n\n';
-    
+
     // ----- CONFIG MODULE -----
-    const modifiedConfigCode = configCode
-      .replace(/import.*envLoader.*/, '')
-      .replace(/const ENV = loadEnv\(\);/, '// ENV already defined above')
+    // Special handling for config.js: remove its own env loading and use the global ENV
+    const modifiedConfigCode = loadedModules.configCode
+      .replace(/import.*envLoader.*/, '// Import from envLoader removed by build-dev.js')
+      .replace(/const ENV = loadEnv\(\);/, '// const ENV = loadEnv(); replaced by build-dev.js with global ENV object')
       .replace(/CONFIG\.AI\.apiKey\s*=\s*ENV\.OPENAI_API_KEY/, 'CONFIG.AI.apiKey = ENV.OPENAI_API_KEY || ""')
       .replace(/CONFIG\.AI\.model\s*=\s*ENV\.AI_MODEL/, 'CONFIG.AI.model = ENV.AI_MODEL || "gpt-3.5-turbo"')
       .replace(/CONFIG\.AI\.temperature\s*=\s*ENV\.AI_TEMPERATURE/, 'CONFIG.AI.temperature = ENV.AI_TEMPERATURE || 0.7')
       .replace(/CONFIG\.AI\.maxTokens\s*=\s*ENV\.AI_MAX_TOKENS/, 'CONFIG.AI.maxTokens = ENV.AI_MAX_TOKENS || 150')
       .replace(/CONFIG\.AI\.endpoint\s*=\s*ENV\.AI_ENDPOINT/, 'CONFIG.AI.endpoint = ENV.AI_ENDPOINT || "https://api.openai.com/v1/chat/completions"');
-    
+
     devScript += modifiedConfigCode + '\n\n';
-    
-    // ----- UTILS MODULE -----
-    devScript += removeDuplicates(utilsCode) + '\n\n';
-    
-    // ----- AI SERVICE MODULE -----
-    devScript += removeDuplicates(aiServiceCode) + '\n\n';
-    
-    // ----- CHAT MANAGER MODULE -----
-    devScript += removeDuplicates(chatManagerCode) + '\n\n';
-    
-    // ----- MAIN MODULE -----
-    devScript += removeDuplicates(indexCode) + '\n\n';
-    
+
+    // Concatenate other modules with section delimiters
+    for (const moduleInfo of modules) {
+      // Skip configCode as it's already handled
+      if (moduleInfo.varName === 'configCode') continue;
+
+      devScript += `// ----- ${moduleInfo.sectionName} -----\n\n`;
+      devScript += removeDuplicates(loadedModules[moduleInfo.varName], moduleInfo.varName !== 'configCode') + '\n\n';
+    }
+
     // ----- API EXPOSURE -----
     // Define the monitoring object permanently in the global scope
     devScript += 'const FB_CHAT_MONITOR_API = {\n';
     devScript += '  chatManager,\n';
-    devScript += '  config: CONFIG,\n';
-    devScript += '  utils: SELECTOR_UTILS,\n';
+    devScript += '  config: CONFIG,\n'; // Ensure CONFIG is correctly referenced
+    devScript += '  utils: domUtils, // Assuming domUtils is the primary export from utils for API\n';
+    devScript += '  logger: logger,\n';
+    devScript += '  productExtractor: productExtractor,\n';
+    devScript += '  openAIManager: openAIManager,\n';
+    devScript += '  responseManager: responseManager,\n';
+    devScript += '  humanSimulator: humanSimulator,\n';
+    devScript += '  assistantManagerUI: assistantManagerUI,\n';
     devScript += '  runMonitor: runMarketplaceMonitor,\n';
     devScript += '  setLogLevel: (level) => {\n';
     devScript += '    console.log(`[FB-Chat-Monitor] Log level set to ${level}`);\n';
@@ -204,8 +321,9 @@ async function buildDevScript() {
     devScript += '    console.log(\'[FB-Chat-Monitor] Debug information:\');\n';
     devScript += '    console.log(\'- Script loaded: Yes\');\n';
     devScript += '    console.log(\'- API exposed: Yes\');\n';
-    devScript += '    console.log(\'- AI Config:\', AI_CONFIG);\n';
+    devScript += '    console.log(\'- CONFIG:\', CONFIG);\n'; // Changed from AI_CONFIG to full CONFIG
     devScript += '    console.log(\'- Current URL:\', window.location.href);\n';
+    devScript += '    // Add other relevant debug info here, e.g., chatManager.currentChatId\n';
     devScript += '    return "FB Chat Monitor is working! You can use this API.";\n';
     devScript += '  }\n';
     devScript += '};\n\n';
@@ -221,7 +339,7 @@ async function buildDevScript() {
     devScript += '    console.error(\'[FB-Chat-Monitor] Failed to expose API to global scope\');\n';
     devScript += '  }\n';
     devScript += '}, 2000);\n\n';
-    
+
     // Initialize based on current URL
     devScript += 'if (window.location.href.includes(\'facebook.com/marketplace\')) {\n';
     devScript += '  // Small delay to ensure the page is loaded\n';
@@ -230,16 +348,16 @@ async function buildDevScript() {
     devScript += '  // We’ll focus on Marketplace for now\n';
     devScript += '  console.log(\'[FB-Chat-Monitor] Messenger support coming soon!\');\n';
     devScript += '}\n\n';
-    
+
     devScript += 'console.log(\'[FB-Chat-Monitor] Script initialization complete\');\n';
     devScript += '})();';
-    
+
     // Write the file
     fs.writeFileSync(outputPath, devScript);
     console.log(`✅ Development script generated at ${outputPath}`);
-    
+
   } catch (error) {
-    console.error('❌ Error generating development script:', error);
+    console.error(`❌ Error building development script: ${error.message}`);
     process.exit(1);
   }
 }
