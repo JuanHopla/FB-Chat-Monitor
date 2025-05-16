@@ -7,16 +7,10 @@
     "dev": "node scripts/build.js dev",
     "build": "node scripts/build.js prod",
     "extract": "node scripts/extract-source.js",
-    "rebuild": "npm run extract && npm run dev",
-    "rebuild:prod": "npm run extract && npm run build",
     "watch": "chokidar \"src/**/*.js\" -c \"npm run dev\"",
     "clean": "rimraf dist && mkdir dist",
     "clean:obsolete": "node scripts/clean.js",
-    "verify": "node scripts/verify-structure.js",
-    "check-sources": "node scripts/check-sources.js",
-    "build:rollup": "rollup -c",
-    "build:rollup:dev": "rollup -c --environment NODE_ENV:development --no-strict",
-    "build:rollup:prod": "rollup -c --environment NODE_ENV:production --no-strict"
+    "verify": "node scripts/verify-structure.js"
   },
   "author": "JuanHopla",
   "license": "MIT",
