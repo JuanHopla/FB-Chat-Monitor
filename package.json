@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node scripts/build.js dev",
     "build": "node scripts/build.js prod",
+    "build-optimized": "node scripts/build.js prod",
     "extract": "node scripts/extract-source.js",
     "watch": "chokidar \"src/**/*.js\" -c \"npm run dev\"",
     "clean": "rimraf dist && mkdir dist",

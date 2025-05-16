@@ -23,8 +23,11 @@ jobs:
     - name: Install Dependencies
       run: npm install
       
+    - name: Create dist directory
+      run: mkdir -p dist
+      
     - name: Build Production Version
-      run: npm run build
+      run: npm run build-optimized
       
     - name: Deploy to GitHub Pages
       if: github.ref == 'refs/heads/main'
@@ -43,8 +46,8 @@ jobs:
         git rm -rf . --quiet || true
         
         # Copy the generated file
-        mkdir -p dist
-        cp dist/main.user.js main.user.js
+        echo "Copying main.user.js to root"
+        cp dist/main.user.js ./main.user.js
         
         # Add and commit
         git add main.user.js
