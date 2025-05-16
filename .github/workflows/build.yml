@@ -9,6 +9,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
 
     steps:
     - uses: actions/checkout@v2
@@ -39,7 +42,7 @@ jobs:
         git config --global user.name 'GitHub Actions'
         git config --global user.email 'actions@github.com'
         
-        # Guardar una copia del archivo generado antes de cambiar de rama
+        # Save a copy of the generated file before switching branches
         if [ -f "dist/main.user.js" ]; then
           echo "✅ Backing up dist/main.user.js"
           mkdir -p /tmp/build-backup
@@ -74,8 +77,10 @@ jobs:
         git add main.user.js
         git commit -m "Automated update $(date)"
         
-        # Publish
-        git push -f origin gh-pages-temp:gh-pages
+        # Publish 
+        git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/JuanHopla/FB-Chat-Monitor.git" gh-pages-temp:gh-pages
         
         # Return to the original branch
         git checkout -
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
