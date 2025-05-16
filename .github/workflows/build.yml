@@ -12,6 +12,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+      with:
+        persist-credentials: true
     
     - name: Setup Node.js
       uses: actions/setup-node@v2
@@ -21,17 +23,38 @@ jobs:
     - name: Install Dependencies
       run: npm install
       
-    - name: Build
-      run: npm run rebuild:prod
+    - name: Create dist directory
+      run: mkdir -p dist
+      
+    - name: Build Production Version
+      run: npm run build-optimized
       
     - name: Deploy to GitHub Pages
       if: github.ref == 'refs/heads/main'
       run: |
         git config --global user.name 'GitHub Actions'
         git config --global user.email 'actions@github.com'
-        git checkout -b gh-pages
-        git rm -rf .
-        cp dist/main.user.js . # Copy to root
-        git add main.user.js # Add the script
-        git commit -m "Automated deployment $(date)"
-        git push -f origin gh-pages
+        
+        # Create a temporary branch or use an existing one
+        if git show-ref --quiet refs/remotes/origin/gh-pages; then
+          git checkout -b gh-pages-temp origin/gh-pages
+        else
+          git checkout --orphan gh-pages-temp
+        fi
+        
+        # Clean previous content
+        git rm -rf . --quiet || true
+        
+        # Copy the generated file
+        echo "Copying main.user.js to root"
+        cp dist/main.user.js ./main.user.js
+        
+        # Add and commit
+        git add main.user.js
+        git commit -m "Automated update $(date)"
+        
+        # Publish
+        git push -f origin gh-pages-temp:gh-pages
+        
+        # Return to the original branch
+        git checkout -
