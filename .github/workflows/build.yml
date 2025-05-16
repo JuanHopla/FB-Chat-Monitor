@@ -80,7 +80,6 @@ jobs:
         # Publish 
         git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/JuanHopla/FB-Chat-Monitor.git" gh-pages-temp:gh-pages
         
-        # Return to the original branch
-        git checkout -
+        echo "Deployment completed successfully!"
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
