@@ -33,26 +33,22 @@ jobs:
       env:
         NODE_ENV: production
       
-    - name: Verify build artifacts
-      run: |
-        echo "Checking for build artifacts..."
-        if [ -f "dist/main.user.js" ]; then
-          echo "✅ dist/main.user.js found!"
-        elif [ -f "dist/dev.user.js" ]; then
-          echo "⚠️ Found dev.user.js instead of main.user.js - renaming..."
-          cp dist/dev.user.js dist/main.user.js
-        else
-          echo "🔍 Searching for user.js files..."
-          find . -name "*.user.js" -type f
-          echo "❌ Required build artifacts not found!"
-          exit 1
-        fi
-      
     - name: Deploy to GitHub Pages
       if: github.ref == 'refs/heads/main'
       run: |
         git config --global user.name 'GitHub Actions'
         git config --global user.email 'actions@github.com'
+        
+        # Guardar una copia del archivo generado antes de cambiar de rama
+        if [ -f "dist/main.user.js" ]; then
+          echo "✅ Backing up dist/main.user.js"
+          mkdir -p /tmp/build-backup
+          cp dist/main.user.js /tmp/build-backup/
+        else
+          echo "❌ dist/main.user.js not found! Cannot proceed."
+          find . -name "*.user.js" -type f
+          exit 1
+        fi
         
         # Create a temporary branch or use an existing one
         if git show-ref --quiet refs/remotes/origin/gh-pages; then
@@ -64,16 +60,9 @@ jobs:
         # Clean previous content
         git rm -rf . --quiet || true
         
-        # Ensure we have the built file
-        if [ ! -f "dist/main.user.js" ]; then
-          echo "Error: dist/main.user.js not found after build!"
-          find . -name "*.user.js" -type f
-          exit 1
-        fi
-        
-        # Copy the generated file
-        echo "Copying main.user.js to root"
-        cp dist/main.user.js ./main.user.js
+        # Restore our file from backup
+        echo "Copying main.user.js to root from backup"
+        cp /tmp/build-backup/main.user.js ./main.user.js
         
         # Verify the file was copied correctly
         if [ ! -f "./main.user.js" ]; then
