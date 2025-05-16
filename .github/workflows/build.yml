@@ -9,6 +9,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
 
     steps:
     - uses: actions/checkout@v2
@@ -27,13 +30,28 @@ jobs:
       run: mkdir -p dist
       
     - name: Build Production Version
-      run: npm run build-optimized
+      run: |
+        NODE_ENV=production npm run build-optimized
+        ls -la dist/
+      env:
+        NODE_ENV: production
       
     - name: Deploy to GitHub Pages
       if: github.ref == 'refs/heads/main'
       run: |
         git config --global user.name 'GitHub Actions'
         git config --global user.email 'actions@github.com'
+        
+        # Save a copy of the generated file before switching branches
+        if [ -f "dist/main.user.js" ]; then
+          echo "✅ Backing up dist/main.user.js"
+          mkdir -p /tmp/build-backup
+          cp dist/main.user.js /tmp/build-backup/
+        else
+          echo "❌ dist/main.user.js not found! Cannot proceed."
+          find . -name "*.user.js" -type f
+          exit 1
+        fi
         
         # Create a temporary branch or use an existing one
         if git show-ref --quiet refs/remotes/origin/gh-pages; then
@@ -45,16 +63,23 @@ jobs:
         # Clean previous content
         git rm -rf . --quiet || true
         
-        # Copy the generated file
-        echo "Copying main.user.js to root"
-        cp dist/main.user.js ./main.user.js
+        # Restore our file from backup
+        echo "Copying main.user.js to root from backup"
+        cp /tmp/build-backup/main.user.js ./main.user.js
+        
+        # Verify the file was copied correctly
+        if [ ! -f "./main.user.js" ]; then
+          echo "Error: Failed to copy main.user.js to root!"
+          exit 1
+        fi
         
         # Add and commit
         git add main.user.js
         git commit -m "Automated update $(date)"
         
-        # Publish
-        git push -f origin gh-pages-temp:gh-pages
+        # Publish 
+        git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/JuanHopla/FB-Chat-Monitor.git" gh-pages-temp:gh-pages
         
-        # Return to the original branch
-        git checkout -
+        echo "Deployment completed successfully!"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

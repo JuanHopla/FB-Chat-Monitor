@@ -4,6 +4,38 @@ const path = require('path');
 
 console.log('Starting publication process...');
 
+// Store the original branch name at the start
+let originalBranch;
+let stashCreated = false;
+
+try {
+  originalBranch = execSync('git branch --show-current').toString().trim();
+  console.log(`Currently on branch: ${originalBranch}`);
+} catch (error) {
+  console.error('Error checking git branch:', error);
+  process.exit(1);
+}
+
+// Helper function to safely return to the original branch
+function returnToOriginalBranch() {
+  console.log(`Returning to original branch: ${originalBranch}...`);
+  try {
+    execSync(`git checkout ${originalBranch}`);
+    
+    // Only try to restore stash if we created one
+    if (stashCreated) {
+      try {
+        console.log('Restoring stashed changes...');
+        execSync('git stash pop');
+      } catch (stashErr) {
+        console.warn('Failed to restore stashed changes:', stashErr.message);
+      }
+    }
+  } catch (checkoutErr) {
+    console.error(`Failed to return to ${originalBranch}:`, checkoutErr.message);
+  }
+}
+
 // Run the optimized build first
 console.log('Building optimized version...');
 try {
@@ -14,19 +46,19 @@ try {
   process.exit(1);
 }
 
-// Check branch
-try {
-  const currentBranch = execSync('git branch --show-current').toString().trim();
-  console.log(`Currently on branch: ${currentBranch}`);
-} catch (error) {
-  console.error('Error checking git branch:', error);
-}
-
 // Update the gh-pages branch
 console.log('Updating gh-pages branch...');
 try {
-  // Save current work if any
-  execSync('git stash');
+  // Check if there are pending changes before stashing
+  const status = execSync('git status --porcelain').toString().trim();
+  
+  if (status) {
+    console.log('Stashing pending changes...');
+    execSync('git stash');
+    stashCreated = true;
+  } else {
+    console.log('No changes to stash');
+  }
   
   // Check if gh-pages branch exists
   const branchExists = execSync('git branch --list gh-pages').toString().trim() !== '';
@@ -40,35 +72,41 @@ try {
     execSync('git checkout gh-pages');
   }
   
+  // Ensure the dist directory exists before copying
+  const distPath = path.join(__dirname, '..', 'dist');
+  const mainScriptPath = path.join(distPath, 'main.user.js');
+  
+  if (!fs.existsSync(mainScriptPath)) {
+    throw new Error(`Build file not found at ${mainScriptPath}`);
+  }
+  
   // Copy the built file
   fs.copyFileSync(
-    path.join(__dirname, '..', 'dist', 'main.user.js'),
+    mainScriptPath,
     path.join(__dirname, '..', 'main.user.js')
   );
   
   // Commit and push the changes
   execSync('git add main.user.js');
   execSync(`git commit -m "Update distribution version ${new Date().toISOString()}"`);
-  execSync('git push -u origin gh-pages');
-  
-  // Switch back to original branch
-  const originalBranch = execSync('git stash list').toString().includes('develop') ? 'develop' : 'main';
-  execSync(`git checkout ${originalBranch}`);
-  
-  // Restore stashed changes if any
-  if (execSync('git stash list').toString().trim() !== '') {
-    execSync('git stash pop', { stdio: 'ignore' });
-  }
-  
-} catch (error) {
-  console.error('Error updating gh-pages branch:', error);
-  console.log('Attempting to switch back to original branch...');
   
   try {
-    execSync('git checkout develop || git checkout main');
-  } catch (e) {
-    console.error('Failed to switch back to original branch:', e);
+    console.log('Pushing changes to gh-pages branch...');
+    execSync('git push -u origin gh-pages');
+  } catch (pushError) {
+    console.error('Failed to push to gh-pages:', pushError.message);
+    // Don't exit here, still try to return to original branch
+    throw pushError; // Re-throw to be caught by the outer catch
   }
+  
+  // Successfully completed gh-pages update, return to original branch
+  returnToOriginalBranch();
+  
+} catch (error) {
+  console.error('Error in publication process:', error.message);
+  
+  // Always attempt to return to the original branch
+  returnToOriginalBranch();
   
   process.exit(1);
 }
