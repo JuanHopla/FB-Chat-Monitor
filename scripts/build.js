@@ -44,14 +44,13 @@ function readFileWithFallback(filepath) {
 }
 
 async function build() {
-  let combinedCode = '';
-
-  // Add header
+  // Save the header separately to ensure it is preserved
   const headerPath = path.join(__dirname, '../tampermonkey-header.js');
-  combinedCode += readFileWithFallback(headerPath);
-  combinedCode += '\n\n';
-
-  // Add IIFE start
+  const headerContent = readFileWithFallback(headerPath);
+  
+  let combinedCode = '';
+  
+  // Add IIFE start (do not add the header here, we will do it later)
   combinedCode += '(function () {\n\n';
 
   // Combine all source files (except the header)
@@ -77,7 +76,7 @@ async function build() {
   // Add IIFE end
   combinedCode += '})();';
 
-  // Minify in production
+  // Apply minification in production mode
   if (isProd) {
     console.log('Minifying code...');
     try {
@@ -86,22 +85,30 @@ async function build() {
           drop_console: false,
           drop_debugger: true
         },
-        format: {
-          comments: /==UserScript==|@preserve|@license/
+        mangle: {
+          reserved: ['CONFIG', 'UTILS', 'GM_setValue', 'GM_getValue']
         }
+        // Do not configure format.comments here, as we will handle the header separately
       });
+      
+      if (minified.error) {
+        throw new Error(minified.error);
+      }
+      
       combinedCode = minified.code;
+      console.log('Minification completed successfully.');
     } catch (err) {
-      console.error('Error minifying code:', err);
+      console.error('Error during minification:', err);
+      console.log('Continuing with unminified code...');
     }
-  } else {
-    // Add source map in development
-    combinedCode += '\n//# sourceMappingURL=dev.user.js.map';
   }
 
+  // Add the header after minification to ensure it is not lost
+  const finalCode = headerContent + '\n\n' + combinedCode;
+
   // Write the final file
-  fs.writeFileSync(OUTPUT_FILE, combinedCode);
-  console.log(`Built ${OUTPUT_FILE} (${combinedCode.length} bytes)`);
+  fs.writeFileSync(OUTPUT_FILE, finalCode);
+  console.log(`Built ${OUTPUT_FILE} (${finalCode.length} bytes)`);
 }
 
 // Execute the build
