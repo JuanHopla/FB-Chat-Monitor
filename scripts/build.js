@@ -47,9 +47,9 @@ async function build() {
   // Save the header separately to ensure it is preserved
   const headerPath = path.join(__dirname, '../tampermonkey-header.js');
   const headerContent = readFileWithFallback(headerPath);
-  
+
   let combinedCode = '';
-  
+
   // Add IIFE start (do not add the header here, we will do it later)
   combinedCode += '(function () {\n\n';
 
@@ -57,16 +57,16 @@ async function build() {
   for (let i = 1; i < sourceFiles.length; i++) {
     const filePath = path.join(SRC_DIR, sourceFiles[i]);
     console.log(`Processing: ${filePath}`);
-    
+
     if (fs.existsSync(filePath)) {
       let content = readFileWithFallback(filePath);
-      
+
       // Remove module exports if they exist
       content = content.replace(/module\.exports\s*=\s*.*?;/g, '');
       content = content.replace(/export\s+(?:default\s+)?(?:const|let|var|class|function)\s+(\w+)/g, '$1');
       content = content.replace(/export\s+\{[^}]*\};/g, '');
       content = content.replace(/import\s+.*?from\s+['"].*?['"];/g, '');
-      
+
       combinedCode += content + '\n\n';
     } else {
       console.warn(`Warning: File ${filePath} does not exist, skipping...`);
@@ -86,15 +86,65 @@ async function build() {
           drop_debugger: true
         },
         mangle: {
-          reserved: ['CONFIG', 'UTILS', 'GM_setValue', 'GM_getValue']
+          reserved: [
+            // Tampermonkey API
+            'GM_setValue',
+            'GM_getValue',
+            'GM_deleteValue',
+            'GM_listValues',
+            'GM_xmlhttpRequest',
+            'GM_addStyle',
+
+            // Config and utilities
+            'CONFIG',
+            'UTILS',
+
+            // Main managers
+            'ChatManager',
+            'chatManager',
+            'responseManager',
+            'ResponseManager',
+            'openAIManager',
+            'OpenAIManager',
+            'humanSimulator',
+            'HumanSimulator',
+
+            // User interface
+            'ui',
+            'UI',
+            'assistantManagerUI',
+            'AssistantManagerUI',
+            'domUtils',
+
+            // Global classes and objects
+            'FBChatMonitor',
+            'ProductExtractor',
+            'productExtractor',
+            'ConversationAnalyzer',
+            'conversationAnalyzer',
+            'storageUtils',
+
+            // Specific utilities
+            'logger',
+            'audioTranscriber',
+            'initializeMonitor',
+            'getProductInfo',
+            'extractProductDetails',
+
+            // Critical properties and methods
+            'initialize',
+            'sendMessage',
+            'processMessage',
+            'analyzeConversation'
+          ]
         }
         // Do not configure format.comments here, as we will handle the header separately
       });
-      
+
       if (minified.error) {
         throw new Error(minified.error);
       }
-      
+
       combinedCode = minified.code;
       console.log('Minification completed successfully.');
     } catch (err) {
