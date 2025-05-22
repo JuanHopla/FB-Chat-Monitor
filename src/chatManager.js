@@ -413,7 +413,7 @@ class ChatManager {
   /**
    * Generates a response for the current chat (used by Generate Response button)
    * This method now handles both extraction and response generation
-   * @returns {Promise<boolean>} True if the response was successfully generated
+   * @returns {Promise<boolean} True if the response was successfully generated
    */
   async generateResponseForCurrentChat() {
     if (!this.currentChatId) {
@@ -1622,7 +1622,17 @@ class ChatManager {
   /**
    * Determines if a message is a reply to another message
    * @param {HTMLElement} container - Message container
-      }
+   * @returns {Object|null} Object with reply information or null if not a reply
+   */
+  detectQuotedMessage(container) {
+    try {
+      // Look for quote indicators - adjust selectors as needed
+      const quoteElement = container.querySelector('div[data-testid="message-quote"]');
+      if (!quoteElement) return null;
+      
+      // Extract quoted text
+      const quotedTextElement = quoteElement.querySelector('span[data-testid="message-text"]');
+      const quotedText = quotedTextElement ? quotedTextElement.innerText.trim() : '';
       
       // 2. Try to get the name of the original sender
       let originalSender = null;
@@ -2006,8 +2016,8 @@ class ChatManager {
    * @returns {Promise<Object>} - Object with the messages and the last processed HTML
    */
   async processBatchOfMessages(elements, previousHTML, batchIndex) {
-    const batchMessages = [];
-    let lastProcessedHTML = previousHTML;
+                         const batchMessages = [];
+                                                 let lastProcessedHTML = previousHTML;
     
     for (let i = 0; i < elements.length; i++) {
       const rowElement = elements[i];
@@ -2066,8 +2076,8 @@ class ChatManager {
           textContent = textContent.replace(/^(\d{1,2}\/\d{1,2}\/\d{2,4},\s*)?\d{1,2}:\d{2}\s*(?:AM|PM)?\s*:\s*/i, '').trim();
           textContent = textContent.replace(/^(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4},\s*\d{1,2}:\d{2}\s*(?:AM|PM)?\s*:\s*/i, '').trim();
           textContent = textContent.replace(/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{1,2}:\d{2}\s*(?:AM|PM)?\s*:\s*/i, '').trim();
-          textContent = textContent.replace(/^Sent \d+d ago:\s*/i, '').trim();
-          textContent = textContent.replace(/^\d{1,2}\/\d{1,2}\/\d{2,4},?\s+\d{1,2}:\d{2}\s*(?:AM|PM)?\s*:\s*/i, '').trim();
+          textContent = textContent.replace(/^Sent \d+d ago:\s*/i, '').trim(); // Format "Sent Xd ago: "
+          textContent = textContent.replace(/^\d{1,2}\/\d{1,2}\/\d{2,4},?\s+\d{1,2}:\d{2}\s*(?:AM|PM)?\s*:\s*/i, '').trim(); // Format "DD/MM/YY, HH:MM AM/PM:"
         }
         
         const isSys = this.isSystemMessage(textContent);
@@ -2382,155 +2392,125 @@ class ChatManager {
    */
   async handleResponse(context) {
     try {
-      logger.log('Generating response for chat...');
+      logger.log('[ChatManager] Initiating handleResponse...');
       
-      // Verify that we have a valid context
       if (!context || !context.messages || context.messages.length === 0) {
+        logger.error('[ChatManager] Invalid chat context or no messages.');
         throw new Error('Invalid chat context or no messages');
       }
 
-      // Show information about the context
       const roleText = context.role === 'seller' ? 'seller' : 'buyer';
-      logger.log(`Role in the conversation: ${roleText}, total messages: ${context.messages.length}`);
+      logger.log(`[ChatManager] Role: ${roleText}, Total messages for context: ${context.messages.length}`);
+      this.logAssistantContext(context); // Logs the detailed context
 
-      // NEW: Log the complete context being sent to the assistant
-      this.logAssistantContext(context);
+      const operationMode = window.CONFIG?.operationMode || 'manual';
+      logger.log(`[ChatManager] Configured operation mode (for sending): ${operationMode}`);
+      
+      // Assume window.openaiManager is the primary (and likely only) AI service provider,
+      // and it implements the OpenAI Assistants API.
+      const assistantService = window.openaiManager;
+      
+      let assistantServiceAvailable = false;
+      if (typeof assistantService === 'object' && 
+          typeof assistantService.generateResponse === 'function' &&
+          typeof assistantService.isReady === 'function') {
+        assistantServiceAvailable = assistantService.isReady();
+      }
 
-      // Verify which response mode is configured
-      const responseMode = window.CONFIG?.operationMode || 'manual';
-      logger.log(`Configured response mode: ${responseMode}`);
-      
-      // Verify the state of the OpenAI service if available
-      if (window.openaiManager && typeof window.openaiManager.verifyServiceState === 'function') {
-        window.openaiManager.verifyServiceState();
+      logger.debug(`[ChatManager] OpenAI Assistant Service (via window.openaiManager) Available: ${assistantServiceAvailable}`);
+      if (assistantService && typeof assistantService.isReady === 'function') {
+        // Log current state of openaiManager, isReady() call will auto-correct isInitialized if needed.
+        logger.debug(`[ChatManager] window.openaiManager details: apiKey=${!!assistantService.apiKey}, isInitialized=${assistantService.isInitialized}, isReady=${assistantService.isReady()}`);
+      } else if (assistantService) {
+        logger.debug(`[ChatManager] window.openaiManager details: apiKey=${!!assistantService.apiKey}, isInitialized=${assistantService.isInitialized}, isReady method not found.`);
       }
-      
-      // Verify which AI services are available - IMPROVED APPROACH
-      const hasOpenAI = (typeof window.openaiManager === 'object') && 
-                       (typeof window.openaiManager.generateResponse === 'function') &&
-                       (window.openaiManager.isInitialized || window.openaiManager.apiKey);
-      
-      const hasAssistant = (typeof window.assistantManager === 'object') && 
-                          (typeof window.assistantManager.generateResponse === 'function');
-      
-      // Detailed log for diagnosis
-      logger.debug(`Available services: Assistant=${hasAssistant}, OpenAI=${hasOpenAI}`);
-      logger.debug(`openaiManager exists: ${!!window.openaiManager}`);
-      if (window.openaiManager) {
-        logger.debug(`openaiManager.isInitialized: ${window.openaiManager.isInitialized}`);
-        logger.debug(`openaiManager.isReady: ${typeof window.openaiManager.isReady === 'function' ? 
-                                              window.openaiManager.isReady() : 'method missing'}`);
-      }
-      
-      // If we have an available assistant, use it with priority
-      if (hasAssistant) {
-        logger.log('Using the OpenAI Assistant...');
-        
-        // Show information that we are processing
+
+
+      if (assistantServiceAvailable) {
+        logger.log('[ChatManager] Attempting to use OpenAI Assistant API via window.openaiManager...');
         showSimpleAlert('Consulting the OpenAI Assistant...', 'info');
         
-        // Call the Assistant handler with the complete context
-        const response = await window.assistantManager.generateResponse(context);
-        
-        if (response && response.text) {
-          logger.log(`Response generated by Assistant: ${response.text.substring(0, 100)}...`);
-          
-          // Decide whether to send automatically or show for editing
-          const autoSend = window.CONFIG?.autoSend || false;
-          
-          if (autoSend) {
-            // Send automatically using HumanSimulator
-            if (window.humanSimulator) {
-              logger.log('Sending response automatically...');
-              await window.humanSimulator.typeAndSendMessage(response.text);
-              showSimpleAlert('Response sent automatically', 'success');
-            } else {
-              logger.error('HumanSimulator not available for automatic sending');
-              // Insert the response in the input field
-              this.insertResponseInInputField(response.text);
-              showSimpleAlert('Response inserted in the input field', 'info');
-            }
-          } else {
-            // Insert directly into the input field for manual editing
-            this.insertResponseInInputField(response.text);
-            showSimpleAlert('Response inserted in the input field. Review and send when you are ready.', 'info');
-          }
-          await this.markChatAsRead();
-          return response;
-        } else {
-          throw new Error('Could not generate a valid response from the Assistant');
-        }
-      } 
-      // Use OpenAI API directly if available
-      else if (hasOpenAI) {
-        logger.log('Generating response with OpenAI API...');
-        
-        // Show information that we are processing
-        showSimpleAlert('Generating response with OpenAI...', 'info');
-        
-        // Call the OpenAI handler - Ensure that it is initialized
-        if (window.openaiManager && !window.openaiManager.isInitialized) {
-          logger.debug('Attempting to reinitialize OpenAI Manager...');
-          
-          // Verify service state if the method is available
-          if (typeof window.openaiManager.verifyServiceState === 'function') {
-            window.openaiManager.verifyServiceState();
-          } 
-          // Or use the available methods directly as fallback
-          else if (typeof window.openaiManager.initialize === 'function') {
-            window.openaiManager.initialize();
-          } else if (typeof window.openaiManager.loadConfig === 'function') {
-            window.openaiManager.loadConfig();
-          }
-        }
-        
         try {
-          const response = await window.openaiManager.generateResponse(context);
+          // This call goes to window.openaiManager.generateResponse,
+          // which is expected to return an Assistant's structured response.
+          const structuredResponse = await assistantService.generateResponse(context);
           
-          if (response && (response.text || (typeof response === 'string'))) {
-            const responseText = response.text || response;
-            logger.log(`Response generated by OpenAI: ${responseText.substring(0, 100)}...`);
-            
-            // Insert directly into the input field for manual editing
-            this.insertResponseInInputField(responseText);
-            showSimpleAlert('Response inserted in the input field. Review and send when you are ready.', 'info');
-            await this.markChatAsRead();
-            return response;
-          } else {
-            throw new Error('Could not generate a valid response from OpenAI');
+          if (structuredResponse && (structuredResponse.error || structuredResponse.parsingError)) {
+            const errorMessage = structuredResponse.responseText || "An error occurred with the Assistant.";
+            logger.error(`[ChatManager] Assistant API error or parsing issue: ${errorMessage}`, structuredResponse);
+            showSimpleAlert(errorMessage, 'error');
+            throw new Error(errorMessage);
           }
-        } catch (innerError) {
-          logger.error(`Error generating response with OpenAI: ${innerError.message}`, {}, innerError);
-          throw innerError;
+
+          if (structuredResponse && structuredResponse.isSafeResponse === false) {
+            const refusalMessage = `Assistant response flagged as unsafe. Reason: ${structuredResponse.refusalReason || 'No specific reason provided.'}`;
+            logger.warn(`[ChatManager] ${refusalMessage}`, structuredResponse);
+            showSimpleAlert(refusalMessage, 'warning');
+            throw new Error(refusalMessage);
+          }
+
+          if (structuredResponse && typeof structuredResponse.responseText === 'string') {
+            logger.log(`[ChatManager] Response text from Assistant API: ${structuredResponse.responseText.substring(0, 100)}...`);
+            
+            if (structuredResponse.buyerIntent) logger.log(`Assistant perceived buyer intent: ${structuredResponse.buyerIntent}`);
+            if (structuredResponse.suggestedAction) logger.log(`Assistant suggested action: ${structuredResponse.suggestedAction}`);
+            if (structuredResponse.sentiment) logger.log(`Assistant perceived sentiment: ${structuredResponse.sentiment}`);
+            
+            const autoSend = window.CONFIG?.autoSend || false;
+            if (autoSend && operationMode === 'auto') {
+              if (window.humanSimulator) {
+                logger.log('[ChatManager] Sending Assistant response automatically...');
+                await window.humanSimulator.typeAndSendMessage(structuredResponse.responseText);
+                showSimpleAlert('Response sent automatically', 'success');
+              } else {
+                logger.error('[ChatManager] HumanSimulator not available for automatic sending.');
+                this.insertResponseInInputField(structuredResponse.responseText);
+                showSimpleAlert('Response inserted (HumanSimulator missing)', 'info');
+              }
+            } else {
+              this.insertResponseInInputField(structuredResponse.responseText);
+              showSimpleAlert('Response inserted. Review and send.', 'info');
+            }
+            await this.markChatAsRead();
+            return structuredResponse;
+          } else {
+            // This case means the structuredResponse from the Assistant API was not as expected.
+            let errorMsg = '[ChatManager] Could not generate a valid structured response from the Assistant API (via window.openaiManager).';
+            if (!structuredResponse) errorMsg = '[ChatManager] Received null/undefined response from window.openaiManager.';
+            else if (typeof structuredResponse.responseText !== 'string') errorMsg = '[ChatManager] Assistant API response (from window.openaiManager) missing "responseText".';
+            
+            logger.error(errorMsg, { receivedResponse: structuredResponse });
+            showSimpleAlert(errorMsg, 'error');
+            throw new Error(errorMsg); 
+          }
+        } catch (assistantError) {
+          logger.error(`[ChatManager] Error during Assistant API call (via window.openaiManager): ${assistantError.message}`, {}, assistantError);
+          showSimpleAlert(`Assistant API Error: ${assistantError.message}`, 'error');
+          throw assistantError;
         }
       }
-      // If there is no AI service available, show an informative message
+      // NO AI SERVICE AVAILABLE
       else {
-        logger.log('No AI services available: showing help information');
-        
-        // Prepare context summary to help the user
-        const productInfo = context.productDetails ? 
-          `${context.productDetails.title} (${context.productDetails.price})` : 
-          'No product information';
-        
-        // Informative message with additional details for diagnosis
-        const helpText = `You are in a conversation as ${roleText}.\n`+
-                     `Product: ${productInfo}\n`+
-                     'No AI services configured. Please configure OpenAI or an Assistant in the options.';
-        
-        const helpTextWithDebug = helpText + '\n\n' +
-                     `Debug: openaiManager=${!!window.openaiManager}, ` +
-                     `assistantManager=${!!window.assistantManager}, ` +
-                     `config.AI.apiKey=${!!window.CONFIG?.AI?.apiKey}`;
-        
+        logger.warn('[ChatManager] No AI services available (window.openaiManager not configured or not ready).');
+        const productInfo = context.productDetails ? `${context.productDetails.title} (${context.productDetails.price})` : 'No product information';
+        const helpText = `You are in a conversation as ${roleText}.\nProduct: ${productInfo}\nNo AI services configured. Please check options.`;
         showSimpleAlert(helpText, 'info');
-        logger.debug(helpTextWithDebug);
-        
-        return { text: helpText };
+        if (assistantService) {
+            logger.debug(helpText + `\n[ChatManager] Debug: window.openaiManager ready state: ${assistantService.isReady ? assistantService.isReady() : 'isReady method missing'}, isInitialized: ${assistantService.isInitialized}`);
+        } else {
+            logger.debug(helpText + `\n[ChatManager] Debug: window.openaiManager is not an object.`);
+        }
+        return { text: helpText, error: true, refusalReason: "No AI service configured" };
       }
     } catch (error) {
-      logger.error(`Error generating response: ${error.message}`, {}, error);
-      showSimpleAlert(`Error generating response: ${error.message}`, 'error');
+      logger.error(`[ChatManager] Critical error in handleResponse: ${error.message}`, {}, error);
+      // Avoid duplicate alerts if a more specific one was already shown
+      if (!error.message.includes("API Error:") && 
+          !error.message.includes("parsing issue") && 
+          !error.message.includes("unsafe") &&
+          !error.message.includes("Could not generate a valid structured response")) {
+         showSimpleAlert(`Error generating response: ${error.message}`, 'error');
+      }
       throw error;
     }
   }
@@ -2541,56 +2521,57 @@ class ChatManager {
    */
   logAssistantContext(context) {
     try {
-      // Create a deep copy to avoid modifying the original object
-      const contextCopy = JSON.parse(JSON.stringify(context));
+      // Original context (no deep copy needed here yet, as we'll be selective)
       
-      // Add metadata to facilitate analysis
       const metadata = {
         timestamp: new Date().toISOString(),
         chatId: this.currentChatId,
-        totalMessages: contextCopy.messages ? contextCopy.messages.length : 0,
-        role: contextCopy.role || 'unknown',
-        hasProductDetails: !!contextCopy.productDetails
+        totalMessages: context.messages ? context.messages.length : 0,
+        ourUserRole: context.role || 'unknown', 
+        hasProductDetails: !!context.productDetails
       };
       
-      // Statistics about content types
-      const contentStats = { text: 0, image: 0, audio: 0, video: 0, file: 0, location: 0, other: 0 };
-      if (contextCopy.messages && Array.isArray(contextCopy.messages)) {
-        contextCopy.messages.forEach(msg => {
-          const type = msg.content?.type || 'unknown';
-          if (type === 'text') contentStats.text++;
-          else if (type === 'image') contentStats.image++;
-          else if (type === 'audio') contentStats.audio++;
-          else if (type === 'video') contentStats.video++;
-          else if (type === 'file') contentStats.file++;
-          else if (type === 'location') contentStats.location++;
-          else contentStats.other++;
+      const contentStats = { text: 0, image: 0, audio: 0, video: 0, file: 0, location: 0, gif: 0, system: 0, system_event: 0, reply: 0, unknown: 0, other: 0 };
+      if (context.messages && Array.isArray(context.messages)) {
+        context.messages.forEach(msg => {
+          let type = msg.content?.type || 'unknown';
+          // Handle combined types like 'text_reply'
+          if (type.includes('_reply')) {
+            contentStats.reply++;
+            type = type.replace('_reply', ''); // Count the base type as well
+          }
+          if (contentStats[type] !== undefined) {
+            contentStats[type]++;
+          } else {
+            contentStats.other++; 
+          }
         });
       }
       
-      // Build the final object to display
-      const assistantContext = {
-        metadata,
-        contentStats,
-        context: contextCopy
-      };
-      
-      // Display in console with formatting
-      console.group('📤 Context sent to Assistant/OpenAI');
+      console.group('📤 Context prepared for Assistant/OpenAI');
       console.log('%cMetadata:', 'font-weight:bold; color:blue;', metadata);
       console.log('%cContent statistics:', 'font-weight:bold; color:green;', contentStats);
       
-      if (contextCopy.productDetails) {
-        console.log('%cProduct details:', 'font-weight:bold; color:purple;', contextCopy.productDetails);
+      if (context.productDetails) {
+        console.log('%cProduct details (original):', 'font-weight:bold; color:purple;', context.productDetails);
       }
       
-      // Show message history in a more readable format
-      if (contextCopy.messages && Array.isArray(contextCopy.messages)) {
-        console.log('%cMessage history:', 'font-weight:bold; color:brown;');
-        contextCopy.messages.forEach((msg, i) => {
-          const sender = msg.sentByUs ? '📤 ME' : '📥 OTHER';
+      // Console display of message history (uses original context.messages)
+      if (context.messages && Array.isArray(context.messages)) {
+        console.log('%cMessage history (console display - roles based on "sentByUs"):', 'font-weight:bold; color:brown;');
+        context.messages.forEach((msg, i) => {
+          const senderLabel = msg.sentByUs ? '📤 ASSISTANT (Our User)' : '📥 USER (Other Person)';
           const timestamp = msg.timestamp ? ` (${msg.timestamp})` : '';
-          console.log(`${i+1}. ${sender}${timestamp}: ${msg.content.text || `[${msg.content.type.toUpperCase()}]`}`);
+          let messageDisplay = `${i+1}. ${senderLabel}${timestamp}: `;
+          
+          if (msg.content?.text) {
+            messageDisplay += msg.content.text;
+          } else if (msg.content?.type && msg.content.type !== 'unknown') {
+            messageDisplay += `[${msg.content.type.toUpperCase()}]`;
+          } else {
+            messageDisplay += "[Empty or unknown content]";
+          }
+          console.log(messageDisplay);
           
           // Show media details if they exist
           if (msg.content.media) {
@@ -2600,25 +2581,72 @@ class ChatManager {
             if (media.video) console.log(`   🎬 Video${media.video.type ? ` (${media.video.type})` : ''}`);
             if (media.files && media.files.length) console.log(`   📎 ${media.files.length} files`);
             if (media.location) console.log(`   📍 Location: ${media.location.label || ''}`);
+            if (media.gif) console.log(`   ✨ GIF/Sticker: ${media.gif.type}`);
           }
-          
-          // Show audio transcriptions if they exist
           if (msg.content.transcribedAudio) {
             console.log(`   🎤 Transcription: "${msg.content.transcribedAudio}"`);
           }
         });
       }
+
+      // Construct the custom JSON structure for stringify and export, as per user's specification
+      const customJsonStructure = {
+        role: context.role, // This is our user's role (seller/buyer)
+        product: context.productDetails ? {
+            id: context.productDetails.listingId || context.productDetails.id || null,
+            title: context.productDetails.title || null,
+            price: context.productDetails.price || null,
+            description: context.productDetails.description || null,
+            condition: context.productDetails.condition || null, // Assuming this field exists or can be added
+            location: context.productDetails.locationInfo?.city || context.productDetails.city || null, // Assuming these fields exist
+            category: context.productDetails.categoryName || null,
+            imageUrls: context.productDetails.imageUrls || []
+        } : null,
+        conversation: (context.messages || []).map(msg => {
+          let transcribedAudioContent = null;
+          if (msg.content.transcribedAudio && !msg.content.transcribedAudio.startsWith("[")) {
+            transcribedAudioContent = msg.content.transcribedAudio;
+          }
+
+          let audioStatusContent = null;
+          const hasAudio = !!(msg.content.media?.audio || msg.content.audioUrl);
+          if (hasAudio && msg.content.transcribedAudio && msg.content.transcribedAudio.startsWith("[")) {
+            audioStatusContent = msg.content.transcribedAudio;
+          }
+
+          return {
+            fromUser: !msg.sentByUs, // true if from the other person (user), false if from us (assistant)
+            timestamp: msg.timestamp || null,
+            text: msg.content.text || null,
+            transcribedAudio: transcribedAudioContent,
+            hasAudio: hasAudio,
+            audioStatus: audioStatusContent,
+            imageUrls: msg.content.media?.images?.map(img => img.url) || msg.content.imageUrls || [],
+            analysis: msg.context || null // Include the message-level context if available
+          };
+        })
+      };
       
-      // Allow exporting the complete object for analysis
-      console.log('%cComplete object (expand):', 'font-weight:bold; color:darkblue;');
-      console.dir(assistantContext);
-      console.log('%cComplete JSON (copy from console):', 'font-weight:bold; color:darkred;');
-      console.log(JSON.stringify(assistantContext, null, 2));
+      // For console.dir, show a comprehensive object including metadata and the custom structure
+      const dirOutput = {
+          metadata,
+          contentStats,
+          assistantInputContext: customJsonStructure
+      };
+      console.log('%cComplete object for `console.dir` (includes metadata and custom context):', 'font-weight:bold; color:darkblue;');
+      console.dir(dirOutput);
+
+      // For JSON.stringify, output the custom structure directly
+      console.log('%cComplete JSON (custom structure for analysis/OpenAI input):', 'font-weight:bold; color:darkred;');
+      console.log(JSON.stringify(customJsonStructure, null, 2));
       console.groupEnd();
       
-      // Add global function to export the context to a file
       window.exportAssistantContext = () => {
-        const blob = new Blob([JSON.stringify(assistantContext, null, 2)], {type: 'application/json'});
+        // Export the customJsonStructure, potentially wrapped with metadata if preferred for exported files
+        // For now, let's export the customJsonStructure directly as it matches the user's described format.
+        // If metadata is also desired in the file, wrap customJsonStructure: e.g. { metadata, contentStats, data: customJsonStructure }
+        const dataToExport = customJsonStructure; 
+        const blob = new Blob([JSON.stringify(dataToExport, null, 2)], {type: 'application/json'});
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -2627,10 +2655,10 @@ class ChatManager {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        console.log('✅ Context JSON file downloaded. To export again at any time, run: exportAssistantContext()');
+        console.log('✅ Context JSON file (custom structure) downloaded. To export again, run: exportAssistantContext()');
       };
       
-      console.log('To export this context as a JSON file, run: exportAssistantContext()');
+      console.log('To export this context as a JSON file (custom structure), run: exportAssistantContext()');
       
     } catch (error) {
       logger.error(`Error displaying assistant context: ${error.message}`, {}, error);

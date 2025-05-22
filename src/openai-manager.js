@@ -222,7 +222,7 @@ class OpenAIManager {
   /**
    * Generate a response using OpenAI API
    * @param {Object} context - Context data including role, messages, and product details
-   * @returns {Promise<Object>} Generated response text and metadata
+   * @returns {Promise<Object>} Generated structured response object or an error object
    */
   async generateResponse(context) {
     // If we are not ready, initialize first
@@ -233,19 +233,24 @@ class OpenAIManager {
       if (!this.isReady()) {
         logger.warn('OpenAI Manager is not ready to generate responses');
         return {
-          text: "I'm sorry, I can't generate a response because I don't have access to the OpenAI API. Please verify your API key in the configuration.",
-          error: true
+          // Consistent structured error
+          responseText: "I'm sorry, I can't generate a response because I don't have access to the OpenAI API. Please verify your API key in the configuration.",
+          buyerIntent: "error",
+          suggestedAction: "check_config",
+          sentiment: "error",
+          isSafeResponse: false,
+          refusalReason: "OpenAI Manager not ready.",
+          error: true 
         };
       }
     }
     
-    // Existing code continues here...
     const startTime = Date.now();
     this.metrics.totalCalls++;
 
     try {
       // Clear the input field before generating the response
-      this.clearInputField();
+      // this.clearInputField(); // This might be better handled by ChatManager after receiving the response
 
       // Determine which assistant to use based on role
       const assistantId = this.getAssistantIdForRole(context.role);
@@ -261,8 +266,9 @@ class OpenAIManager {
       // Add message to the thread with context
       await this.addMessageToThread(thread.id, context);
 
-      // Run the assistant on the thread
-      const response = await this.runAssistant(thread.id, assistantId);
+      // Run the assistant on the thread, requesting JSON output
+      // The actual schema adherence will depend on the assistant's instructions
+      const structuredResponse = await this.runAssistant(thread.id, assistantId);
 
       // Update metrics
       this.metrics.successfulCalls++;
@@ -270,13 +276,22 @@ class OpenAIManager {
       this.metrics.totalResponseTime += responseTime;
       this.metrics.avgResponseTime = this.metrics.totalResponseTime / this.metrics.successfulCalls;
 
-      logger.debug(`Response generated in ${responseTime}ms`);
+      logger.debug(`Structured response generated in ${responseTime}ms`);
 
-      return response;
+      return structuredResponse; // This is now an object
     } catch (error) {
       this.metrics.failedCalls++;
-      logger.error(`Error generating response: ${error.message}`);
-      throw error;
+      logger.error(`Error generating structured response: ${error.message}`);
+      // Return a structured error
+      return {
+        responseText: `Error generating response: ${error.message}`,
+        buyerIntent: "error",
+        suggestedAction: "retry_or_check_logs",
+        sentiment: "error",
+        isSafeResponse: false,
+        refusalReason: `Internal error: ${error.message}`,
+        error: true
+      };
     }
   }
 
@@ -512,55 +527,113 @@ class OpenAIManager {
   prepareMessageContent(context) {
     const { role, messages, productDetails, analysis } = context;
 
+    // Construct the main payload object
+    const jsonPayload = {
+      role: role, // This is the role the AI should assume (e.g., "seller", "buyer")
+      product: productDetails ? {
+        id: productDetails.id,
+        title: productDetails.title,
+        price: productDetails.price,
+        description: productDetails.description,
+        condition: productDetails.condition,
+        location: productDetails.location,
+        category: productDetails.category,
+        imageUrls: productDetails.imageUrls || []
+      } : null,
+      // Take last N messages for context (use config or default)
+      conversation: messages.slice(-(CONFIG.AI.messageHistoryLimit || 100)).map(msg => {
+        // Ensure msg and msg.content exist
+        if (!msg || !msg.content) {
+          // Fallback for invalid structure, less likely if extractChatHistory is robust
+          return { role: msg?.sentByUs ? "assistant" : "user", content: "[Invalid message structure]", error: "Invalid message structure" };
+        }
+
+        const messageEntry = {
+          // Key change: Use "user" for messages from the other person, "assistant" for messages from our user.
+          role: msg.sentByUs ? "assistant" : "user", 
+          // Construct a content string that can include text and references to media.
+          // The assistant will be instructed that this 'content' field for conversation messages is a string.
+          // For a more structured approach for media within conversation history (if Assistants API evolves):
+          // content: [{type: "text", text: msg.content.text}, {type: "image_url", image_url: {url: "..."}}]
+          // For now, we'll embed media info into a text string or keep it as separate properties if preferred by assistant instructions.
+        };
+        
+        let messageContentString = "";
+
+        if (msg.content.text) {
+          messageContentString += msg.content.text;
+          messageEntry.text = msg.content.text; // Keep separate text field for easier access
+        }
+
+        if (msg.content.transcribedAudio && typeof msg.content.transcribedAudio === 'string' && !msg.content.transcribedAudio.startsWith('[')) {
+          messageContentString += (messageContentString ? " " : "") + `[Transcribed Audio: ${msg.content.transcribedAudio}]`;
+          messageEntry.transcribedAudio = msg.content.transcribedAudio;
+        } else if (msg.content.audioUrl) {
+          messageContentString += (messageContentString ? " " : "") + "[Audio message present]";
+          messageEntry.hasAudio = true;
+          if (typeof msg.content.transcribedAudio === 'string' && msg.content.transcribedAudio.startsWith('[')) {
+            messageEntry.audioStatus = msg.content.transcribedAudio;
+          }
+        }
+
+        if (msg.content.imageUrls && Array.isArray(msg.content.imageUrls) && msg.content.imageUrls.length > 0) {
+          messageContentString += (messageContentString ? " " : "") + `[${msg.content.imageUrls.length} image(s) sent]`;
+          messageEntry.imageUrls = msg.content.imageUrls; // Keep for assistant to reference
+        }
+        
+        // Add other media types from msg.content.media if they exist
+        if (msg.content.media) {
+            if (msg.content.media.video) {
+                messageContentString += (messageContentString ? " " : "") + "[Video present]";
+                messageEntry.video = msg.content.media.video;
+            }
+            if (msg.content.media.files && msg.content.media.files.length > 0) {
+                messageContentString += (messageContentString ? " " : "") + `[${msg.content.media.files.length} file(s) present]`;
+                messageEntry.files = msg.content.media.files;
+            }
+            if (msg.content.media.location) {
+                messageContentString += (messageContentString ? " " : "") + "[Location shared]";
+                messageEntry.location = msg.content.media.location;
+            }
+            if (msg.content.media.gif) {
+                messageContentString += (messageContentString ? " " : "") + "[GIF/Sticker present]";
+                messageEntry.gif = msg.content.media.gif;
+            }
+        }
+
+
+        // The 'content' field for the OpenAI message object should be a string or an array of content blocks.
+        // We are creating a single text block that summarizes the message.
+        // The detailed structured parts (like imageUrls, transcribedAudio) are also included
+        // at the same level as 'role' for the assistant to potentially use if its instructions guide it.
+        // However, the primary 'content' for the API call for each message in the history will be this string.
+        // This might need adjustment based on how well the assistant model parses this structure.
+        // A simpler approach for the assistant might be to just pass `messageEntry.text` or `messageContentString`
+        // as the content, and rely on the assistant to understand the other fields.
+        // For now, let's provide both a summary string and the discrete fields.
+        // The OpenAI API expects `content` for each message in the history.
+        // We will use the `messageContentString` for that.
+        messageEntry.content = messageContentString || "[Media message without text]";
+
+
+        // Add timestamp if available
+        if (msg.timestamp) {
+          messageEntry.timestamp = msg.timestamp;
+        }
+        
+        return messageEntry;
+      }),
+      analysis: analysis || null
+    };
+
+    // Log the complete JSON payload object before stringifying
+    logger.debug('[OpenAIManager] JSON Payload to be sent to Assistant:', jsonPayload);
+
     // Start with a text part containing the JSON context
     const content = [{
       type: 'text',
-      text: JSON.stringify({
-        role: role,
-        product: productDetails ? {
-          id: productDetails.id,
-          title: productDetails.title,
-          price: productDetails.price,
-          description: productDetails.description,
-          condition: productDetails.condition,
-          location: productDetails.location,
-          category: productDetails.category,
-          imageUrls: productDetails.imageUrls || [] // Include product image URLs
-        } : null,
-        // Take last N messages for context (use config or default)
-        conversation: messages.slice(-(CONFIG.AI.messageHistoryLimit || 100)).map(msg => {
-          // Ensure msg and msg.content exist
-          if (!msg || !msg.content) {
-            return { fromUser: !msg?.sentByUs, error: "Invalid message structure" };
-          }
-
-          const messageEntry = {
-            fromUser: !msg.sentByUs,
-            timestamp: msg.timestamp // Keep timestamp if available
-          };
-          // Add text content if present
-          if (msg.content.text) {
-            messageEntry.text = msg.content.text;
-          }
-          // Add transcribed audio if present and valid
-          if (msg.content.transcribedAudio && typeof msg.content.transcribedAudio === 'string' && !msg.content.transcribedAudio.startsWith('[')) { // Avoid sending error placeholders
-            messageEntry.transcribedAudio = msg.content.transcribedAudio;
-          } else if (msg.content.audioUrl) {
-            // Indicate audio presence if transcription failed, disabled, or not available
-            messageEntry.hasAudio = true;
-            // Optionally include the error/status message if available and starts with '['
-            if (typeof msg.content.transcribedAudio === 'string' && msg.content.transcribedAudio.startsWith('[')) {
-              messageEntry.audioStatus = msg.content.transcribedAudio;
-            }
-          }
-          // Add image URLs if present
-          if (msg.content.imageUrls && Array.isArray(msg.content.imageUrls) && msg.content.imageUrls.length > 0) {
-            messageEntry.imageUrls = msg.content.imageUrls;
-          }
-          return messageEntry;
-        }),
-        analysis: analysis || null
-      })
+      text: JSON.stringify(jsonPayload) // The entire jsonPayload is stringified and sent as the text of the *current* user message to the thread.
+                                        // The 'conversation' array within this JSON is the history.
     }];
 
     // Note: Assistants API v2 currently doesn't directly support image URLs within the
@@ -582,7 +655,7 @@ class OpenAIManager {
    * Run an assistant on a thread and get the response
    * @param {string} threadId - Thread ID
    * @param {string} assistantId - Assistant ID
-   * @returns {Promise<string>} Response text
+   * @returns {Promise<Object>} Parsed JSON structured response object
    */
   async runAssistant(threadId, assistantId) {
     try {
@@ -592,122 +665,191 @@ class OpenAIManager {
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
-          'OpenAI-Beta': 'assistants=v2'  // Updated to v2
+          'OpenAI-Beta': 'assistants=v2'
         },
         body: JSON.stringify({
-          assistant_id: assistantId
+          assistant_id: assistantId,
+          response_format: { type: "json_object" } // Request JSON output
         })
       });
 
       if (!runResponse.ok) {
-        const error = await runResponse.json();
-        throw new Error(error.error?.message || 'Failed to start run');
+        const errorData = await runResponse.json().catch(() => ({ error: { message: runResponse.statusText } }));
+        throw new Error(`Failed to start run: ${errorData.error?.message || runResponse.statusText}`);
       }
 
       const run = await runResponse.json();
-      logger.debug(`Started run ${run.id} on thread ${threadId}`);
+      logger.debug(`Started run ${run.id} on thread ${threadId} with response_format: json_object`);
 
-      // Poll for completion with exponential backoff
-      const result = await this.pollRunUntilComplete(threadId, run.id);
+      // Poll for completion
+      // Ensure 'this' context is correct if pollRunUntilComplete is not an arrow function or bound
+      await this.pollRunUntilComplete(threadId, run.id);
 
-      // Get the assistant's message
-      const response = await this.getAssistantResponseFromRun(threadId, run.id);
-      return response;
+      // Get the assistant's message (which should be a JSON string)
+      const jsonStringResponse = await this.getAssistantResponseFromRun(threadId, run.id);
+      
+      // Parse the JSON string
+      try {
+        const parsedResponse = JSON.parse(jsonStringResponse);
+        // Basic validation of the expected structure (can be expanded)
+        if (typeof parsedResponse.responseText !== 'string') {
+            logger.warn('Parsed response is missing "responseText" or it is not a string. This may indicate the assistant instructions need adjustment to enforce the JSON schema.', { parsedResponse });
+            // Fallback or throw more specific error
+            return {
+                responseText: jsonStringResponse, // return raw string if parsing gives unexpected structure
+                buyerIntent: "parse_error",
+                suggestedAction: "review_assistant_instructions",
+                sentiment: "unknown",
+                isSafeResponse: true, 
+                refusalReason: "Response structure mismatch after parsing. Ensure assistant instructions enforce the desired JSON schema.",
+                parsingError: true,
+                rawResponse: jsonStringResponse // Include raw response for debugging
+            };
+        }
+        logger.debug("Successfully parsed assistant's JSON response.");
+        return parsedResponse;
+      } catch (parseError) {
+        logger.error(`Error parsing assistant's JSON response: ${parseError.message}`, { jsonStringResponse });
+        throw new Error(`Failed to parse assistant's JSON response: ${parseError.message}. Raw response: ${jsonStringResponse.substring(0,200)}...`);
+      }
+
     } catch (error) {
       logger.error(`Error running assistant: ${error.message}`);
-      throw error;
+      throw error; 
     }
   }
 
   /**
-   * Poll a run until it's completed or failed
-   * @param {string} threadId - Thread ID
-   * @param {string} runId - Run ID
-   * @returns {Promise<Object>} Final run status
+   * Polls a run until it's completed, failed, or cancelled.
+   * @param {string} threadId - The ID of the thread.
+   * @param {string} runId - The ID of the run.
+   * @returns {Promise<void>} Resolves when the run is in a terminal state.
+   * @throws {Error} If the run fails or is cancelled, or if polling times out.
    */
   async pollRunUntilComplete(threadId, runId) {
-    const maxAttempts = 60; // Maximum attempts to avoid infinite polling
-    const timeout = 30000; // 30 second timeout
+    const pollInterval = 1000; // Poll every 1 second
+    const maxAttempts = 60; // Max 60 attempts (e.g., 60 seconds)
     let attempts = 0;
-    let status = null;
-    let delay = 1000; // Start with 1s delay
 
-    const startTime = Date.now();
+    logger.debug(`[pollRunUntilComplete] Starting polling for run ${runId} on thread ${threadId}`);
 
-    while (attempts < maxAttempts && (Date.now() - startTime < timeout)) {
-      attempts++;
+    return new Promise(async (resolve, reject) => {
+      const checkStatus = async () => {
+        try {
+          attempts++;
+          if (attempts > maxAttempts) {
+            logger.error(`[pollRunUntilComplete] Polling timed out for run ${runId} after ${maxAttempts} attempts.`);
+            reject(new Error(`Polling timed out for run ${runId}`));
+            return;
+          }
 
-      // Check the run status
-      const response = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'OpenAI-Beta': 'assistants=v2'  // Updated to v2
+          const runStatusResponse = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${this.apiKey}`,
+              'Content-Type': 'application/json',
+              'OpenAI-Beta': 'assistants=v2'
+            }
+          });
+
+          if (!runStatusResponse.ok) {
+            const errorData = await runStatusResponse.json().catch(() => ({ error: { message: runStatusResponse.statusText } }));
+            logger.error(`[pollRunUntilComplete] Error fetching run status for ${runId}: ${errorData.error?.message || runStatusResponse.statusText}`);
+            // Depending on the error, you might want to retry or reject immediately.
+            // For now, let's retry a few times for transient network issues.
+            if (attempts < 5 && (runStatusResponse.status === 500 || runStatusResponse.status === 503)) {
+                logger.warn(`[pollRunUntilComplete] Retrying due to server error (status ${runStatusResponse.status}). Attempt ${attempts}/5.`);
+                setTimeout(checkStatus, pollInterval * attempts); // Exponential backoff might be better
+                return;
+            }
+            reject(new Error(`Failed to fetch run status: ${errorData.error?.message || runStatusResponse.statusText}`));
+            return;
+          }
+
+          const runStatus = await runStatusResponse.json();
+          logger.debug(`[pollRunUntilComplete] Run ${runId} status: ${runStatus.status} (Attempt: ${attempts})`);
+
+          switch (runStatus.status) {
+            case 'queued':
+            case 'in_progress':
+            case 'requires_action': // If you implement function calling, you'd handle this. For now, we wait.
+              setTimeout(checkStatus, pollInterval);
+              break;
+            case 'completed':
+              logger.log(`[pollRunUntilComplete] Run ${runId} completed successfully.`);
+              resolve();
+              break;
+            case 'failed':
+              logger.error(`[pollRunUntilComplete] Run ${runId} failed. Reason: ${runStatus.last_error?.message || 'Unknown error'}`);
+              reject(new Error(`Run failed: ${runStatus.last_error?.message || 'Unknown error'}`));
+              break;
+            case 'cancelled':
+              logger.warn(`[pollRunUntilComplete] Run ${runId} was cancelled.`);
+              reject(new Error('Run was cancelled'));
+              break;
+            case 'expired':
+              logger.error(`[pollRunUntilComplete] Run ${runId} expired.`);
+              reject(new Error('Run expired'));
+              break;
+            default:
+              logger.error(`[pollRunUntilComplete] Unknown run status for ${runId}: ${runStatus.status}`);
+              reject(new Error(`Unknown run status: ${runStatus.status}`));
+          }
+        } catch (error) {
+          logger.error(`[pollRunUntilComplete] Error during polling for run ${runId}: ${error.message}`);
+          // Retry for a few attempts in case of network errors
+          if (attempts < 5) {
+            logger.warn(`[pollRunUntilComplete] Retrying due to polling error. Attempt ${attempts}/5.`);
+            setTimeout(checkStatus, pollInterval * attempts);
+            return;
+          }
+          reject(error);
         }
-      });
+      };
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error?.message || 'Failed to check run status');
-      }
-
-      status = await response.json();
-
-      // If completed or failed, break the loop
-      if (['completed', 'failed', 'cancelled', 'expired'].includes(status.status)) {
-        break;
-      }
-
-      // If still running, wait with exponential backoff
-      logger.debug(`Run ${runId} status: ${status.status}, attempt ${attempts}`);
-      await new Promise(resolve => setTimeout(resolve, delay));
-      delay = Math.min(delay * 1.5, 5000); // Increase delay up to 5s max
-    }
-
-    if (status.status !== 'completed') {
-      throw new Error(`Run failed with status: ${status.status}`);
-    }
-
-    return status;
+      checkStatus(); // Start the polling
+    });
   }
 
   /**
    * Get the assistant's response from a completed run
    * @param {string} threadId - Thread ID
-   * @param {string} runId - Run ID
-   * @returns {Promise<string>} Response text
+   * @param {string} runId - Run ID (Note: runId is not strictly needed if fetching latest messages)
+   * @returns {Promise<string>} Raw JSON string response text from the assistant
    */
-  async getAssistantResponseFromRun(threadId, runId) {
+  async getAssistantResponseFromRun(threadId, runId) { // runId kept for context, though messages are fetched for thread
     try {
-      const response = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+      const response = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages?limit=1&order=desc`, { // Fetch latest message
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
-          'OpenAI-Beta': 'assistants=v2'  // Updated to v2
+          'OpenAI-Beta': 'assistants=v2'
         }
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error?.message || 'Failed to retrieve messages');
+        const errorData = await response.json().catch(() => ({ error: { message: response.statusText } }));
+        throw new Error(`Failed to retrieve messages: ${errorData.error?.message || response.statusText}`);
       }
 
-      const messages = await response.json();
+      const messagesResponse = await response.json();
 
-      // Find the first assistant message (should be the newest one)
-      const assistantMessage = messages.data.find(msg => msg.role === 'assistant');
+      const assistantMessage = messagesResponse.data && messagesResponse.data.length > 0 ? messagesResponse.data[0] : null;
 
-      if (!assistantMessage) {
-        throw new Error('No assistant message found');
+      if (!assistantMessage || assistantMessage.role !== 'assistant') {
+        logger.error('No assistant message found as the latest message, or latest message not from assistant.', { messagesData: messagesResponse.data });
+        throw new Error('No assistant message found as the latest message in the thread.');
       }
 
-      // Extract the text content
       if (assistantMessage.content && assistantMessage.content.length > 0) {
-        const textContent = assistantMessage.content.find(content => content.type === 'text');
-        if (textContent) {
-          return textContent.text.value;
+        const textContentItem = assistantMessage.content.find(contentItem => contentItem.type === 'text');
+        if (textContentItem && textContentItem.text && typeof textContentItem.text.value === 'string') {
+          logger.debug("Retrieved assistant's message content (expected to be JSON string).");
+          return textContentItem.text.value;
         }
       }
 
-      throw new Error('No text content found in assistant message');
+      logger.error('No text content found in assistant message or content is not in expected format.', { assistantMessage });
+      throw new Error('No text content found in assistant message or content is not in expected format.');
     } catch (error) {
       logger.error(`Error retrieving assistant response: ${error.message}`);
       throw error;
@@ -734,46 +876,75 @@ class OpenAIManager {
 
   /**
    * Create or update a wizard with name and instructions.
-   * @param {'seller'|'buyer'} role
+   * The instructions should guide the assistant to output JSON matching the desired schema.
+   * @param {'seller'|'buyer'|'default'} role
    * @param {string} name
-   * @param {string} instructions
+   * @param {string} instructions - These instructions MUST guide the assistant to produce JSON.
    * @returns {Promise<string>} assistantId
    */
   async createOrUpdateAssistant(role, name, instructions) {
-    if (!this.isInitialized) throw new Error('API key not initialized');
+    if (!this.isInitialized && !this.apiKey) {
+        logger.error('API key not initialized. Cannot create or update assistant.');
+        throw new Error('API key not initialized');
+    }
     let assistantId = this.assistants[role];
     const headers = {
       'Authorization': `Bearer ${this.apiKey}`,
       'Content-Type': 'application/json',
-      'OpenAI-Beta': 'assistants=v2'  // Updated to v2
+      'OpenAI-Beta': 'assistants=v2'
     };
-    // Upgrade existing
+
+    const modelToUse = this.model || "gpt-4o-mini"; 
+
+    const assistantBody = {
+        name,
+        instructions, // Crucial: these instructions must tell the assistant to output JSON according to your schema
+        model: modelToUse,
+        // response_format: { type: "json_object" } // Can be set here too, but setting per-run gives more flexibility
+    };
+
+    let requestUrl;
+    let method;
+
     if (assistantId) {
-      const res = await fetch(`https://api.openai.com/v1/assistants/${assistantId}`, {
-        method: 'PATCH',
-        headers,
-        body: JSON.stringify({ name, instructions })
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error?.message || 'Failed to update assistant');
-      }
+      requestUrl = `https://api.openai.com/v1/assistants/${assistantId}`;
+      method = 'POST'; // OpenAI API uses POST for updates to assistants.
+      logger.debug(`Updating assistant ${assistantId} for role ${role} with model ${modelToUse}.`);
     } else {
-      // Create new
-      const res = await fetch('https://api.openai.com/v1/assistants', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ name, instructions })
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error?.message || 'Failed to create assistant');
-      }
-      const data = await res.json();
-      assistantId = data.id;
+      requestUrl = 'https://api.openai.com/v1/assistants';
+      method = 'POST';
+      logger.debug(`Creating new assistant for role ${role} with model ${modelToUse}.`);
     }
-    this.assistants[role] = assistantId;
-    return assistantId;
+
+    try {
+        const res = await fetch(requestUrl, {
+            method: method,
+            headers,
+            body: JSON.stringify(assistantBody)
+        });
+
+        if (!res.ok) {
+            const errText = await res.text();
+            logger.error(`Failed to ${assistantId ? 'update' : 'create'} assistant for role ${role}: ${res.status} ${res.statusText}`, { errorBody: errText });
+            const errJson = JSON.parse(errText); // Attempt to parse error
+            throw new Error(errJson.error?.message || `Failed to ${assistantId ? 'update' : 'create'} assistant: ${res.status}`);
+        }
+
+        const data = await res.json();
+        assistantId = data.id; // Update assistantId if it was a creation
+        this.assistants[role] = assistantId;
+        storageUtils.set(`FB_CHAT_MONITOR_${role.toUpperCase()}_ASSISTANT_ID`, assistantId);
+        logger.log(`Assistant ${assistantId} ${assistantId && method === 'POST' && requestUrl.includes(assistantId) ? 'updated' : 'created'} successfully for role ${role}.`);
+        return assistantId;
+
+    } catch (error) {
+        // If error is already an Error object with a message, rethrow it. Otherwise, create a new one.
+        if (error.message) {
+            throw error;
+        } else {
+            throw new Error(`Unexpected error during assistant ${assistantId ? 'update' : 'creation'}: ${String(error)}`);
+        }
+    }
   }
 
   /**
