@@ -525,11 +525,14 @@ class OpenAIManager {
    * @returns {Array} Message content array for OpenAI API
    */
   prepareMessageContent(context) {
-    const { role, messages, productDetails, analysis } = context;
+    const { role, messages, productDetails} = context;
 
+    const organizedMessages = this.organizeMessagesByRole(messages);
+    
     // Construct the main payload object
     const jsonPayload = {
-      role: role, // This is the role the AI should assume (e.g., "seller", "buyer")
+      context: {
+      role: role, // 'buyer' o 'seller'
       product: productDetails ? {
         id: productDetails.id,
         title: productDetails.title,
@@ -538,118 +541,87 @@ class OpenAIManager {
         condition: productDetails.condition,
         location: productDetails.location,
         category: productDetails.category,
-        imageUrls: productDetails.imageUrls || []
-      } : null,
-      // Take last N messages for context (use config or default)
-      conversation: messages.slice(-(CONFIG.AI.messageHistoryLimit || 100)).map(msg => {
-        // Ensure msg and msg.content exist
-        if (!msg || !msg.content) {
-          // Fallback for invalid structure, less likely if extractChatHistory is robust
-          return { role: msg?.sentByUs ? "assistant" : "user", content: "[Invalid message structure]", error: "Invalid message structure" };
-        }
-
-        const messageEntry = {
-          // Key change: Use "user" for messages from the other person, "assistant" for messages from our user.
-          role: msg.sentByUs ? "assistant" : "user", 
-          // Construct a content string that can include text and references to media.
-          // The assistant will be instructed that this 'content' field for conversation messages is a string.
-          // For a more structured approach for media within conversation history (if Assistants API evolves):
-          // content: [{type: "text", text: msg.content.text}, {type: "image_url", image_url: {url: "..."}}]
-          // For now, we'll embed media info into a text string or keep it as separate properties if preferred by assistant instructions.
-        };
-        
-        let messageContentString = "";
-
-        if (msg.content.text) {
-          messageContentString += msg.content.text;
-          messageEntry.text = msg.content.text; // Keep separate text field for easier access
-        }
-
-        if (msg.content.transcribedAudio && typeof msg.content.transcribedAudio === 'string' && !msg.content.transcribedAudio.startsWith('[')) {
-          messageContentString += (messageContentString ? " " : "") + `[Transcribed Audio: ${msg.content.transcribedAudio}]`;
-          messageEntry.transcribedAudio = msg.content.transcribedAudio;
-        } else if (msg.content.audioUrl) {
-          messageContentString += (messageContentString ? " " : "") + "[Audio message present]";
-          messageEntry.hasAudio = true;
-          if (typeof msg.content.transcribedAudio === 'string' && msg.content.transcribedAudio.startsWith('[')) {
-            messageEntry.audioStatus = msg.content.transcribedAudio;
-          }
-        }
-
-        if (msg.content.imageUrls && Array.isArray(msg.content.imageUrls) && msg.content.imageUrls.length > 0) {
-          messageContentString += (messageContentString ? " " : "") + `[${msg.content.imageUrls.length} image(s) sent]`;
-          messageEntry.imageUrls = msg.content.imageUrls; // Keep for assistant to reference
-        }
-        
-        // Add other media types from msg.content.media if they exist
-        if (msg.content.media) {
-            if (msg.content.media.video) {
-                messageContentString += (messageContentString ? " " : "") + "[Video present]";
-                messageEntry.video = msg.content.media.video;
-            }
-            if (msg.content.media.files && msg.content.media.files.length > 0) {
-                messageContentString += (messageContentString ? " " : "") + `[${msg.content.media.files.length} file(s) present]`;
-                messageEntry.files = msg.content.media.files;
-            }
-            if (msg.content.media.location) {
-                messageContentString += (messageContentString ? " " : "") + "[Location shared]";
-                messageEntry.location = msg.content.media.location;
-            }
-            if (msg.content.media.gif) {
-                messageContentString += (messageContentString ? " " : "") + "[GIF/Sticker present]";
-                messageEntry.gif = msg.content.media.gif;
-            }
-        }
-
-
-        // The 'content' field for the OpenAI message object should be a string or an array of content blocks.
-        // We are creating a single text block that summarizes the message.
-        // The detailed structured parts (like imageUrls, transcribedAudio) are also included
-        // at the same level as 'role' for the assistant to potentially use if its instructions guide it.
-        // However, the primary 'content' for the API call for each message in the history will be this string.
-        // This might need adjustment based on how well the assistant model parses this structure.
-        // A simpler approach for the assistant might be to just pass `messageEntry.text` or `messageContentString`
-        // as the content, and rely on the assistant to understand the other fields.
-        // For now, let's provide both a summary string and the discrete fields.
-        // The OpenAI API expects `content` for each message in the history.
-        // We will use the `messageContentString` for that.
-        messageEntry.content = messageContentString || "[Media message without text]";
-
-
-        // Add timestamp if available
-        if (msg.timestamp) {
-          messageEntry.timestamp = msg.timestamp;
-        }
-        
-        return messageEntry;
-      }),
-      analysis: analysis || null
+        imageUrls: productDetails.imageUrls || [],
+        sellerInfo: productDetails.sellerInfo,
+        listingDate: productDetails.listingDate,
+        availableOptions: productDetails.availableOptions,
+        shipping: productDetails.shipping,
+        paymentMethods: productDetails.paymentMethods,
+        tags: productDetails.tags,
+        status: productDetails.status,
+        viewCount: productDetails.viewCount,
+        lastUpdated: productDetails.lastUpdated,
+        originalUrl: productDetails.originalUrl,
+        marketplace: productDetails.marketplace || "Facebook Marketplace"
+      } : null
+      },
+      conversation: {
+      user: organizedMessages.user,
+      assistant: organizedMessages.assistant
+      }
     };
 
     // Log the complete JSON payload object before stringifying
-    logger.debug('[OpenAIManager] JSON Payload to be sent to Assistant:', jsonPayload);
+    console.log('[OpenAIManager] JSON Payload to be sent to Assistant:', jsonPayload);
 
     // Start with a text part containing the JSON context
     const content = [{
       type: 'text',
-      text: JSON.stringify(jsonPayload) // The entire jsonPayload is stringified and sent as the text of the *current* user message to the thread.
-                                        // The 'conversation' array within this JSON is the history.
+      text: JSON.stringify(jsonPayload) // Todo el jsonPayload se convierte a string y se envía como el texto del mensaje actual al hilo
     }];
 
-    // Note: Assistants API v2 currently doesn't directly support image URLs within the
-    // message content array like the Chat Completions API vision models do.
-    // We are including image URLs within the JSON text context for the assistant to reference.
-    // If direct image analysis is needed later, the approach might need adjustment
-    // (e.g., using Chat Completions with vision or waiting for Assistants API updates).
-
     logger.debug('[OpenAIManager] Prepared message content for API:', { textLength: content[0].text.length });
-    // Log the actual content being sent (or a snippet) for debugging
-    // logger.debug('[OpenAIManager] Content Snippet:', content[0].text.substring(0, 500) + (content[0].text.length > 500 ? '...' : ''));
-
 
     return content; // Return array with single text object containing JSON
   }
 
+  /**
+   * Organizes messages into user and assistant categories
+   * @param {Array} messages - List of messages
+   * @returns {Object} Messages organized by role
+   */
+  organizeMessagesByRole(messages) {
+    const userMessages = [];
+    const assistantMessages = [];
+    const recentMessages = messages.slice(-(CONFIG.AI.messageHistoryLimit || 100));
+    let userIndex = 1;
+    let assistantIndex = 1;
+    
+    // Process conversation messages
+    for (const msg of recentMessages) {
+      if (!msg || !msg.content) continue;
+      
+      // Construct the message object
+      const messageObj = {
+        index: msg.sentByUs ? assistantIndex++ : userIndex++,
+        message: msg.content.text || ''
+      };
+      
+      // Add images if they exist
+      if (msg.content.imageUrls && Array.isArray(msg.content.imageUrls) && msg.content.imageUrls.length > 0) {
+        messageObj.images = msg.content.imageUrls;
+      }
+      
+      // Add transcribed audio if it exists
+      if (msg.content.transcribedAudio && 
+          typeof msg.content.transcribedAudio === 'string' && 
+          !msg.content.transcribedAudio.startsWith('[')) {
+        messageObj.audio = msg.content.transcribedAudio;
+      }
+      
+      // Distribute message according to role
+      if (msg.sentByUs) {
+        assistantMessages.push(messageObj);
+      } else {
+        userMessages.push(messageObj);
+      }
+    }
+    
+    return {
+      user: userMessages,
+      assistant: assistantMessages
+    };
+  }
 
   /**
    * Run an assistant on a thread and get the response
@@ -668,8 +640,7 @@ class OpenAIManager {
           'OpenAI-Beta': 'assistants=v2'
         },
         body: JSON.stringify({
-          assistant_id: assistantId,
-          response_format: { type: "json_object" } // Request JSON output
+          assistant_id: assistantId
         })
       });
 
@@ -682,37 +653,13 @@ class OpenAIManager {
       logger.debug(`Started run ${run.id} on thread ${threadId} with response_format: json_object`);
 
       // Poll for completion
-      // Ensure 'this' context is correct if pollRunUntilComplete is not an arrow function or bound
       await this.pollRunUntilComplete(threadId, run.id);
 
-      // Get the assistant's message (which should be a JSON string)
-      const jsonStringResponse = await this.getAssistantResponseFromRun(threadId, run.id);
+      // Get the assistant's message as plain text
+      const textResponse = await this.getAssistantResponseFromRun(threadId, run.id);
       
-      // Parse the JSON string
-      try {
-        const parsedResponse = JSON.parse(jsonStringResponse);
-        // Basic validation of the expected structure (can be expanded)
-        if (typeof parsedResponse.responseText !== 'string') {
-            logger.warn('Parsed response is missing "responseText" or it is not a string. This may indicate the assistant instructions need adjustment to enforce the JSON schema.', { parsedResponse });
-            // Fallback or throw more specific error
-            return {
-                responseText: jsonStringResponse, // return raw string if parsing gives unexpected structure
-                buyerIntent: "parse_error",
-                suggestedAction: "review_assistant_instructions",
-                sentiment: "unknown",
-                isSafeResponse: true, 
-                refusalReason: "Response structure mismatch after parsing. Ensure assistant instructions enforce the desired JSON schema.",
-                parsingError: true,
-                rawResponse: jsonStringResponse // Include raw response for debugging
-            };
-        }
-        logger.debug("Successfully parsed assistant's JSON response.");
-        return parsedResponse;
-      } catch (parseError) {
-        logger.error(`Error parsing assistant's JSON response: ${parseError.message}`, { jsonStringResponse });
-        throw new Error(`Failed to parse assistant's JSON response: ${parseError.message}. Raw response: ${jsonStringResponse.substring(0,200)}...`);
-      }
-
+      logger.debug("Retrieved assistant's text response");
+      return textResponse;
     } catch (error) {
       logger.error(`Error running assistant: ${error.message}`);
       throw error; 

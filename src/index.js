@@ -12,7 +12,7 @@ import './human-simulator.js';         // Human behavior simulation
 import './product-extractor.js';       // Product information extraction
 import './openai-manager.js';          // OpenAI integration
 import './assistant-manager-ui.js';    // Assistant management UI
-import './ChatManager.js';             // Chat management
+import './chatManager.js';             // Chat management
 import './marketplace.js';             // Marketplace redirection
 import './ui.js';                      // User interface components
 import './main.js';                    // Main process

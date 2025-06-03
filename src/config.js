@@ -243,30 +243,32 @@ Object.assign(CONFIG, {
         'div[aria-label*="GIF"]'
       ],
 
-      // Rest of existing selectors
       sellerIndicators: [
-        'div[aria-label="Mark as pending"]',
-        'span:contains("Mark as pending")',
-        'div[aria-label="Create plan"]',
-        'div[aria-label="Mark as available"]',
-        'div[aria-label="Mark as sold"]'
+        'div[aria-label="Mark as sold"], div[aria-label="Marcar como vendido"]',
+        'div[aria-label="Mark as pending"], div[aria-label="Marcar como pendiente"]',
+        'div[aria-label="Mark as available"], div[aria-label="Marcar como disponible"]',
+        'a[aria-label="View buyer"], a[aria-label="Ver comprador"]',
+        'div[aria-label="View buyer"], div[aria-label="Ver comprador"]'
       ],
       buyerIndicators: [
         'a[aria-label="See details"]',
-        'span:contains("See details")'
+        'div[aria-label="View listing"], div[aria-label="Ver artículo"]',
+        'div[aria-label="Create plan"]', 
+        'a[aria-label="View listing"], a[aria-label="Ver artículo"]',
+        'a[aria-label="View seller profile"], a[aria-label="Ver perfil del vendedor"]'
       ],
       productLink: 'a[href*="/marketplace/item/"]',
       productInfo: 'div[class*="x1sliqq"], div[role="main"] > div > div > div:first-child',
       messageInput: 'div[contenteditable="true"][role="textbox"], div[aria-label="Message"], p.xat24cr.xdj266r',
       sendButton: [
-        'div[aria-label="Press enter to send"]', // Standard button in English
-        'div[aria-label="Pulsa Intro para enviar"]', // Standard button in Spanish (kept for specific cases, or translate)
-        'div[role="button"][aria-label*="send"]', // Any button with "send" in aria-label
-        'div[role="button"][aria-label*="enviar"]', // Spanish version (kept for specific cases, or translate)
-        'div.x1i10hfl[role="button"].xjbqb8w', // Specific class selector
-        'div.x78zum5[role="button"].xjbqb8w', // Alternative selector
-        'div.x1i10hfl[role="button"]:not([aria-hidden="true"])', // Not hidden
-        'div[role="button"][tabindex="0"]:not([style*="visibility: hidden"])' // With tabindex and visible
+        'div[aria-label="Press enter to send"]', 
+        'div[aria-label="Pulsa Intro para enviar"]', 
+        'div[role="button"][aria-label*="send"]', 
+        'div[role="button"][aria-label*="enviar"]', 
+        'div.x1i10hfl[role="button"].xjbqb8w', 
+        'div.x78zum5[role="button"].xjbqb8w', 
+        'div.x1i10hfl[role="button"]:not([aria-hidden="true"])', 
+        'div[role="button"][tabindex="0"]:not([style*="visibility: hidden"])' 
       ],
       scrollbar: [
         '.x1uipg7g > div:nth-child(1) > div:nth-child(1)',
@@ -275,7 +277,6 @@ Object.assign(CONFIG, {
         'div.x4k7w5x > div[style*="height"]',
         'div[role="main"] div.x1n2onr6[style*="height"]'
       ],
-      // New: chat beginning indicators for full scroll detection
       chatBeginningIndicators: [
         'div[role="img"][aria-label]',
         'h4.xdj266r.x11i5rnm.xat24cr.x1mh8g0r',
