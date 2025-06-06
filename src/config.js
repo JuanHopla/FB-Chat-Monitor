@@ -56,7 +56,7 @@ Object.assign(CONFIG, {
     },
 
     // Function to synchronize with old configuration
-    syncWithLegacyConfig: function() {
+    syncWithLegacyConfig: function () {
       // Synchronize apiKey between the two locations for compatibility
       if (CONFIG.apiKey && !this.apiKey) {
         this.apiKey = CONFIG.apiKey;
@@ -72,10 +72,10 @@ Object.assign(CONFIG, {
       // Synchronize assistants with old configuration
       if (CONFIG.assistants) {
         if (CONFIG.assistants.seller) {
-          this.assistants.seller = {...this.assistants.seller, ...CONFIG.assistants.seller};
+          this.assistants.seller = { ...this.assistants.seller, ...CONFIG.assistants.seller };
         }
         if (CONFIG.assistants.buyer) {
-          this.assistants.buyer = {...this.assistants.buyer, ...CONFIG.assistants.buyer};
+          this.assistants.buyer = { ...this.assistants.buyer, ...CONFIG.assistants.buyer };
         }
       }
     }
@@ -197,7 +197,7 @@ Object.assign(CONFIG, {
         'div[role="button"][aria-label="Play"]',
         'div[aria-label="Play"][role="button"]',
         'div[role="button"][aria-label*="audio"]',
-        'div[aria-label*="reproducir"][role="button"]', 
+        'div[aria-label*="reproducir"][role="button"]',
         'div[aria-label*="Audio message"]',
         'div.xzg4506 > div.x1qjc9v5 > div[role="button"]',
         'div[aria-label*="Play" i][role="button"]'
@@ -223,7 +223,7 @@ Object.assign(CONFIG, {
         'a[href*="cdn.fbsbx.com"][download]',
         'div[data-testid="attachment"]',
         'div[role="button"][aria-label*="file"]',
-        'div[aria-label*="archivo adjunto"]' 
+        'div[aria-label*="archivo adjunto"]'
       ],
 
       // Selectors for location (new)
@@ -232,7 +232,7 @@ Object.assign(CONFIG, {
         'a[href*="l.facebook.com/l.php"][href*="maps"]',
         'a[href*="google.com/maps"]',
         'div[aria-label*="location"]',
-        'div[aria-label*="ubicación"]' 
+        'div[aria-label*="ubicación"]'
       ],
 
       // Selectors for GIFs and stickers (new)
@@ -253,7 +253,7 @@ Object.assign(CONFIG, {
       buyerIndicators: [
         'a[aria-label="See details"]',
         'div[aria-label="View listing"], div[aria-label="Ver artículo"]',
-        'div[aria-label="Create plan"]', 
+        'div[aria-label="Create plan"]',
         'a[aria-label="View listing"], a[aria-label="Ver artículo"]',
         'a[aria-label="View seller profile"], a[aria-label="Ver perfil del vendedor"]'
       ],
@@ -261,19 +261,22 @@ Object.assign(CONFIG, {
       productInfo: 'div[class*="x1sliqq"], div[role="main"] > div > div > div:first-child',
       messageInput: 'div[contenteditable="true"][role="textbox"], div[aria-label="Message"], p.xat24cr.xdj266r',
       sendButton: [
-        'div[aria-label="Press enter to send"]', 
-        'div[aria-label="Pulsa Intro para enviar"]', 
-        'div[role="button"][aria-label*="send"]', 
-        'div[role="button"][aria-label*="enviar"]', 
-        'div.x1i10hfl[role="button"].xjbqb8w', 
-        'div.x78zum5[role="button"].xjbqb8w', 
-        'div.x1i10hfl[role="button"]:not([aria-hidden="true"])', 
-        'div[role="button"][tabindex="0"]:not([style*="visibility: hidden"])' 
+        'div[aria-label="Press enter to send"]',
+        'div[aria-label="Pulsa Intro para enviar"]',
+        'div[role="button"][aria-label*="send"]',
+        'div[role="button"][aria-label*="enviar"]',
+        'div.x1i10hfl[role="button"].xjbqb8w',
+        'div.x78zum5[role="button"].xjbqb8w',
+        'div.x1i10hfl[role="button"]:not([aria-hidden="true"])',
+        'div[role="button"][tabindex="0"]:not([style*="visibility: hidden"])'
       ],
       scrollbar: [
-        '.x1uipg7g > div:nth-child(1) > div:nth-child(1)',
+        // Selector que encontró el diagnóstico (contiene el scroll real)
+        'div.x78zum5.xdt5ytf.x1iyjqo2 > div[role="none"]',
         'div[style*="overflow-y: auto"][style*="height"]',
         'div[style*="overflow: auto"][style*="height"]',
+        // Selectores existentes como respaldo
+        '.x1uipg7g > div:nth-child(1) > div:nth-child(1)',
         'div.x4k7w5x > div[style*="height"]',
         'div[role="main"] div.x1n2onr6[style*="height"]'
       ],
@@ -403,15 +406,15 @@ Object.assign(CONFIG, {
           if (assistantsData && typeof assistantsData === 'object') {
             // Update only existing properties in both structures
             if (assistantsData.seller) {
-              this.assistants.seller = {...this.assistants.seller, ...assistantsData.seller};
+              this.assistants.seller = { ...this.assistants.seller, ...assistantsData.seller };
               if (this.AI && this.AI.assistants) {
-                this.AI.assistants.seller = {...this.AI.assistants.seller, ...assistantsData.seller};
+                this.AI.assistants.seller = { ...this.AI.assistants.seller, ...assistantsData.seller };
               }
             }
             if (assistantsData.buyer) {
-              this.assistants.buyer = {...this.assistants.buyer, ...assistantsData.buyer};
+              this.assistants.buyer = { ...this.assistants.buyer, ...assistantsData.buyer };
               if (this.AI && this.AI.assistants) {
-                this.AI.assistants.buyer = {...this.AI.assistants.buyer, ...assistantsData.buyer};
+                this.AI.assistants.buyer = { ...this.AI.assistants.buyer, ...assistantsData.buyer };
               }
             }
           }
@@ -543,15 +546,15 @@ Object.assign(CONFIG, {
 
     // Update only if there is valid data for each role
     if (assistants.seller) {
-      this.assistants.seller = {...this.assistants.seller, ...assistants.seller};
+      this.assistants.seller = { ...this.assistants.seller, ...assistants.seller };
       if (this.AI && this.AI.assistants) {
-        this.AI.assistants.seller = {...this.AI.assistants.seller, ...assistants.seller};
+        this.AI.assistants.seller = { ...this.AI.assistants.seller, ...assistants.seller };
       }
     }
     if (assistants.buyer) {
-      this.assistants.buyer = {...this.assistants.buyer, ...assistants.buyer};
+      this.assistants.buyer = { ...this.assistants.buyer, ...assistants.buyer };
       if (this.AI && this.AI.assistants) {
-        this.AI.assistants.buyer = {...this.AI.assistants.buyer, ...assistants.buyer};
+        this.AI.assistants.buyer = { ...this.AI.assistants.buyer, ...assistants.buyer };
       }
     }
 
@@ -676,7 +679,7 @@ Object.assign(CONFIG, {
 window.CONFIG = CONFIG;
 
 // FIX: Add function for diagnosis that can be called from the console
-window.diagnoseModeConfig = function() {
+window.diagnoseModeConfig = function () {
   const gmMode = typeof GM_getValue === 'function' ? GM_getValue('FB_CHAT_MODE') : 'N/A';
   const gmOpMode = typeof GM_getValue === 'function' ? GM_getValue('FB_CHAT_OPERATION_MODE') : 'N/A';
   const lsMode = localStorage.getItem('FB_CHAT_MODE');
