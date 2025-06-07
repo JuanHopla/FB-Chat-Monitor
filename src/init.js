@@ -292,7 +292,7 @@ function loadConfigFromStorage() {
     
     console.log('[CONFIG] Configuration loaded:', {
       apiKey: CONFIG.AI.apiKey ? '********' : '(no key)',
-      model: CONFIG.AI.model, // Will always be gpt-4.1-mini
+      model: CONFIG.AI.model, // Will always be gpt-4o
       assistants: {
         seller: CONFIG.AI.assistants.seller.id ? '(configured)' : '(not configured)',
         buyer: CONFIG.AI.assistants.buyer.id ? '(configured)' : '(not configured)'

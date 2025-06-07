@@ -7,7 +7,7 @@ class OpenAIManager {
   constructor() {
     // Use storageUtils as the primary data source
     this.apiKey = storageUtils.get('FB_CHAT_MONITOR_OPENAI_KEY', '') || '';
-    this.model = "gpt-4.1-mini"; // Fixed to gpt-4.1-mini
+    this.model = "gpt-4o"; // Fixed to gpt-4o
     this.isInitialized = false;
     this.activeThreads = new Map(); // Store active threads by chatId
     this.threadTTL = 30 * 60 * 1000; // 30 minutes
@@ -50,13 +50,151 @@ class OpenAIManager {
       }
 
       // The model is always fixed
-      this.model = "gpt-4.1-mini";
-      CONFIG.AI.model = "gpt-4.1-mini";
+      this.model = "gpt-4o";
+      CONFIG.AI.model = "gpt-4o";
 
-      // If we have an API key, we should always be initialized
+      // NEW: Create and initialize the OpenAI client if we have an API key
       if (this.apiKey) {
+        // Initialize the client to communicate with the OpenAI API
+        this.client = {
+          beta: {
+            threads: {
+              create: async () => {
+                const response = await fetch('https://api.openai.com/v1/threads', {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${this.apiKey}`,
+                    'Content-Type': 'application/json',
+                    'OpenAI-Beta': 'assistants=v2'
+                  },
+                  body: JSON.stringify({})
+                });
+                
+                if (!response.ok) {
+                  const errorData = await response.json();
+                  throw new Error(`Error creating thread: ${errorData.error?.message || response.statusText}`);
+                }
+                
+                return response.json();
+              },
+              messages: {
+                create: async (threadId, messageData) => {
+                  const response = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
+                    method: 'POST',
+                    headers: {
+                      'Authorization': `Bearer ${this.apiKey}`,
+                      'Content-Type': 'application/json',
+                      'OpenAI-Beta': 'assistants=v2'
+                    },
+                    body: JSON.stringify(messageData)
+                  });
+                  
+                  if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`Error creating message: ${errorData.error?.message || response.statusText}`);
+                  }
+                  
+                  return response.json();
+                },
+                list: async (threadId, options = {}) => {
+                  const queryParams = new URLSearchParams(options).toString();
+                  const url = `https://api.openai.com/v1/threads/${threadId}/messages${queryParams ? `?${queryParams}` : ''}`;
+                  
+                  const response = await fetch(url, {
+                    headers: {
+                      'Authorization': `Bearer ${this.apiKey}`,
+                      'Content-Type': 'application/json',
+                      'OpenAI-Beta': 'assistants=v2'
+                    }
+                  });
+                  
+                  if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`Error listing messages: ${errorData.error?.message || response.statusText}`);
+                  }
+                  
+                  return response.json();
+                }
+              },
+              runs: {
+                create: async (threadId, runData) => {
+                  const response = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
+                    method: 'POST',
+                    headers: {
+                      'Authorization': `Bearer ${this.apiKey}`,
+                      'Content-Type': 'application/json',
+                      'OpenAI-Beta': 'assistants=v2'
+                    },
+                    body: JSON.stringify(runData)
+                  });
+                  
+                  if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`Error creating run: ${errorData.error?.message || response.statusText}`);
+                  }
+                  
+                  return response.json();
+                },
+                retrieve: async (threadId, runId) => {
+                  const response = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
+                    headers: {
+                      'Authorization': `Bearer ${this.apiKey}`,
+                      'Content-Type': 'application/json',
+                      'OpenAI-Beta': 'assistants=v2'
+                    }
+                  });
+                  
+                  if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`Error retrieving run: ${errorData.error?.message || response.statusText}`);
+                  }
+                  
+                  return response.json();
+                }
+              }
+            },
+            assistants: {
+              retrieve: async (assistantId) => {
+                const response = await fetch(`https://api.openai.com/v1/assistants/${assistantId}`, {
+                  headers: {
+                    'Authorization': `Bearer ${this.apiKey}`,
+                    'Content-Type': 'application/json',
+                    'OpenAI-Beta': 'assistants=v2'
+                  }
+                });
+                
+                if (!response.ok) {
+                  const errorData = await response.json();
+                  throw new Error(`Error retrieving assistant: ${errorData.error?.message || response.statusText}`);
+                }
+                
+                return response.json();
+              },
+              list: async (options = {}) => {
+                const queryParams = new URLSearchParams(options).toString();
+                const url = `https://api.openai.com/v1/assistants${queryParams ? `?${queryParams}` : ''}`;
+                
+                const response = await fetch(url, {
+                  headers: {
+                    'Authorization': `Bearer ${this.apiKey}`,
+                    'Content-Type': 'application/json',
+                    'OpenAI-Beta': 'assistants=v2'
+                  }
+                });
+                
+                if (!response.ok) {
+                  const errorData = await response.json();
+                  throw new Error(`Error listing assistants: ${errorData.error?.message || response.statusText}`);
+                }
+                
+                return response.json();
+              }
+            }
+          }
+        };
+
+        logger.debug('OpenAI client created successfully');
         this.isInitialized = true;
-        logger.debug('initialize(): API key present, setting isInitialized=true');
       } else {
         this.isInitialized = false;
         logger.debug('initialize(): No API key, setting isInitialized=false');
@@ -220,6 +358,291 @@ class OpenAIManager {
   }
 
   /**
+   * Prepare the message content with context for the AI
+   * @param {Object} context - Context data
+   * @param {boolean} skipImages - Whether to skip including image URLs (default: false)
+   * @returns {Array} Message content array for OpenAI API
+   */
+  prepareMessageContent(context, skipImages = false) {
+    if (!context || !context.messages || !Array.isArray(context.messages)) {
+      logger.error('Invalid context or messages for OpenAI request');
+      return [];
+    }
+
+    try {
+      // If there are already prepared messages, use them directly
+      if (context.preparedMessages) {
+        return context.preparedMessages;
+      }
+
+      // NEW: Initial log of the received context
+      console.log('=== RECEIVED CONTEXT ===');
+      console.log('1. Role:', context.role);
+      console.log('2. ChatID:', context.chatId);
+      console.log('3. Total unprocessed messages:', context.messages?.length || 0);
+      console.log('==========================================================');
+
+      // Use the function to chronologically sort the messages
+      const organizedMessages = this._organizeMessagesByRole(context.messages);
+      
+      // Flag to know if the model supports vision (images)
+      const modelSupportsVision = !skipImages && (this.model === 'gpt-4o' || this.model.includes('vision'));
+      logger.debug(`Preparing messages for model: ${this.model}, supports vision: ${modelSupportsVision}, skipImages: ${skipImages}`);
+
+      // Final array of correctly formatted messages
+      const formattedMessages = [];
+
+      // Determine if we have product details for the first message
+      if (context.productDetails) {
+        const product = context.productDetails;
+        
+        // IMPROVEMENT: Create a complete and structured product description that includes all available details
+        // This version includes both formatted information and the complete structured data
+        let productDescription = `== PRODUCT DETAILS ==\n`;
+        productDescription += `Title: ${product.title || 'Not available'}\n`;
+        productDescription += `Price: ${product.price || 'Not available'}\n`;
+        productDescription += `Condition: ${product.condition || 'Not specified'}\n`;
+        productDescription += `Location: ${product.location || 'Not specified'}\n\n`;
+        productDescription += `Description:\n${product.description || 'No description available'}\n\n`;
+        
+        // Prepare additional attributes if they exist
+        if (product.attributes && Object.keys(product.attributes).length > 0) {
+          productDescription += "Additional attributes:\n";
+          Object.entries(product.attributes).forEach(([key, value]) => {
+            productDescription += `${key}: ${value}\n`;
+          });
+          productDescription += '\n';
+        }
+        
+        // NEW: Add the complete technical data to ensure all available information is sent
+        productDescription += `== COMPLETE PRODUCT DATA ==\n`;
+        productDescription += `ID: ${product.id || product.listingId || 'Not available'}\n`;
+        productDescription += `URL: ${product.url || product.originalUrl || 'Not available'}\n`;
+        productDescription += `Currency: ${product.currency || 'Not specified'}\n`;
+        productDescription += `Quantity: ${product.amount || 'Not specified'}\n`;
+        
+        // Include any other available fields
+        const additionalFields = ['seller', 'sellerInfo', 'category', 'listingDate', 'viewCount', 'status', 'marketplace'];
+        for (const field of additionalFields) {
+          if (product[field]) {
+            productDescription += `${field}: ${
+              typeof product[field] === 'object' ? 
+              JSON.stringify(product[field]) : 
+              product[field]}\n`;
+          }
+        }
+        
+        // Logs to verify images
+        if (product.imageUrls && product.imageUrls.length > 0) {
+          console.log(`Attempting to add ${product.imageUrls.length} images to the product message`);
+          productDescription += `\nAvailable images: ${product.imageUrls.length}\n`;
+          
+          // List the first 3 URLs for reference (regardless of whether they are included or not)
+          product.imageUrls.slice(0, 3).forEach((url, i) => {
+            productDescription += `Image ${i+1}: ${url.substring(0, 100)}...\n`;
+          });
+        }
+
+        // Add the product message (first message always as "user")
+        if (modelSupportsVision && product.imageUrls && product.imageUrls.length > 0 && !skipImages) {
+          // Multipart format with images if the model supports it
+          const content = [
+            { type: "text", text: productDescription }
+          ];
+          
+          // Add up to 3 images (reduced to avoid issues)
+          product.imageUrls.slice(0, 3).forEach(imageUrl => {
+            // Check that the URL is not from Facebook (avoids access problems)
+            if (!imageUrl.includes('fbcdn.net') && !imageUrl.includes('facebook.com')) {
+              content.push({
+                type: "image_url",
+                image_url: { url: imageUrl }
+              });
+              console.log(`  ✓ Added image: ${imageUrl}`);
+            } else {
+              logger.debug(`Skipping Facebook image URL to avoid access issues: ${imageUrl}`);
+              console.log(`  ✗ Skipped Facebook image: ${imageUrl}`);
+            }
+          });
+          
+          formattedMessages.push({ role: "user", content });
+          
+        } else {
+          // Text-only format for models that do not support vision
+          let textWithImageRefs = productDescription;
+          
+          // Mention image URLs as textual references
+          if (product.imageUrls && product.imageUrls.length > 0) {
+            const imageCount = product.imageUrls.length;
+            console.log(`Adding reference to ${imageCount} images in text format`);
+            textWithImageRefs += `\n\n[${imageCount} images available]\n`;
+          }
+          
+          formattedMessages.push({ role: "user", content: textWithImageRefs });
+        }
+      }
+      
+      // Process each message in the conversation according to its role
+      for (const msg of organizedMessages) {
+        // If the message has no content, ignore it
+        if (!msg.content || (!msg.content.text && (!msg.content.media || !Object.values(msg.content.media).some(v => v)))) {
+          continue;
+        }
+        
+        // Determine the correct role based on sentByUs
+        const isAssistant = msg.sentByUs;
+        const messageRole = isAssistant ? "assistant" : "user";
+        
+        // Get the text of the message
+        const messageText = msg.content.text || '';
+        
+        // Check if there is media to include
+        const hasMedia = msg.content.media && Object.values(msg.content.media).some(v => v);
+        
+        // For models that support vision, use multipart format if there are images
+        if (modelSupportsVision && hasMedia && msg.content.media.images && msg.content.media.images.length > 0 && !skipImages) {
+          const content = [
+            { type: "text", text: messageText }
+          ];
+          
+          // Add the images to the content (only if they are not from Facebook)
+          msg.content.media.images.forEach(image => {
+            if (image.url && !image.url.includes('fbcdn.net') && !image.url.includes('facebook.com')) {
+              content.push({
+                type: "image_url",
+                image_url: { url: image.url }
+              });
+            }
+          });
+          
+          formattedMessages.push({ role: messageRole, content });
+          
+        } else {
+          // For plain text or models without image support
+          let fullText = messageText;
+          
+          // Include media references as text
+          if (hasMedia) {
+            const mediaDesc = [];
+            
+            if (msg.content.media.images && msg.content.media.images.length) {
+              mediaDesc.push(`${msg.content.media.images.length} image(s)`);
+            }
+            
+            if (msg.content.media.video) {
+              mediaDesc.push('video');
+            }
+            
+            if (msg.content.media.audio) {
+              mediaDesc.push('audio');
+              // If there is a transcript, include it
+              if (msg.content.transcribedAudio) {
+                fullText += `\nAudio transcript: "${msg.content.transcribedAudio}"`;
+              }
+            }
+            
+            if (msg.content.media.files && msg.content.media.files.length) {
+              mediaDesc.push(`${msg.content.media.files.length} file(s)`);
+            }
+            
+            if (msg.content.media.location) {
+              mediaDesc.push(`location: ${msg.content.media.location.label || 'shared'}`);
+            }
+            
+            if (mediaDesc.length > 0) {
+              fullText += `\n[${mediaDesc.join(', ')}]`;
+            }
+          }
+          
+          formattedMessages.push({ role: messageRole, content: fullText });
+        }
+      }
+      
+      // Ensure the last message is from the "user" role for the assistant to respond
+      if (formattedMessages.length > 0) {
+        const lastMessage = formattedMessages[formattedMessages.length - 1];
+        
+        if (lastMessage.role !== "user") {
+          // Add an additional message for the user to request a response
+          formattedMessages.push({
+            role: "user",
+            content: `Respond to the last message as ${context.role}, considering all the context of the conversation.`
+          });
+        }
+      }
+
+      console.log('=== EXACT MESSAGE SENT TO OPENAI ===');
+      console.log('1.', context.role);
+      console.log('2. Messages:', JSON.parse(JSON.stringify(formattedMessages)));
+      console.log('=========================================');
+      
+      return formattedMessages;
+    } catch (error) {
+      logger.error(`Error preparing messages: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Organizes messages into user and assistant categories and ensures chronological order
+   * CORRECTION: Renamed to _organizeMessagesByRole to avoid confusion,
+   * as it's now an internal method (helper function)
+   * @param {Array} messages - List of messages
+   * @returns {Array} Messages organized by chronological order
+   * @private
+   */
+  _organizeMessagesByRole(messages) {
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return [];
+    }
+    
+    try {
+      // Make a copy of messages to avoid modifying the original
+      const sortedMessages = [...messages];
+      
+      // Sort messages chronologically by timestamp if it exists
+      sortedMessages.sort((a, b) => {
+        // If both have timestamp, use it to sort
+        if (a.timestamp && b.timestamp) {
+          return new Date(a.timestamp) - new Date(b.timestamp);
+        }
+        // If only one has timestamp, put it first
+        else if (a.timestamp) return -1;
+        else if (b.timestamp) return 1;
+        
+        // If they have sequential id (like msg_chat_1, msg_chat_2)
+        if (a.id && b.id && a.id.includes('_') && b.id.includes('_')) {
+          const aNum = parseInt(a.id.split('_').pop());
+          const bNum = parseInt(b.id.split('_').pop());
+          if (!isNaN(aNum) && !isNaN(bNum)) {
+            return aNum - bNum;
+          }
+        }
+        
+        // Default: keep the original order (which is usually chronological)
+        return 0;
+      });
+      
+      // Additional verification to ensure messages have the correct format
+      for (let i = 0; i < sortedMessages.length; i++) {
+        // Ensure each message has the content property
+        if (!sortedMessages[i].content) {
+          sortedMessages[i].content = { text: "" };
+        }
+        // If content is a direct string, convert it to an object
+        else if (typeof sortedMessages[i].content === 'string') {
+          sortedMessages[i].content = { text: sortedMessages[i].content };
+        }
+      }
+      
+      return sortedMessages;
+    } catch (error) {
+      logger.error(`Error organizing messages: ${error.message}`);
+      return [...messages]; // Return a copy of the original messages without changes
+    }
+  }
+
+  /**
    * Generate a response using OpenAI API
    * @param {Object} context - Context data including role, messages, and product details
    * @returns {Promise<Object>} Generated structured response object or an error object
@@ -227,21 +650,12 @@ class OpenAIManager {
   async generateResponse(context) {
     // If we are not ready, initialize first
     if (!this.isReady()) {
-      this.verifyServiceState();
+      logger.warn('OpenAI service not ready. Attempting to initialize...');
+      this.initialize();
       
-      // If we are still not ready after attempting to recover
       if (!this.isReady()) {
-        logger.warn('OpenAI Manager is not ready to generate responses');
-        return {
-          // Consistent structured error
-          responseText: "I'm sorry, I can't generate a response because I don't have access to the OpenAI API. Please verify your API key in the configuration.",
-          buyerIntent: "error",
-          suggestedAction: "check_config",
-          sentiment: "error",
-          isSafeResponse: false,
-          refusalReason: "OpenAI Manager not ready.",
-          error: true 
-        };
+        logger.error('OpenAI service could not be initialized');
+        throw new Error('OpenAI service not properly initialized');
       }
     }
     
@@ -249,49 +663,154 @@ class OpenAIManager {
     this.metrics.totalCalls++;
 
     try {
-      // Clear the input field before generating the response
-      // this.clearInputField(); // This might be better handled by ChatManager after receiving the response
-
-      // Determine which assistant to use based on role
+      logger.log(`Generating response as ${context.role} using OpenAI Assistants API`);
+      
+      // Get or create a thread for this chat
+      const threadObj = await this.getOrCreateThread(context.chatId);
+      const threadId = threadObj.id;
+      
+      // NEW: Log of the thread
+      console.log(`🧵 Thread used for response: ${threadId} (${threadObj.isNew ? 'NEW' : 'EXISTING'})`);
+      
+      // Add context messages to the thread (first attempt with images)
+      try {
+        // Prepare message content with potential images if model supports vision
+        const messages = this.prepareMessageContent(context, false); // skipImages = false
+        
+        // NEW: Explicit log of the sending moment
+        console.log(`🚀 SENDING TO OPENAI: ${messages.length} messages, threadId: ${threadId}`);
+        
+        await this.addMessageToThread(threadId, {
+          ...context,
+          preparedMessages: messages
+        });
+      } catch (error) {
+        logger.warn(`Error adding messages with images: ${error.message}`);
+        logger.warn('Retrying without images...');
+        
+        // Retry with skipImages=true if we get an error
+        const messagesWithoutImages = this.prepareMessageContent(context, true); // skipImages = true
+        await this.addMessageToThread(threadId, {
+          ...context,
+          preparedMessages: messagesWithoutImages
+        });
+      }
+      
+      // Get the appropriate assistant ID based on role
       const assistantId = this.getAssistantIdForRole(context.role);
-      if (!assistantId) {
-        throw new Error(`No assistant configured for role: ${context.role}`);
+      
+      // Run assistant and wait for structured response
+      const response = await this.runAssistant(threadId, assistantId);
+      
+      // Record metrics
+      const endTime = Date.now();
+      const duration = endTime - startTime;
+      
+      this.metrics.successfulCalls++;
+      this.metrics.totalResponseTime += duration;
+      this.metrics.avgResponseTime = this.metrics.totalResponseTime / this.metrics.successfulCalls;
+      
+      logger.log(`Response generated in ${duration}ms`);
+      
+      return response;
+    } catch (error) {
+      // Record metrics for failed calls
+      this.metrics.failedCalls++;
+      
+      // If we receive an error about downloading images, log it specially
+      if (error.message && error.message.includes('Error while downloading')) {
+        logger.error(`Error generating response due to image download issues. Try with skipImages=true parameter: ${error.message}`);
+      } else {
+        logger.error(`Error generating response: ${error.message}`);
+      }
+      
+      throw error;
+    }
+  }
+
+  /**
+   * Add a message with context to a thread
+   * @param {string} threadId - Thread ID
+   * @param {Object} context - Context including messages and product details
+   */
+  async addMessageToThread(threadId, context) {
+    try {
+      // Prepare message content
+      const messageContent = context.preparedMessages || this.prepareMessageContent(context);
+      
+      // Ensure we have a valid threadId
+      if (!threadId) {
+        throw new Error('Invalid threadId');
       }
 
-      logger.debug(`Using assistant ${assistantId} for role ${context.role}`);
+      if (!messageContent || !messageContent.length) {
+        throw new Error('No message content to add');
+      }
+      
+      /*// NEW: Log exactly what is being added to the thread
+      console.log(`🧵 Adding exactly ${messageContent.length} messages to thread: ${threadId}`);
+      console.table(messageContent.map((msg, idx) => ({
+        idx,
+        role: msg.role,
+        content: typeof msg.content === 'string' 
+          ? (msg.content.length > 30 ? msg.content.substring(0, 30) + '...' : msg.content)
+          : (Array.isArray(msg.content) ? `${msg.content.length} parts` : typeof msg.content)
+      })));*/
 
-      // Get or create a thread for this chat
-      const thread = await this.getOrCreateThread(context.chatId);
+      // Check if we have OpenAI client initialized
+      if (!this.client || !this.client.beta || !this.client.beta.threads || !this.client.beta.threads.messages) {
+        // Attempt to re-initialize the client if not available
+        logger.warn('OpenAI client not initialized, attempting to recreate it');
+        this.initialize(this.apiKey);
+        
+        // Check again after re-initialization
+        if (!this.client || !this.client.beta || !this.client.beta.threads || !this.client.beta.threads.messages) {
+          throw new Error('OpenAI client not properly initialized');
+        }
+      }
 
-      // Add message to the thread with context
-      await this.addMessageToThread(thread.id, context);
+      // Add each message to the thread
+      for (let i = 0; i < messageContent.length; i++) {
+        const msg = messageContent[i];
+        
+        // Skip system messages as they can't be added directly
+        if (msg.role === 'system') {
+          continue;
+        }
+        
+        // Ensure message format is valid (especially content array)
+        if (Array.isArray(msg.content)) {
+          // Ensure each content item has a 'type' field
+          msg.content.forEach((item, index) => {
+            if (!item.type) {
+              logger.warn(`Missing 'type' in content[${index}], defaulting to 'text'`);
+              item.type = 'text';
+            }
+          });
+        } else if (typeof msg.content === 'string') {
+          // Convert string content to properly formatted array
+          msg.content = [{ type: 'text', text: msg.content }];
+        }
+        
+        try {
+          await this.client.beta.threads.messages.create(
+            threadId,
+            {
+              role: msg.role,
+              content: msg.content
+            }
+          );
+          logger.debug(`Added message #${i+1} with role ${msg.role} to thread ${threadId}`);
+        } catch (msgError) {
+          logger.error(`Error adding message #${i+1}: ${msgError.message}`);
+          throw msgError;
+        }
+      }
 
-      // Run the assistant on the thread, requesting JSON output
-      // The actual schema adherence will depend on the assistant's instructions
-      const structuredResponse = await this.runAssistant(thread.id, assistantId);
-
-      // Update metrics
-      this.metrics.successfulCalls++;
-      const responseTime = Date.now() - startTime;
-      this.metrics.totalResponseTime += responseTime;
-      this.metrics.avgResponseTime = this.metrics.totalResponseTime / this.metrics.successfulCalls;
-
-      logger.debug(`Structured response generated in ${responseTime}ms`);
-
-      return structuredResponse; // This is now an object
+      return true;
     } catch (error) {
-      this.metrics.failedCalls++;
-      logger.error(`Error generating structured response: ${error.message}`);
-      // Return a structured error
-      return {
-        responseText: `Error generating response: ${error.message}`,
-        buyerIntent: "error",
-        suggestedAction: "retry_or_check_logs",
-        sentiment: "error",
-        isSafeResponse: false,
-        refusalReason: `Internal error: ${error.message}`,
-        error: true
-      };
+      logger.error(`Error adding message to thread: ${error.message}`);
+      throw error;
     }
   }
 
@@ -446,181 +965,46 @@ class OpenAIManager {
     // Check if we already have a thread for this chat
     const existingThread = this.activeThreads.get(chatId);
     if (existingThread && (Date.now() - existingThread.lastUsed < this.threadTTL)) {
+      // NEW: Log of the existing thread
+      console.log(`🧵 Reusing existing thread: ${existingThread.id} for chat: ${chatId}`);
+      logger.debug(`Reusing existing thread ${existingThread.id} for chat ${chatId}`);
+      
       // Update last used timestamp
       existingThread.lastUsed = Date.now();
-      this.activeThreads.set(chatId, existingThread);
-      return existingThread;
+      return {id: existingThread.id, isNew: false};
     }
 
-    // Create a new thread
     try {
-      const response = await fetch('https://api.openai.com/v1/threads', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-          'OpenAI-Beta': 'assistants=v2'  // Updated to v2
-        },
-        body: JSON.stringify({})
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error?.message || 'Failed to create thread');
+      // Check if this.client is initialized
+      if (!this.client || !this.client.beta || !this.client.beta.threads) {
+        // Attempt to reinitialize
+        logger.warn('OpenAI client not initialized for thread creation, attempting to recreate');
+        this.initialize(this.apiKey);
+        
+        if (!this.client || !this.client.beta || !this.client.beta.threads) {
+          throw new Error('OpenAI client not properly initialized for thread operations');
+        }
       }
 
-      const thread = await response.json();
+      // Create a new thread
+      const response = await this.client.beta.threads.create();
+      const threadId = response.id;
+
+      // NEW: Log of the new thread
+      console.log(`🧵 New thread created: ${threadId} for chat: ${chatId}`);
+      logger.log(`Created new thread ${threadId} for chat ${chatId}`);
+
+      // Store in active threads
       this.activeThreads.set(chatId, {
-        id: thread.id,
+        id: threadId,
         lastUsed: Date.now()
       });
 
-      logger.debug(`Created new thread ${thread.id} for chat ${chatId}`);
-      return thread;
+      return {id: threadId, isNew: true};
     } catch (error) {
       logger.error(`Error creating thread: ${error.message}`);
       throw error;
     }
-  }
-
-  /**
-   * Add a message with context to a thread
-   * @param {string} threadId - Thread ID
-   * @param {Object} context - Context including messages and product details
-   */
-  async addMessageToThread(threadId, context) {
-    try {
-      // Prepare the message content
-      const messageContent = this.prepareMessageContent(context);
-
-      const response = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-          'OpenAI-Beta': 'assistants=v2'  // Updated to v2
-        },
-        body: JSON.stringify({
-          role: 'user',
-          content: messageContent
-        })
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error?.message || 'Failed to add message to thread');
-      }
-
-      logger.debug(`Added message to thread ${threadId}`);
-      return await response.json();
-    } catch (error) {
-      logger.error(`Error adding message to thread: ${error.message}`);
-      throw error;
-    }
-  }
-
-  /**
-   * Prepare the message content with context for the AI
-   * @param {Object} context - Context data
-   * @returns {Array} Message content array for OpenAI API
-   */
-  prepareMessageContent(context) {
-    const { role, messages, productDetails} = context;
-
-    const organizedMessages = this.organizeMessagesByRole(messages);
-    
-    // Construct the main payload object
-    const jsonPayload = {
-      context: {
-      role: role, // 'buyer' o 'seller'
-      product: productDetails ? {
-        id: productDetails.id,
-        title: productDetails.title,
-        price: productDetails.price,
-        description: productDetails.description,
-        condition: productDetails.condition,
-        location: productDetails.location,
-        category: productDetails.category,
-        imageUrls: productDetails.imageUrls || [],
-        sellerInfo: productDetails.sellerInfo,
-        listingDate: productDetails.listingDate,
-        availableOptions: productDetails.availableOptions,
-        shipping: productDetails.shipping,
-        paymentMethods: productDetails.paymentMethods,
-        tags: productDetails.tags,
-        status: productDetails.status,
-        viewCount: productDetails.viewCount,
-        lastUpdated: productDetails.lastUpdated,
-        originalUrl: productDetails.originalUrl,
-        marketplace: productDetails.marketplace || "Facebook Marketplace"
-      } : null
-      },
-      conversation: {
-      user: organizedMessages.user,
-      assistant: organizedMessages.assistant
-      }
-    };
-
-    // Log the complete JSON payload object before stringifying
-    console.log('[OpenAIManager] JSON Payload to be sent to Assistant:', jsonPayload);
-
-    // Start with a text part containing the JSON context
-    const content = [{
-      type: 'text',
-      text: JSON.stringify(jsonPayload) // Todo el jsonPayload se convierte a string y se envía como el texto del mensaje actual al hilo
-    }];
-
-    logger.debug('[OpenAIManager] Prepared message content for API:', { textLength: content[0].text.length });
-
-    return content; // Return array with single text object containing JSON
-  }
-
-  /**
-   * Organizes messages into user and assistant categories
-   * @param {Array} messages - List of messages
-   * @returns {Object} Messages organized by role
-   */
-  organizeMessagesByRole(messages) {
-    const userMessages = [];
-    const assistantMessages = [];
-    const recentMessages = messages.slice(-(CONFIG.AI.messageHistoryLimit || 100));
-    let userIndex = 1;
-    let assistantIndex = 1;
-    
-    // Process conversation messages
-    for (const msg of recentMessages) {
-      if (!msg || !msg.content) continue;
-      
-      // Construct the message object
-      const messageObj = {
-        index: msg.sentByUs ? assistantIndex++ : userIndex++,
-        message: msg.content.text || ''
-      };
-      
-      // Add images if they exist
-      if (msg.content.imageUrls && Array.isArray(msg.content.imageUrls) && msg.content.imageUrls.length > 0) {
-        messageObj.images = msg.content.imageUrls;
-      }
-      
-      // Add transcribed audio if it exists
-      if (msg.content.transcribedAudio && 
-          typeof msg.content.transcribedAudio === 'string' && 
-          !msg.content.transcribedAudio.startsWith('[')) {
-        messageObj.audio = msg.content.transcribedAudio;
-      }
-      
-      // Distribute message according to role
-      if (msg.sentByUs) {
-        assistantMessages.push(messageObj);
-      } else {
-        userMessages.push(messageObj);
-      }
-    }
-    
-    return {
-      user: userMessages,
-      assistant: assistantMessages
-    };
   }
 
   /**
@@ -631,6 +1015,10 @@ class OpenAIManager {
    */
   async runAssistant(threadId, assistantId) {
     try {
+      // NEW: Log with threadId and assistantId
+      console.log(`🧵 Running assistant: ${assistantId} on thread: ${threadId}`);
+      logger.log(`Running assistant ${assistantId} on thread ${threadId}`);
+
       // Start a run
       const runResponse = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
         method: 'POST',
@@ -841,7 +1229,7 @@ class OpenAIManager {
       'OpenAI-Beta': 'assistants=v2'
     };
 
-    const modelToUse = this.model || "gpt-4o-mini"; 
+    const modelToUse = this.model || "gpt-4o"; 
 
     const assistantBody = {
         name,
@@ -921,9 +1309,55 @@ class OpenAIManager {
   }
 
   /**
+   * Get metrics about API usage
+   * @returns {Object} Metrics
+   */
+  getMetrics() {
+    const threadCount = this.activeThreads.size;
+    
+    // NEW: Method to show detailed information of active threads
+    this.logActiveThreads();
+    
+    return {
+      ...this.metrics,
+      activeThreads: threadCount,
+      averageResponseTime: this.metrics.successfulCalls ? (this.metrics.totalResponseTime / this.metrics.successfulCalls) : 0
+    };
+  }
+  
+  /**
+   * NEW: Displays information about all active threads in the console
+   */
+  logActiveThreads() {
+    console.log(`🧵 === ACTIVE THREADS (${this.activeThreads.size}) ===`);
+    if (this.activeThreads.size === 0) {
+      console.log("No active threads at the moment");
+      return;
+    }
+    
+    const threadsInfo = [];
+    this.activeThreads.forEach((threadInfo, chatId) => {
+      const timeSinceLastUse = Math.round((Date.now() - threadInfo.lastUsed) / 1000);
+      threadsInfo.push({
+        chatId,
+        threadId: threadInfo.id,
+        lastUsed: new Date(threadInfo.lastUsed).toLocaleTimeString(),
+        secondsAgo: timeSinceLastUse,
+        expires: Math.round((this.threadTTL - (Date.now() - threadInfo.lastUsed)) / 1000)
+      });
+    });
+    
+    console.table(threadsInfo);
+  }
+
+  /**
    * Clean up old threads to prevent memory leaks
    */
   cleanupOldThreads() {
+    // NEW: Log before cleanup
+    const initialCount = this.activeThreads.size;
+    console.log(`🧵 Starting cleanup of threads (${initialCount} active)`);
+    
     const now = Date.now();
     let count = 0;
 
@@ -936,18 +1370,9 @@ class OpenAIManager {
 
     if (count > 0) {
       logger.debug(`Cleaned up ${count} expired threads`);
+    } else {
+      console.log(`🧵 No expired threads found for deletion (${finalCount} active)`);
     }
-  }
-
-  /**
-   * Get metrics about API usage
-   * @returns {Object} Metrics
-   */
-  getMetrics() {
-    return {
-      ...this.metrics,
-      activeThreads: this.activeThreads.size
-    };
   }
 }
 

@@ -35,7 +35,7 @@ Object.assign(CONFIG, {
   // AI section to centralize artificial intelligence configuration
   AI: {
     apiKey: null,       // API key for OpenAI
-    model: 'gpt-4.1-mini', // Default model
+    model: 'gpt-4o', // Default model
     maxTokens: 2048,    // Maximum tokens per response
     temperature: 0.7,   // Temperature for generation
     useAssistantAPI: true, // Use Assistants API instead of completions
@@ -82,7 +82,7 @@ Object.assign(CONFIG, {
   },
 
   // Model to use (default)
-  model: 'gpt-4.1-mini',
+  model: 'gpt-4o',
 
   // Minimum time between automatic responses (ms)
   autoResponseDelay: 5000,
