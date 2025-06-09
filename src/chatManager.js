@@ -24,6 +24,8 @@ class ChatManager {
     this.activeChatObserver = null; // Observer for active chat content
     this.lastScrollHeight = 0; // To detect new messages by scrolling
     this.isProcessingChat = false; // Anti-concurrency flag
+    this.respondedChats = new Set(); // Avoids duplicate responses in auto mode
+    this.isResponding = false; // New anti-reentrancy flag
 
     // State to simulate human typing
     this.typingState = {
@@ -562,6 +564,19 @@ class ChatManager {
       }
     }
 
+      // If we already responded to this chat in auto mode, skip to avoid duplicates
+      if (autoRespond && this.respondedChats.has(this.currentChatId)) {
+        logger.debug(`Auto-response already sent for chat ${this.currentChatId}, skipping.`);
+        return true;
+      }
+
+    // Anti-reentrancy
+    if (autoRespond && this.isResponding) {
+      logger.debug(`Already processing response for chat ${this.currentChatId}, skipping new call.`);
+      return true;
+    }
+    this.isResponding = autoRespond;
+
     // Step 1: Extract data
     const extractionResult = await this.extractCurrentChatData();
 
@@ -594,6 +609,7 @@ class ChatManager {
 
         // Call handleResponse to generate and potentially send the response
         await this.handleResponse(context);
+        this.respondedChats.add(this.currentChatId); // Mark as responded
 
         logger.log('Automatic response generated and sent successfully');
         return true;
@@ -605,6 +621,7 @@ class ChatManager {
       logger.debug(`Automatic response disabled for chat ${this.currentChatId}. Only data was extracted.`);
     }
 
+    this.isResponding = false;
     return true; // Indicate successful processing (at least extraction)
   }
 
