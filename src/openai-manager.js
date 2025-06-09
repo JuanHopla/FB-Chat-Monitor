@@ -359,236 +359,293 @@ class OpenAIManager {
 
   /**
    * Prepare the message content with context for the AI
-   * @param {Object} context - Context data
-   * @param {boolean} skipImages - Whether to skip including image URLs (default: false)
-   * @returns {Array} Message content array for OpenAI API
+   * @param {Object} context
+   * @returns {Promise<Array>} Message content array
    */
-  prepareMessageContent(context, skipImages = false) {
+  async prepareMessageContent(context) {
     if (!context || !context.messages || !Array.isArray(context.messages)) {
-      logger.error('Invalid context or messages for OpenAI request');
+      logger.error('Invalid context for message preparation');
       return [];
     }
 
     try {
-      // If there are already prepared messages, use them directly
-      if (context.preparedMessages) {
-        return context.preparedMessages;
-      }
+      // Format in chronological order and assign correct roles
+      const formattedMessages = this._organizeMessagesByRole(context.messages);
 
-      // NEW: Initial log of the received context
-      console.log('=== RECEIVED CONTEXT ===');
-      console.log('1. Role:', context.role);
-      console.log('2. ChatID:', context.chatId);
-      console.log('3. Total unprocessed messages:', context.messages?.length || 0);
-      console.log('==========================================================');
-
-      // Use the function to chronologically sort the messages
-      const organizedMessages = this._organizeMessagesByRole(context.messages);
-      
-      // Flag to know if the model supports vision (images)
-      const modelSupportsVision = !skipImages && (this.model === 'gpt-4o' || this.model.includes('vision'));
-      logger.debug(`Preparing messages for model: ${this.model}, supports vision: ${modelSupportsVision}, skipImages: ${skipImages}`);
-
-      // Final array of correctly formatted messages
-      const formattedMessages = [];
-
-      // Determine if we have product details for the first message
+      // Add product details as first message
       if (context.productDetails) {
-        const product = context.productDetails;
+        // Destructure common fields for clarity
+        const { title, price, condition, description, url, images, image, sellerProfilePic } = context.productDetails;
         
-        // IMPROVEMENT: Create a complete and structured product description that includes all available details
-        // This version includes both formatted information and the complete structured data
-        let productDescription = `== PRODUCT DETAILS ==\n`;
-        productDescription += `Title: ${product.title || 'Not available'}\n`;
-        productDescription += `Price: ${product.price || 'Not available'}\n`;
-        productDescription += `Condition: ${product.condition || 'Not specified'}\n`;
-        productDescription += `Location: ${product.location || 'Not specified'}\n\n`;
-        productDescription += `Description:\n${product.description || 'No description available'}\n\n`;
+        // Create product details content array for multimodal format
+        const productContent = [];
         
-        // Prepare additional attributes if they exist
-        if (product.attributes && Object.keys(product.attributes).length > 0) {
-          productDescription += "Additional attributes:\n";
-          Object.entries(product.attributes).forEach(([key, value]) => {
-            productDescription += `${key}: ${value}\n`;
-          });
-          productDescription += '\n';
+        // Add combined text elements with validation to stay under OpenAI's limit of 10 content elements per message
+        let productDetailsText = "PRODUCT DETAILS:\n";
+        
+        // Add product category header if available
+        let category = context.productDetails.category || context.productDetails.categoryName || "";
+        let isCar = false;
+        let isApartment = false;
+        
+        // Detect category from fields if not explicitly provided
+        if (!category) {
+          if (context.productDetails.make || context.productDetails.model || 
+              context.productDetails.year || context.productDetails.mileage) {
+            category = "CARS";
+            isCar = true;
+          } else if (context.productDetails.bedrooms || context.productDetails.bathrooms || 
+                    context.productDetails.squareMeters || context.productDetails.squareFeet) {
+            category = "APARTMENTS";
+            isApartment = true;
+          }
+        } else {
+          // Check if existing category matches our special categories
+          isCar = /cars?|vehicles?|autos?|automóviles?/i.test(category);
+          isApartment = /apartments?|house|home|real estate|propiedad|casa|apartamento/i.test(category);
         }
         
-        // NEW: Add the complete technical data to ensure all available information is sent
-        productDescription += `== COMPLETE PRODUCT DATA ==\n`;
-        productDescription += `ID: ${product.id || product.listingId || 'Not available'}\n`;
-        productDescription += `URL: ${product.url || product.originalUrl || 'Not available'}\n`;
-        productDescription += `Currency: ${product.currency || 'Not specified'}\n`;
-        productDescription += `Quantity: ${product.amount || 'Not specified'}\n`;
+        // Add category if detected
+        if (category) {
+          productDetailsText += `Category: ${category}\n`;
+        }
         
-        // Include any other available fields
-        const additionalFields = ['seller', 'sellerInfo', 'category', 'listingDate', 'viewCount', 'status', 'marketplace'];
-        for (const field of additionalFields) {
-          if (product[field]) {
-            productDescription += `${field}: ${
-              typeof product[field] === 'object' ? 
-              JSON.stringify(product[field]) : 
-              product[field]}\n`;
+        // Add core product details
+        productDetailsText += `Title: ${title || 'N/A'}\n`;
+        productDetailsText += `Price: ${price || 'N/A'}\n`;
+        productDetailsText += `Condition: ${condition || 'N/A'}\n`;
+        
+        // ALWAYS include car fields, even if they are not present
+        productDetailsText += "Car Details: ";
+        if (isCar) {
+          const carDetails = [];
+          if (context.productDetails.make) carDetails.push(`Make: ${context.productDetails.make}`);
+          if (context.productDetails.model) carDetails.push(`Model: ${context.productDetails.model}`);
+          if (context.productDetails.year) carDetails.push(`Year: ${context.productDetails.year}`);
+          if (context.productDetails.mileage) carDetails.push(`Mileage: ${context.productDetails.mileage}`);
+          if (context.productDetails.transmission) carDetails.push(`Transmission: ${context.productDetails.transmission}`);
+          if (context.productDetails.fuel) carDetails.push(`Fuel Type: ${context.productDetails.fuel}`);
+          
+          if (carDetails.length > 0) {
+            productDetailsText += carDetails.join(', ') + '\n';
+          } else {
+            productDetailsText += 'N/A\n';
+          }
+        } else {
+          productDetailsText += 'N/A\n';
+        }
+        
+        // ALWAYS include apartment fields, even if they are not present
+        productDetailsText += "Property Details: ";
+        if (isApartment) {
+          const propertyDetails = [];
+          if (context.productDetails.bedrooms) propertyDetails.push(`Bedrooms: ${context.productDetails.bedrooms}`);
+          if (context.productDetails.bathrooms) propertyDetails.push(`Bathrooms: ${context.productDetails.bathrooms}`);
+          
+          const area = context.productDetails.squareMeters || context.productDetails.squareFeet;
+          const areaUnit = context.productDetails.squareMeters ? 'm²' : 'ft²';
+          if (area) propertyDetails.push(`Area: ${area} ${areaUnit}`);
+          if (context.productDetails.floor) propertyDetails.push(`Floor: ${context.productDetails.floor}`);
+          
+          if (propertyDetails.length > 0) {
+            productDetailsText += propertyDetails.join(', ') + '\n';
+          } else {
+            productDetailsText += 'N/A\n';
+          }
+        } else {
+          productDetailsText += 'N/A\n';
+        }
+        
+        // EXCLUDE image fields before assembling Additional Details
+        const standardFields = [
+          'title','price','condition','description','url',
+          'images','image','imageUrls','sellerProfilePic',
+          'category','categoryName','make','model','year','mileage',
+          'transmission','fuel','bedrooms','bathrooms','squareMeters',
+          'squareFeet','floor'
+        ];
+        const additionalFields = [];
+        for (const [key, value] of Object.entries(context.productDetails)) {
+          if (!standardFields.includes(key) && value != null) {
+            additionalFields.push(`${key}: ${value}`);
           }
         }
+        if (additionalFields.length) {
+          productDetailsText += `Additional Details: ${additionalFields.join(', ')}\n`;
+        }
         
-        // Logs to verify images
-        if (product.imageUrls && product.imageUrls.length > 0) {
-          console.log(`Attempting to add ${product.imageUrls.length} images to the product message`);
-          productDescription += `\nAvailable images: ${product.imageUrls.length}\n`;
-          
-          // List the first 3 URLs for reference (regardless of whether they are included or not)
-          product.imageUrls.slice(0, 3).forEach((url, i) => {
-            productDescription += `Image ${i+1}: ${url.substring(0, 100)}...\n`;
-          });
+        // description and URL at the end
+        productDetailsText += `Description: ${description || 'N/A'}\n`;
+        if (url) productDetailsText += `URL: ${url}\n`;
+
+        productContent.push({ type: "text", text: productDetailsText.trim() });
+
+        // --------------------------------------------------------
+        // Always filter HEAD and build image_url
+        // --------------------------------------------------------
+        const testUrls = [
+          ...(Array.isArray(images) ? images.slice(0, 6) : []),
+          ...(image ? [image] : []),
+          ...(sellerProfilePic ? [sellerProfilePic] : [])
+        ];
+        const validItems = [];
+        for (const imgUrl of testUrls) {
+          try {
+            const resp = await fetch(imgUrl, { method: 'HEAD' });
+            if (resp.ok) {
+              validItems.push({ type: "image_url", image_url: { url: imgUrl } });
+            }
+          } catch { /* omit */ }
+        }
+        if (validItems.length) {
+          productContent.push(...validItems);
+        } else {
+          productContent.push({ type: "image_url", image_url: { url: '' } });
         }
 
-        // Add the product message (first message always as "user")
-        if (modelSupportsVision && product.imageUrls && product.imageUrls.length > 0 && !skipImages) {
-          // Multipart format with images if the model supports it
-          const content = [
-            { type: "text", text: productDescription }
-          ];
-          
-          // Add up to 3 images (reduced to avoid issues)
-          product.imageUrls.slice(0, 3).forEach(imageUrl => {
-            // Check that the URL is not from Facebook (avoids access problems)
-            if (!imageUrl.includes('fbcdn.net') && !imageUrl.includes('facebook.com')) {
-              content.push({
-                type: "image_url",
-                image_url: { url: imageUrl }
-              });
-              console.log(`  ✓ Added image: ${imageUrl}`);
-            } else {
-              logger.debug(`Skipping Facebook image URL to avoid access issues: ${imageUrl}`);
-              console.log(`  ✗ Skipped Facebook image: ${imageUrl}`);
+        formattedMessages.unshift({
+          role: "user",
+          content: productContent
+        });
             }
-          });
-          
-          formattedMessages.push({ role: "user", content });
-          
-        } else {
-          // Text-only format for models that do not support vision
-          let textWithImageRefs = productDescription;
-          
-          // Mention image URLs as textual references
-          if (product.imageUrls && product.imageUrls.length > 0) {
-            const imageCount = product.imageUrls.length;
-            console.log(`Adding reference to ${imageCount} images in text format`);
-            textWithImageRefs += `\n\n[${imageCount} images available]\n`;
-          }
-          
-          formattedMessages.push({ role: "user", content: textWithImageRefs });
+
+
+      // Convert message objects to proper format for the API with validation
+      const finalMessages = formattedMessages.map((message, index) => {
+        // If message has no content, use a default empty text message
+        if (!message.content) {
+          logger.debug(`Message #${index} has no content. Using default empty text.`);
+          return {
+            role: message.role || "user",
+            content: [{ type: "text", text: " " }] // Space as minimum valid content
+          };
         }
-      }
-      
-      // Process each message in the conversation according to its role
-      for (const msg of organizedMessages) {
-        // If the message has no content, ignore it
-        if (!msg.content || (!msg.content.text && (!msg.content.media || !Object.values(msg.content.media).some(v => v)))) {
-          continue;
+
+        // Ensure message has a valid role
+        if (!message.role || !["user", "assistant", "system"].includes(message.role)) {
+          message.role = "user"; // Default to user if role is invalid
         }
-        
-        // Determine the correct role based on sentByUs
-        const isAssistant = msg.sentByUs;
-        const messageRole = isAssistant ? "assistant" : "user";
-        
-        // Get the text of the message
-        const messageText = msg.content.text || '';
-        
-        // Check if there is media to include
-        const hasMedia = msg.content.media && Object.values(msg.content.media).some(v => v);
-        
-        // For models that support vision, use multipart format if there are images
-        if (modelSupportsVision && hasMedia && msg.content.media.images && msg.content.media.images.length > 0 && !skipImages) {
-          const content = [
-            { type: "text", text: messageText }
-          ];
-          
-          // Add the images to the content (only if they are not from Facebook)
-          msg.content.media.images.forEach(image => {
-            if (image.url && !image.url.includes('fbcdn.net') && !image.url.includes('facebook.com')) {
-              content.push({
-                type: "image_url",
-                image_url: { url: image.url }
-              });
-            }
-          });
-          
-          formattedMessages.push({ role: messageRole, content });
-          
-        } else {
-          // For plain text or models without image support
-          let fullText = messageText;
-          
-          // Include media references as text
-          if (hasMedia) {
-            const mediaDesc = [];
-            
-            if (msg.content.media.images && msg.content.media.images.length) {
-              mediaDesc.push(`${msg.content.media.images.length} image(s)`);
-            }
-            
-            if (msg.content.media.video) {
-              mediaDesc.push('video');
-            }
-            
-            if (msg.content.media.audio) {
-              mediaDesc.push('audio');
-              // If there is a transcript, include it
-              if (msg.content.transcribedAudio) {
-                fullText += `\nAudio transcript: "${msg.content.transcribedAudio}"`;
+
+        // If content is already in array format, validate each item
+        if (Array.isArray(message.content)) {
+          const validContent = message.content
+            .map(item => {
+              // PASSTHROUGH para imágenes
+              if (item.type === 'image_url' && item.image_url?.url !== undefined) {
+                return item;
               }
-            }
-            
-            if (msg.content.media.files && msg.content.media.files.length) {
-              mediaDesc.push(`${msg.content.media.files.length} file(s)`);
-            }
-            
-            if (msg.content.media.location) {
-              mediaDesc.push(`location: ${msg.content.media.location.label || 'shared'}`);
-            }
-            
-            if (mediaDesc.length > 0) {
-              fullText += `\n[${mediaDesc.join(', ')}]`;
-            }
+              // Conserva textos
+              if (item.type === 'text' && typeof item.text === 'string') {
+                return item;
+              }
+              // descartar todo lo demás
+              return null;
+            })
+            .filter(item => item !== null);
+
+          return {
+            role: message.role,
+            content: validContent.length ? validContent : [{ type: "text", text: " " }]
+          };
+        }
+        
+        // For string content, convert to proper format
+        if (typeof message.content === 'string') {
+          return {
+            role: message.role,
+            content: [{
+              type: "text",
+              text: message.content || " " // Use space if empty
+            }]
+          };
+        }
+        
+        // For content object with text and media
+        if (typeof message.content === 'object' && message.content !== null) {
+          const contentArray = [];
+          
+          // Add text content if available and valid
+          if (message.content.text && typeof message.content.text === 'string') {
+            contentArray.push({
+              type: "text",
+              text: message.content.text.trim() || " " // Space as fallback
+            });
           }
           
-          formattedMessages.push({ role: messageRole, content: fullText });
+          // Add images if available and not skipping
+          if (message.content.imageUrls && Array.isArray(message.content.imageUrls)) {
+            message.content.imageUrls.forEach(imageUrl => {
+              if (imageUrl && typeof imageUrl === 'string') {
+                contentArray.push({
+                  type: "image_url",
+                  image_url: {
+                    url: imageUrl
+                  }
+                });
+              }
+            });
+          }
+          
+          // Ensure we have at least one valid content item
+          if (contentArray.length === 0) {
+            contentArray.push({
+              type: "text",
+              text: " " // Space as minimum valid content
+            });
+          }
+          
+          return {
+            role: message.role,
+            content: contentArray
+          };
         }
-      }
-      
-      // Ensure the last message is from the "user" role for the assistant to respond
-      if (formattedMessages.length > 0) {
-        const lastMessage = formattedMessages[formattedMessages.length - 1];
         
-        if (lastMessage.role !== "user") {
-          // Add an additional message for the user to request a response
-          formattedMessages.push({
-            role: "user",
-            content: `Respond to the last message as ${context.role}, considering all the context of the conversation.`
+        // Fallback for unexpected formats
+        return {
+          role: message.role,
+          content: [{
+            type: "text",
+            text: " " // Space as minimum valid content
+          }]
+        };
+      });
+
+      // Final validation to log any potential issues
+      finalMessages.forEach((msg, index) => {
+        // Check content array is valid
+        const hasValidContent = msg.content && Array.isArray(msg.content) && msg.content.length > 0;
+        
+        if (!hasValidContent) {
+          logger.warn(`Message #${index} has an invalid content array. Role: ${msg.role}`);
+        } else {
+          // Check each content item
+          msg.content.forEach((item, itemIndex) => {
+            if (item.type === "text" && (!item.text || typeof item.text !== 'string')) {
+              logger.warn(`Message #${index}, content item #${itemIndex} has invalid text.`);
+            }
+            if (item.type === "image_url" && (!item.image_url || !item.image_url.url)) {
+              logger.warn(`Message #${index}, content item #${itemIndex} has invalid image_url.`);
+            }
           });
         }
-      }
+      });
 
-      console.log('=== EXACT MESSAGE SENT TO OPENAI ===');
-      console.log('1.', context.role);
-      console.log('2. Messages:', JSON.parse(JSON.stringify(formattedMessages)));
-      console.log('=========================================');
-      
-      return formattedMessages;
+      // Log the exact messages being sent to OpenAI
+      logger.debug('=== EXACT MESSAGE SENT TO OPENAI ===');
+      logger.debug('1. Context Role:', context.role);
+      logger.debug('2. Messages:', JSON.stringify(finalMessages));
+      console.log('OPENAI_PAYLOAD →', finalMessages);
+      return finalMessages;
     } catch (error) {
-      logger.error(`Error preparing messages: ${error.message}`);
+      logger.error(`Error preparing message content: ${error.message}`, {}, error);
       return [];
     }
   }
 
   /**
    * Organizes messages into user and assistant categories and ensures chronological order
-   * CORRECTION: Renamed to _organizeMessagesByRole to avoid confusion,
-   * as it's now an internal method (helper function)
    * @param {Array} messages - List of messages
-   * @returns {Array} Messages organized by chronological order
+   * @returns {Array} Messages organized by chronological order with proper roles
    * @private
    */
   _organizeMessagesByRole(messages) {
@@ -623,18 +680,34 @@ class OpenAIManager {
         return 0;
       });
       
-      // Additional verification to ensure messages have the correct format
+      // Assign proper roles based on sentByUs flag
       for (let i = 0; i < sortedMessages.length; i++) {
-        // Ensure each message has the content property
-        if (!sortedMessages[i].content) {
-          sortedMessages[i].content = { text: "" };
+        const message = sortedMessages[i];
+        
+        // Ensure each message has content
+        if (!message.content) {
+          message.content = { text: "" };
         }
         // If content is a direct string, convert it to an object
-        else if (typeof sortedMessages[i].content === 'string') {
-          sortedMessages[i].content = { text: sortedMessages[i].content };
+        else if (typeof message.content === 'string') {
+          message.content = { text: message.content };
+        }
+        
+        // Assign the correct role based on who sent the message
+        // CORRECTION: The logic must be:
+        // - If it was sent by us (sentByUs=true), then it is the assistant
+        // - If it was sent by the other (sentByUs=false), then it is the user
+        if (typeof message.sentByUs === 'boolean') {
+          message.role = message.sentByUs ? "assistant" : "user";
+        } else if (!message.role || !["user", "assistant", "system"].includes(message.role)) {
+          // If there is no information about who sent it and it does not have a valid role,
+          // assign a role based on alternation
+          // We assume that the first message is always from the user
+          message.role = (i % 2 === 0) ? "user" : "assistant";
         }
       }
       
+      logger.debug(`Messages organized: ${sortedMessages.length} messages with proper roles`);
       return sortedMessages;
     } catch (error) {
       logger.error(`Error organizing messages: ${error.message}`);
@@ -648,84 +721,72 @@ class OpenAIManager {
    * @returns {Promise<Object>} Generated structured response object or an error object
    */
   async generateResponse(context) {
-    // If we are not ready, initialize first
-    if (!this.isReady()) {
-      logger.warn('OpenAI service not ready. Attempting to initialize...');
-      this.initialize();
-      
-      if (!this.isReady()) {
-        logger.error('OpenAI service could not be initialized');
-        throw new Error('OpenAI service not properly initialized');
-      }
-    }
-    
-    const startTime = Date.now();
-    this.metrics.totalCalls++;
-
     try {
-      logger.log(`Generating response as ${context.role} using OpenAI Assistants API`);
-      
-      // Get or create a thread for this chat
-      const threadObj = await this.getOrCreateThread(context.chatId);
-      const threadId = threadObj.id;
-      
-      // NEW: Log of the thread
-      console.log(`🧵 Thread used for response: ${threadId} (${threadObj.isNew ? 'NEW' : 'EXISTING'})`);
-      
-      // Add context messages to the thread (first attempt with images)
-      try {
-        // Prepare message content with potential images if model supports vision
-        const messages = this.prepareMessageContent(context, false); // skipImages = false
-        
-        // NEW: Explicit log of the sending moment
-        console.log(`🚀 SENDING TO OPENAI: ${messages.length} messages, threadId: ${threadId}`);
-        
-        await this.addMessageToThread(threadId, {
-          ...context,
-          preparedMessages: messages
-        });
-      } catch (error) {
-        logger.warn(`Error adding messages with images: ${error.message}`);
-        logger.warn('Retrying without images...');
-        
-        // Retry with skipImages=true if we get an error
-        const messagesWithoutImages = this.prepareMessageContent(context, true); // skipImages = true
-        await this.addMessageToThread(threadId, {
-          ...context,
-          preparedMessages: messagesWithoutImages
-        });
+      if (!this.isReady()) {
+        logger.error('OpenAI API not ready');
+        throw new Error('OpenAI API not ready');
       }
+
+      // Extract role and validate (default to 'buyer')
+      const role = context?.role || 'buyer';
+      logger.log(`Generating response as ${role} using OpenAI Assistants API`);
+
+      // Ensure API instance is properly initialized/refreshed
+      if (!this.client) {
+        const success = await this.initialize();
+        logger.log(`OpenAI Manager initialized: ${success ? 'SUCCESS' : 'FAILED'}`);
+        if (!success) {
+          throw new Error('Could not initialize OpenAI API');
+        }
+      }
+
+      // Get appropriate assistant ID for this role
+      const assistantId = this.getAssistantIdForRole(role);
+
+      // Get or create a thread for the conversation
+      // Extract chatId from context, with fallback to a default one
+      const chatId = context.chatId || 'default_chat';
       
-      // Get the appropriate assistant ID based on role
-      const assistantId = this.getAssistantIdForRole(context.role);
-      
-      // Run assistant and wait for structured response
-      const response = await this.runAssistant(threadId, assistantId);
-      
-      // Record metrics
-      const endTime = Date.now();
-      const duration = endTime - startTime;
-      
-      this.metrics.successfulCalls++;
-      this.metrics.totalResponseTime += duration;
-      this.metrics.avgResponseTime = this.metrics.totalResponseTime / this.metrics.successfulCalls;
-      
-      logger.log(`Response generated in ${duration}ms`);
-      
-      return response;
+      // siempre omitimos imágenes (skipImages = true)
+      const thread = await this.getOrCreateThread(chatId);
+-     await this.addMessageToThread(thread.id, context, false); // include images
++     await this.addMessageToThread(thread.id, context);
+      return await this.runAssistant(thread.id, assistantId);
+
     } catch (error) {
-      // Record metrics for failed calls
-      this.metrics.failedCalls++;
-      
-      // If we receive an error about downloading images, log it specially
-      if (error.message && error.message.includes('Error while downloading')) {
-        logger.error(`Error generating response due to image download issues. Try with skipImages=true parameter: ${error.message}`);
-      } else {
-        logger.error(`Error generating response: ${error.message}`);
-      }
-      
+      logger.error(`Error generating response: ${error.message}`);
       throw error;
     }
+  }
+
+  /**
+   * Uploads an image URL to OpenAI Files (purpose "assistants") and returns the file_id
+   * @param {string} imageUrl
+   * @returns {Promise<string>}
+   */
+  async uploadImageFile(imageUrl) {
+    // download the image as a blob
+    const resp = await fetch(imageUrl);
+    if (!resp.ok) throw new Error(`Download failed: ${resp.statusText}`);z
+    const blob = await resp.blob();
+
+    // prepare the form
+    const form = new FormData();
+    form.append('file', blob, 'image.jpg');
+    form.append('purpose', 'assistants');
+
+    // upload to OpenAI
+    const upload = await fetch('https://api.openai.com/v1/files', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${this.apiKey}` },
+      body: form
+    });
+    if (!upload.ok) {
+      const err = await upload.text();
+      throw new Error(`Upload failed: ${err}`);
+    }
+    const body = await upload.json();
+    return body.id;
   }
 
   /**
@@ -735,10 +796,10 @@ class OpenAIManager {
    */
   async addMessageToThread(threadId, context) {
     try {
-      // Prepare message content
-      const messageContent = context.preparedMessages || this.prepareMessageContent(context);
+      // Always wait for message preparation (includes images)
+      const messageContent = context.preparedMessages || await this.prepareMessageContent(context);
       
-      // Ensure we have a valid threadId
+      // Make sure we have a valid threadId
       if (!threadId) {
         throw new Error('Invalid threadId');
       }
@@ -773,44 +834,63 @@ class OpenAIManager {
       for (let i = 0; i < messageContent.length; i++) {
         const msg = messageContent[i];
         
-        // Skip system messages as they can't be added directly
+        // Skip system messages as they cannot be added directly
         if (msg.role === 'system') {
           continue;
         }
         
-        // Ensure message format is valid (especially content array)
-        if (Array.isArray(msg.content)) {
-          // Ensure each content item has a 'type' field
-          msg.content.forEach((item, index) => {
-            if (!item.type) {
-              logger.warn(`Missing 'type' in content[${index}], defaulting to 'text'`);
-              item.type = 'text';
-            }
-          });
-        } else if (typeof msg.content === 'string') {
-          // Convert string content to properly formatted array
-          msg.content = [{ type: 'text', text: msg.content }];
+        // Make sure the message format is valid (especially the content array)
+        if (!Array.isArray(msg.content) || msg.content.length === 0) {
+          logger.warn(`Message #${i+1} has invalid content structure. Skipping.`);
+          continue;
         }
         
+        // ---- Automatic image upload handling ----
+        // Verify that skipImages (the function parameter) is defined and boolean.
+        // If skipImages is true, the image will not be attempted to be uploaded.
+        const shouldProcessImage = (typeof skipImages === 'boolean' ? !skipImages : true);
+
+        if (shouldProcessImage && msg.content[0].type === 'image_url' && msg.content[0].image_url && msg.content[0].image_url.url) {
+          try {
+            const url = msg.content[0].image_url.url;
+            logger.debug(`Attempting to upload image: ${url}`);
+            const fileId = await this.uploadImageFile(url);
+            await this.client.beta.threads.messages.create(threadId, {
+              role: msg.role,
+              content: [{ type: "image_file", image_file: { file_id: fileId } }]
+            });
+            logger.debug(`Image uploaded and sent as file ${fileId} for message #${i+1}`);
+            continue; // Move to the next message
+          } catch (uploadError) {
+            logger.error(`Image upload error for message #${i+1} (URL: ${msg.content[0].image_url.url}): ${uploadError.message}. Sending as URL if possible or skipping image content.`);
+            // If the upload fails, it will be attempted to be sent as image_url or it will be omitted if the content is only the failed image.
+            // If the original message had text + image, and the image fails to upload,
+            // here you could decide to send only the text or the original message with image_url.
+            // For simplicity, if the upload fails, the original message (which could be image_url) will be sent.
+            // If `prepareMessageContent` has already removed the image because `skipImages` was true, msg.content will not have the image.
+          }
+        }
+
+        // Normal sending for text or fallback
         try {
           await this.client.beta.threads.messages.create(
             threadId,
             {
               role: msg.role,
-              content: msg.content
+              content: msg.content // This content should already be prepared according to skipImages
             }
           );
           logger.debug(`Added message #${i+1} with role ${msg.role} to thread ${threadId}`);
         } catch (msgError) {
-          logger.error(`Error adding message #${i+1}: ${msgError.message}`);
-          throw msgError;
+          logger.error(`Error adding message #${i+1} to thread ${threadId}: ${msgError.message}`, { messageData: msg });
+          throw msgError; // Rethrow the error so it can be caught by generateResponse if necessary
         }
       }
 
       return true;
     } catch (error) {
-      logger.error(`Error adding message to thread: ${error.message}`);
-      throw error;
+      logger.error(`Error in addMessageToThread (threadId: ${threadId}): ${error.message}`);
+      throw error; // Rethrow the error so generateResponse can handle it
     }
   }
 
@@ -1193,7 +1273,7 @@ class OpenAIManager {
 
   /**
    * Set the assistant ID for a specific role
-   * @param {string} role - Role ('seller' or 'buyer')
+   * @param {string} role - 'seller' or 'buyer'
    * @param {string} assistantId - Assistant ID
    */
   setAssistantForRole(role, assistantId) {

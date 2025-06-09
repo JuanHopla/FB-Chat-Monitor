@@ -455,9 +455,9 @@ class ChatManager {
   }
 
   /**
-   * Extracts data from the current chat without generating a response
-   * Now separated from processCurrentChat to avoid automatic response generation
-   * @returns {Promise<Object>} Result of extraction with status and data
+   * Extracts data from the current chat without generating a response.
+   * Now separated from processCurrentChat to avoid automatic response generation.
+   * @returns {Promise<Object>} Result of extraction with status and data.
    */
   async extractCurrentChatData() {
     if (!this.currentChatId) {
@@ -484,6 +484,9 @@ class ChatManager {
         logger.debug(`Product link found: ${productLink}`);
         // Pass productLink to extractor
         productDetails = await productExtractor.getProductDetails(productId, productLink);
+        // INJECT: revert to fresh URLs from the DOM
+        productDetails.images = productExtractor.getProductImagesFromChat(chatContainer);
+        logger.debug(`Product images extracted from DOM: ${productDetails.images.length} URLs`);
       }
 
       // Get the messages container
@@ -677,9 +680,9 @@ class ChatManager {
     try {
       // 1) Get selectors from CONFIG or use fallback
       const selectors = window.CONFIG?.selectors?.activeChat || {
-      messageWrapper: 'div.x4k7w5x > div > div > div, div[role="main"] > div > div > div:last-child > div',
-      messageRow: 'div[role="row"]',
-      senderAvatar: 'img.x1rg5ohu[alt]:not([alt="Open photo"])'
+        messageWrapper: 'div.x4k7w5x > div > div > div, div[role="main"] > div > div > div:last-child > div',
+        messageRow: 'div[role="row"]',
+        senderAvatar: 'img.x1rg5ohu[alt]:not([alt="Open photo"])'
       };
 
       // 2) Retrieve message rows
@@ -687,48 +690,48 @@ class ChatManager {
       logger.log(`Analyzing ${messageElements.length} messages in the current DOM`);
 
       if (messageElements.length === 0) {
-      logger.warn('No message rows found with selector:', selectors.messageRow);
-      return [];
+        logger.warn('No message rows found with selector:', selectors.messageRow);
+        return [];
       }
 
       // 3) Process each row
       messageElements.forEach((el, idx) => {
-      // Extract and clean unique text
-      const nodes = Array.from(el.querySelectorAll('span[dir="auto"], div[dir="auto"]'));
-      const texts = [...new Set(
-        nodes.map(n => n.textContent.trim())
-        .filter(t => t && t.toLowerCase() !== 'enter')
-      )];
-      const text = texts.join(' ').trim();
+        // Extract and clean unique text
+        const nodes = Array.from(el.querySelectorAll('span[dir="auto"], div[dir="auto"]'));
+        const texts = [...new Set(
+          nodes.map(n => n.textContent.trim())
+            .filter(t => t && t.toLowerCase() !== 'enter')
+        )];
+        const text = texts.join(' ').trim();
 
-      // Determine special types
-      const isDiv = this.isDividerElement(el);
-      const isSys = !isDiv && this.isSystemMessage(text);
-      const isReply = !isDiv && !isSys && !!this.detectQuotedMessage(el);
+        // Determine special types
+        const isDiv = this.isDividerElement(el);
+        const isSys = !isDiv && this.isSystemMessage(text);
+        const isReply = !isDiv && !isSys && !!this.detectQuotedMessage(el);
 
-      // Determine sender
-      let sentByUs = false, type = 'UNKNOWN';
-      if (isDiv) type = 'DIVIDER 📅';
-      else if (isSys) type = 'SYSTEM 🤖';
-      else if (isReply) {
-        sentByUs = this.isMessageSentByUs(el);
-        type = sentByUs ? 'OWN REPLY 📣✅' : 'EXTERNAL REPLY 📣❌';
-      } else {
-        sentByUs = this.isMessageSentByUs(el);
-        type = sentByUs ? 'OWN ✅' : 'EXTERNAL ❌';
-      }
+        // Determine sender
+        let sentByUs = false, type = 'UNKNOWN';
+        if (isDiv) type = 'DIVIDER 📅';
+        else if (isSys) type = 'SYSTEM 🤖';
+        else if (isReply) {
+          sentByUs = this.isMessageSentByUs(el);
+          type = sentByUs ? 'OWN REPLY 📣✅' : 'EXTERNAL REPLY 📣❌';
+        } else {
+          sentByUs = this.isMessageSentByUs(el);
+          type = sentByUs ? 'OWN ✅' : 'EXTERNAL ❌';
+        }
 
-      // SKIP if it is a divider or system message
-      if (!isDiv && !isSys) {
-        messages.push({
-        id: `msg_${this.currentChatId}_${idx}`,
-        sentByUs,
-        content: { text, type }
-        });
-        logger.debug(`#${idx + 1}: ${type} – ${text.substring(0, 30)}${text.length > 30 ? '…' : ''}`);
-      } else {
-        logger.debug(`#${idx + 1}: Skipped ${isDiv ? 'DIVIDER' : 'SYSTEM'} message`);
-      }
+        // SKIP if it is a divider or system message
+        if (!isDiv && !isSys) {
+          messages.push({
+            id: `msg_${this.currentChatId}_${idx}`,
+            sentByUs,
+            content: { text, type }
+          });
+          logger.debug(`#${idx + 1}: ${type} – ${text.substring(0, 30)}${text.length > 30 ? '…' : ''}`);
+        } else {
+          logger.debug(`#${idx + 1}: Skipped ${isDiv ? 'DIVIDER' : 'SYSTEM'} message`);
+        }
       });
 
       this.lastProcessedMessageCount = messages.length;
@@ -741,7 +744,7 @@ class ChatManager {
     }
 
     return messages;
-    }
+  }
 
   /**
    * PHASE 2: New function to validate timestamps
@@ -1427,83 +1430,87 @@ class ChatManager {
 
     // Common patterns for system messages - ADDITIONAL ADDITIONS
     const systemPatterns = [
-      /^.* left the group\.$/i,
-      /^.* marked the listing as (Available|Pending)\.$/i,    
-      /^.* salió del grupo\.$/i,
-      /^.* sold .+\.$/i,                                    
-      /^.*? bumped their message:?/i,
+
+      // ─── Chat started ──────────────────────────────────────────────────────
+      /^(You|Tú|[A-Z][a-z]+) started this chat\.?( View (seller|buyer) profile)?$/i,
+      /^([A-Z][a-z]+) inició el chat\.?( Ver (perfil del vendedor|perfil del comprador))?$/i,
+
+      // ─── Participants added or removed ─────────────────────────────────
+      /^You added .* to the group\.$/i,
       /^Agregaste a .* al grupo\.$/i,
-      /^Cambiaste los colores del chat\.$/i,
-      /^Changed the group photo\.$/i,           
-      /^Compartiste una ubicación\.$/i,
-      /^Definiste el apodo de .* como .*$/i,
+      /^You removed .* from the group\.$/i,
       /^Eliminaste a .* del grupo\.$/i,
-      /^Enviaste un adjunto\.$/i,
-      /^Enviaste un GIF\.$/i,
-      /^Enviaste una foto\.$/i,
-      /^Enviaste un video\.$/i,
-      /^Estás recibiendo muchos mensajes sobre este anuncio/i,
-      /^Estás esperando tu respuesta sobre este anuncio\.\s*Ver anuncio$/i,
-      /^Is getting a lot of messages about this listing/i,
-      /^Is waiting for your response about this listing\.\s*View listing$/i, 
-      /^Joined facebook in \d{4}/i,             
+
+      // ─── Users leaving the group ───────────────────────────────────────
+      /^.* (left|salió del) grupo\.$/i,
+
+      // ─── Name or color changes ──────────────────────────────────────────
+      /^You named the group .*$/i,
+      /^Nombraste al grupo .*$/i,
+      /^You changed the chat colors\.$/i,
+      /^Cambiaste los colores del chat\.$/i,
+      /^You set the nickname for .* to .*$/i,
+      /^Definiste el apodo de .* como .*$/i,
+
+      // ─── Changes in the group photo ───────────────────────────────────────
+      /^Changed the group photo\.$/i,
+      /^Cambió la foto del grupo\.$/i,
+
+      // ─── Media sent ────────────────────────────────────────────────────
+      /^You sent (a )?(GIF|photo|video|attachment)\.$/i,
+      /^Enviaste (un|una) (GIF|foto|video|adjunto)\.$/i,
+      /^You shared a location\.$/i,
+      /^Compartiste una ubicación\.$/i,
+
+      // ─── Calls ───────────────────────────────────────────────────────────
+      /^Missed call$/i,
+      /^You missed a call from .*$/i,
       /^Llamada perdida$/i,
       /^Llamada perdida de .*$/i,
-      /^Marcó este artículo como (vendido|pendiente|disponible)/i,
-      /^Missed call$/i,
-      /^Nombraste al grupo .+\.$/i,               
-      /^Se unió a Facebook en \d{4}/i,
+
+      // ─── Listing statuses ────────────────────────────────────────────────
+      /^.* marked the listing as (Available|Pending)\.$/i,
+      /^Marcó este artículo como (vendido|pendiente|disponible)\.?$/i,
+      /^.* sold .+\.$/i,
       /^Vendió .+\.$/i,
+
+      // ─── System messages / UI ──────────────────────────────────────────
+      /^.* bumped their message:?$/i,
+      /^Mensaje enviado$/i,
       /^Ver anuncios similares$/i,
+      /^See similar listings$/i,
       /^Ver perfil del comprador$/i,
+      /^View buyer profile$/i,
       /^Ver perfil del vendedor$/i,
-      /^You added .* to the group\.$/i,
-      /^You changed the chat colors\.$/i,
-      /^You missed a call from .*$/i,
-      /^You named the group .*$/i,
-      /^You removed .* from the group\.$/i,
-      /^You sent a GIF\.$/i,
-      /^You sent a photo\.$/i,
-      /^You sent a video\.$/i,
-      /^You sent an attachment\.$/i,
-      /^You shared a location\.$/i,
-      /^You set the nickname for .* to .*$/i,
-      /^You started this chat\.$/i,
-      /^You started this chat. View seller profile\.$/i,
-      /^\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}\u2009(AM|PM)$/i,
-      /^\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}\u202F(AM|PM)$/i,
-      /^\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}\s*(AM|PM)?$/i,
-      /^[A-Za-z]{3}\s+\d{1,2},\s+\d{4}(,\s*\d{1,2}:\d{2}\s*(AM|PM)?)?$/i,
+      /^View seller profile$/i,
       /^Ver detalles del comprador$/i,
-      /^Ver anuncios similares$/i,
-      /^Ver perfil del comprador$/i,
-      /^Ver perfil del vendedor$/i,
-      /buyer details$/i,                       
-      /cambió la foto del grupo\.$/i,           
+      /^View buyer details$/i,
       /detalles del comprador$/i,
-      /está recibiendo muchos mensajes sobre este anuncio/i,
-      /está esperando tu respuesta sobre este anuncio\.\s*Ver anuncio$/i,
-      /marcó este artículo como (vendido|pendiente|disponible)/i,
-      /named the group .+\.$/i,               
-      /se unió a Facebook en \d{4}/i,
-      /vendió .+\.$/i,
-      /·\s*.*\s*add name$/i,                   
-      /^Definiste el apodo de .* como .*$/i,
+      /buyer details$/i,
+
+      // ─── Alerts / informative messages ─────────────────────────────────────
       /^Estás recibiendo muchos mensajes sobre este anuncio/i,
+      /^You're receiving a lot of messages about this listing/i,
       /^Estás esperando tu respuesta sobre este anuncio\.\s*Ver anuncio$/i,
-      /^Ver anuncios similares$/i,
-      /^Ver perfil del comprador$/i,
-      /^Ver perfil del vendedor$/i,
-      /is getting a lot of messages about this listing/i,
-      /is waiting for your response about this listing\.\s*View listing$/i,
-      /^[A-Za-z]{3}\s+\d{1,2},\s+\d{4}(,\s*\d{1,2}:\d{2}\s*(AM|PM)?)?$/i,
-      /^\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}\s*(AM|PM)?$/i,
-      /^\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}\u202F(AM|PM)$/i,
-      /^\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}\u2009(AM|PM)$/i,
-      /se unió a Facebook en \d{4}/i,
-      /detalles del comprador$/i,
-      /cambió la foto del grupo\.$/i,
-      /nombró al grupo .+\.$/i,
+      /^You're waiting for a response about this listing\.\s*View listing$/i,
+      /^Is getting a lot of messages about this listing/i,
+      /^Is waiting for your response about this listing\.\s*View listing$/i,
+      /^Beware of common scams using payment apps/i,
+
+      // ─── Ratings ─────────────────────────────────────────────────────
+      /^You can now rate each other.*Rate [A-Z][a-z]+$/i,
+      /^Ahora pueden calificarse.*Califica a [A-ZÁÉÍÓÚÑ][a-záéíóúñ]+$/i,
+
+      // ─── Profile information ──────────────────────────────────────────────
+      /^Joined facebook in \d{4}$/i,
+      /^Se unió a Facebook en \d{4}$/i,
+
+      // ─── Dates / timestamps ────────────────────────────────────────────────
+      /^\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}(\u2009|\u202F)?\s*(AM|PM)?$/i,
+      /^[A-Za-z]{3,9}\s+\d{1,2},\s+\d{4}(,\s*\d{1,2}:\d{2}\s*(AM|PM)?)?$/i,
+
+      // ─── Others ──────────────────────────────────────────────────────────────
+      /·\s*.*\s*add name$/i
     ];
 
     const isSystem = systemPatterns.some(pattern => pattern.test(messageText));
@@ -2375,6 +2382,7 @@ class ChatManager {
 
       if (assistantServiceAvailable) {
         logger.log('[ChatManager] Using OpenAI Assistant...');
+        console.log('[ChatManager] Payload to assistant →', context);
         showSimpleAlert('Consulting the OpenAI Assistant...', 'info');
 
         // Get response as plain text

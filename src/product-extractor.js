@@ -352,20 +352,27 @@ function fetchProductWithGM(productId, url) {
           try {
             const doc = new DOMParser().parseFromString(response.responseText, 'text/html');
 
-            // First try to extract data from the embedded JSON
-            let productDetails = extractFromInlineJson(doc, url);
+                  // EXTRACT embedded JSON data
+                  let productDetails = extractFromInlineJson(doc, url);
+                  if (!productDetails) {
+                    logger.warn('[ProductExtractor] Inline JSON failed, using DOM'); 
+                    productDetails = extractFromDOM(doc, productId);
+                  }
 
-            // If JSON extraction failed, extract basic data from the DOM
-            if (!productDetails) {
-              logger.warn('[ProductExtractor] Inline JSON extraction failed for ' + productId + ', trying DOM extraction fallback');
-              productDetails = extractFromDOM(doc, productId);
-            }
+                  // --------------------------------------------------------
+                  // INJECT: always collect fresh images from the product DOM
+                  // --------------------------------------------------------
+                  const domFallback = extractFromDOM(doc, productId);
+                  if (domFallback && Array.isArray(domFallback.imageUrls) && domFallback.imageUrls.length) {
+                    productDetails.imageUrls = domFallback.imageUrls;
+                    productDetails.image = domFallback.imageUrls[0];
+                  }
 
-            // Store in cache
-            productCache[productId] = productDetails;
-            logger.debug(`[ProductExtractor] Product ${productId} cached`);
+                  // Store in cache
+                  productCache[productId] = productDetails;
+                  logger.debug(`[ProductExtractor] Product ${productId} cached`);
 
-            // Show the complete details of the extracted product
+                  // Show the complete details of the extracted product
             console.log("--- EXTRACTED PRODUCT DATA ---");
             console.log(JSON.stringify(productDetails, null, 2));
             console.log("--- END PRODUCT DATA ---");
@@ -594,10 +601,23 @@ function inspectProduct(productId) {
   }
 }
 
-// Export functions
+// -----------------------------------------
+// Helper function to get <img.src> from the chat
+// -----------------------------------------
+function getProductImagesFromChat(chatContainer) {
+  const sel = CONFIG.selectors.activeChat.messageImageElement;
+  const imgs = Array.isArray(sel)
+    ? sel.map(s => [...chatContainer.querySelectorAll(s)]).flat()
+    : [...chatContainer.querySelectorAll(sel)];
+  return imgs
+    .map(img => img.src)
+    .filter(src => src && /^https?:\/\//.test(src));
+}
+
 window.productExtractor = {
   getProductDetails,
   extractProductIdFromUrl,
   extractProductIdFromCurrentChat,
-  inspectProduct  // New function for manual inspection
+  inspectProduct,
+  getProductImagesFromChat
 };
