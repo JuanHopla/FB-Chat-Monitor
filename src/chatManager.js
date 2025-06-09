@@ -1430,21 +1430,20 @@ class ChatManager {
 
     // Common patterns for system messages - ADDITIONAL ADDITIONS
     const systemPatterns = [
-
-      // ─── Chat started ──────────────────────────────────────────────────────
+      // ─── Conversation start ─────────────────────────────
       /^(You|Tú|[A-Z][a-z]+) started this chat\.?( View (seller|buyer) profile)?$/i,
-      /^([A-Z][a-z]+) inició el chat\.?( Ver (perfil del vendedor|perfil del comprador))?$/i,
+      /^([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+) inició el chat\.?( Ver (perfil del vendedor|perfil del comprador))?$/i,
 
-      // ─── Participants added or removed ─────────────────────────────────
+      // ─── Participants added or removed ────────────────
       /^You added .* to the group\.$/i,
       /^Agregaste a .* al grupo\.$/i,
       /^You removed .* from the group\.$/i,
       /^Eliminaste a .* del grupo\.$/i,
 
-      // ─── Users leaving the group ───────────────────────────────────────
+      // ─── Users leaving the group ──────────────────────
       /^.* (left|salió del) grupo\.$/i,
 
-      // ─── Name or color changes ──────────────────────────────────────────
+      // ─── Name or color changes ─────────────────────────
       /^You named the group .*$/i,
       /^Nombraste al grupo .*$/i,
       /^You changed the chat colors\.$/i,
@@ -1452,29 +1451,36 @@ class ChatManager {
       /^You set the nickname for .* to .*$/i,
       /^Definiste el apodo de .* como .*$/i,
 
-      // ─── Changes in the group photo ───────────────────────────────────────
+      // ─── Changes in group photo/name with dynamic name
       /^Changed the group photo\.$/i,
       /^Cambió la foto del grupo\.$/i,
+      /cambió la foto del grupo\.$/i,
+      /named the group .+\.$/i,
+      /nombró al grupo .+\.$/i,
+      /^[A-Z][a-z]+(?: [A-Z][a-z]+)? changed the group photo\.$/i,
+      /^[A-Z][a-z]+(?: [A-Z][a-z]+)? named the group .+\.$/i,
 
-      // ─── Media sent ────────────────────────────────────────────────────
+      // ─── Media sent ───────────────────────────────────
       /^You sent (a )?(GIF|photo|video|attachment)\.$/i,
       /^Enviaste (un|una) (GIF|foto|video|adjunto)\.$/i,
       /^You shared a location\.$/i,
       /^Compartiste una ubicación\.$/i,
 
-      // ─── Calls ───────────────────────────────────────────────────────────
+      // ─── Calls ──────────────────────────────────────────
       /^Missed call$/i,
       /^You missed a call from .*$/i,
       /^Llamada perdida$/i,
       /^Llamada perdida de .*$/i,
 
-      // ─── Listing statuses ────────────────────────────────────────────────
+      // ─── Listing statuses ───────────────────────────────
       /^.* marked the listing as (Available|Pending)\.$/i,
       /^Marcó este artículo como (vendido|pendiente|disponible)\.?$/i,
       /^.* sold .+\.$/i,
       /^Vendió .+\.$/i,
+      /^[A-Z][a-z]+ marked the listing as (Available|Pending)\.$/i,
+      /^[A-Z][a-z]+ sold .+\.$/i,
 
-      // ─── System messages / UI ──────────────────────────────────────────
+      // ─── System messages / UI ─────────────────────────
       /^.* bumped their message:?$/i,
       /^Mensaje enviado$/i,
       /^Ver anuncios similares$/i,
@@ -1488,7 +1494,7 @@ class ChatManager {
       /detalles del comprador$/i,
       /buyer details$/i,
 
-      // ─── Alerts / informative messages ─────────────────────────────────────
+      // ─── Alerts / informative messages ───────────────────
       /^Estás recibiendo muchos mensajes sobre este anuncio/i,
       /^You're receiving a lot of messages about this listing/i,
       /^Estás esperando tu respuesta sobre este anuncio\.\s*Ver anuncio$/i,
@@ -1496,20 +1502,23 @@ class ChatManager {
       /^Is getting a lot of messages about this listing/i,
       /^Is waiting for your response about this listing\.\s*View listing$/i,
       /^Beware of common scams using payment apps/i,
+      /^[A-Z][a-z]+ is getting a lot of messages about this listing\.? See similar listings$/i,
+      /^[A-Z][a-z]+ is waiting for your response about this listing\.? View listing$/i,
 
-      // ─── Ratings ─────────────────────────────────────────────────────
+      // ─── Ratings ────────────────────────────────────
       /^You can now rate each other.*Rate [A-Z][a-z]+$/i,
       /^Ahora pueden calificarse.*Califica a [A-ZÁÉÍÓÚÑ][a-záéíóúñ]+$/i,
 
-      // ─── Profile information ──────────────────────────────────────────────
+      // ─── Profile information ─────────────────────────────
       /^Joined facebook in \d{4}$/i,
       /^Se unió a Facebook en \d{4}$/i,
+      /se unió a Facebook en \d{4}/i,
 
-      // ─── Dates / timestamps ────────────────────────────────────────────────
+      // ─── Dates / timestamps ───────────────────────────────
       /^\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}(\u2009|\u202F)?\s*(AM|PM)?$/i,
       /^[A-Za-z]{3,9}\s+\d{1,2},\s+\d{4}(,\s*\d{1,2}:\d{2}\s*(AM|PM)?)?$/i,
 
-      // ─── Others ──────────────────────────────────────────────────────────────
+      // ─── Others ─────────────────────────────────────────────
       /·\s*.*\s*add name$/i
     ];
 

@@ -672,16 +672,16 @@ class OpenAIManager {
           const aNum = parseInt(a.id.split('_').pop());
           const bNum = parseInt(b.id.split('_').pop());
           if (!isNaN(aNum) && !isNaN(bNum)) {
-            return aNum - bNum;
+          return aNum - bNum;
           }
         }
         
         // Default: keep the original order (which is usually chronological)
         return 0;
-      });
-      
-      // Assign proper roles based on sentByUs flag
-      for (let i = 0; i < sortedMessages.length; i++) {
+        });
+        
+        // Assign proper roles based on sentByUs flag
+        for (let i = 0; i < sortedMessages.length; i++) {
         const message = sortedMessages[i];
         
         // Ensure each message has content
@@ -693,7 +693,7 @@ class OpenAIManager {
           message.content = { text: message.content };
         }
         
-        // Assign the correct role based on who sent the message
+        // Assign the correct role based on who sent it
         // CORRECTION: The logic must be:
         // - If it was sent by us (sentByUs=true), then it is the assistant
         // - If it was sent by the other (sentByUs=false), then it is the user
@@ -705,59 +705,49 @@ class OpenAIManager {
           // We assume that the first message is always from the user
           message.role = (i % 2 === 0) ? "user" : "assistant";
         }
-      }
-      
-      logger.debug(`Messages organized: ${sortedMessages.length} messages with proper roles`);
-      return sortedMessages;
-    } catch (error) {
-      logger.error(`Error organizing messages: ${error.message}`);
-      return [...messages]; // Return a copy of the original messages without changes
-    }
-  }
-
-  /**
-   * Generate a response using OpenAI API
-   * @param {Object} context - Context data including role, messages, and product details
-   * @returns {Promise<Object>} Generated structured response object or an error object
-   */
-  async generateResponse(context) {
-    try {
-      if (!this.isReady()) {
-        logger.error('OpenAI API not ready');
-        throw new Error('OpenAI API not ready');
-      }
-
-      // Extract role and validate (default to 'buyer')
-      const role = context?.role || 'buyer';
-      logger.log(`Generating response as ${role} using OpenAI Assistants API`);
-
-      // Ensure API instance is properly initialized/refreshed
-      if (!this.client) {
-        const success = await this.initialize();
-        logger.log(`OpenAI Manager initialized: ${success ? 'SUCCESS' : 'FAILED'}`);
-        if (!success) {
-          throw new Error('Could not initialize OpenAI API');
         }
+        
+        logger.debug(`Messages organized: ${sortedMessages.length} messages with proper roles`);
+        return sortedMessages;
+      } catch (error) {
+        logger.error(`Error organizing messages: ${error.message}`);
+        return [...messages]; // Return a copy of the original messages without changes
+      }
       }
 
-      // Get appropriate assistant ID for this role
-      const assistantId = this.getAssistantIdForRole(role);
+      /**
+       * Generate a response using OpenAI API
+       * @param {Object} context - Context data including role, messages, and product details
+       * @returns {Promise<Object>} Generated structured response object or an error object
+       */
+      async generateResponse(context) {
+      try {
+        if (!this.isReady()) throw new Error('OpenAI API not ready');
 
-      // Get or create a thread for the conversation
-      // Extract chatId from context, with fallback to a default one
-      const chatId = context.chatId || 'default_chat';
-      
-      // siempre omitimos imágenes (skipImages = true)
-      const thread = await this.getOrCreateThread(chatId);
--     await this.addMessageToThread(thread.id, context, false); // include images
-+     await this.addMessageToThread(thread.id, context);
-      return await this.runAssistant(thread.id, assistantId);
+        const role = context?.role || 'buyer';
+        logger.log(`Generating response as ${role} using OpenAI Assistants API`);
 
-    } catch (error) {
-      logger.error(`Error generating response: ${error.message}`);
-      throw error;
-    }
-  }
+        if (!this.client) {
+        const success = await this.initialize();
+        if (!success) throw new Error('Could not initialize OpenAI API');
+        }
+
+        // Prepare messages ONLY once
+        context.preparedMessages = await this.prepareMessageContent(context);
+
+        // Thread and message sending
+        const assistantId = this.getAssistantIdForRole(role);
+        const chatId = context.chatId || 'default_chat';
+        const thread = await this.getOrCreateThread(chatId);
+
+        await this.addMessageToThread(thread.id, context);
+        return await this.runAssistant(thread.id, assistantId);
+
+      } catch (error) {
+        logger.error(`Error generating response: ${error.message}`);
+        throw error;
+      }
+      }
 
   /**
    * Uploads an image URL to OpenAI Files (purpose "assistants") and returns the file_id
