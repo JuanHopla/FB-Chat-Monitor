@@ -59,6 +59,26 @@ function extractProductIdFromUrl(url) {
 }
 
 /**
+ * Filters only relevant fields that have valid values
+ * @param {Object} data - Unfiltered data
+ * @returns {Object} Filtered data with only relevant fields
+ */
+function filterRelevantFields(data) {
+  if (!data || typeof data !== 'object') return {};
+  
+  return Object.entries(data).reduce((acc, [key, val]) => {
+    const isNonEmptyString = (typeof val === 'string' && val !== '');
+    const isNonEmptyArray = (Array.isArray(val) && val.length > 0);
+    const isNonNullNumber = (typeof val === 'number' && !isNaN(val));
+    const isBoolean = (typeof val === 'boolean');
+    if (isNonEmptyString || isNonEmptyArray || isNonNullNumber || isBoolean) {
+      acc[key] = val;
+    }
+    return acc;
+  }, {});
+}
+
+/**
  * Extract product details from HTML using embedded JSON
  * @param {Document} doc - HTML Document
  * @param {string} originalUrl - Original product URL
@@ -163,6 +183,7 @@ function extractFromInlineJson(doc, originalUrl) {
           const photos = mediaJsonData.__bbox.result.data.viewer.marketplace_product_details_page.target.listing_photos;
           if (photos && Array.isArray(photos)) {
             allImages = photos.map(photo => photo?.image?.uri).filter(Boolean);
+            logger.debug(`[ProductExtractor] Extracted ${allImages.length} images from media JSON`);
           }
         } catch (e) {
           logger.warn('[ProductExtractor] Error extracting images from media JSON:', e);
@@ -174,26 +195,11 @@ function extractFromInlineJson(doc, originalUrl) {
       if (primaryImageUri && !allImages.includes(primaryImageUri)) {
         allImages.unshift(primaryImageUri);
       }
-
-      // Format the price when it is present in amount but not in formatted_price
-      let formattedPrice = target.formatted_price?.text || '';
-      const amount = target.listing_price?.amount || '';
-      const currency = target.listing_price?.currency || '';
-
-      // If the formatted price is empty but we have amount and currency, create a custom format
-      if (!formattedPrice && amount) {
-        // Format the price according to the currency
-        if (currency === 'COP') {
-          formattedPrice = `$${parseInt(amount).toLocaleString('es-CO')} COP`;
-        } else if (currency === 'USD') {
-          formattedPrice = `$${parseInt(amount).toLocaleString('en-US')}`;
-        } else if (currency === 'EUR') {
-          formattedPrice = `€${parseInt(amount).toLocaleString('de-DE')}`;
-        } else {
-          // Generic format for other currencies
-          formattedPrice = `${currency} ${parseInt(amount).toLocaleString()}`;
-        }
-        logger.debug(`[ProductExtractor] Manually formatted price: ${formattedPrice}`);
+      
+      // NEW: Filter possible duplicate thumbnails (as in the POC)
+      if (allImages.length >= 2 && allImages[0].split('?')[0] === allImages[1].split('?')[0]) {
+        logger.debug('[ProductExtractor] Duplicate thumbnail detected, removing the first one.');
+        allImages.shift();
       }
 
       const result = {
@@ -308,18 +314,13 @@ function extractFromInlineJson(doc, originalUrl) {
         nearbySchools: target.nearby_schools || [],
         nearbyTransits: target.nearby_transits || [],
             };
-            // --- New: filter only "relevant" fields ---
-            const filtered = Object.entries(result).reduce((acc, [key, val]) => {
-        const isNonEmptyString = (typeof val === 'string' && val !== '');
-        const isNonEmptyArray = (Array.isArray(val) && val.length > 0);
-        const isNonNullNumber = (typeof val === 'number' && !isNaN(val));
-        const isBoolean = (typeof val === 'boolean');
-        if (isNonEmptyString || isNonEmptyArray || isNonNullNumber || isBoolean) {
-          acc[key] = val;
-        }
-        return acc;
-            }, {});
+            
+            // --- Filter only "relevant" fields ---
+            const filtered = filterRelevantFields(result);
+            
             logger.debug('[ProductExtractor] Extraction completed from embedded JSON.');
+            logger.debug(`[ProductExtractor] Filtered out ${Object.keys(result).length - Object.keys(filtered).length} empty fields`);
+            
             return filtered;
     } catch (error) {
       logger.error('[ProductExtractor] Error processing main JSON data:', error);
@@ -399,19 +400,23 @@ function extractFromDOM(doc, productId) {
       extractedFrom: 'dom-fallback'
     };
 
-    logger.debug('[ProductExtractor] Extracted basic product details from DOM', result);
-    return result;
+    // Apply the same filtering to the DOM results
+    const filtered = filterRelevantFields(result);
+    
+    logger.debug('[ProductExtractor] Extracted basic product details from DOM');
+    logger.debug(`[ProductExtractor] DOM extraction produced ${Object.keys(filtered).length} relevant fields`);
+    
+    return filtered;
   } catch (error) {
     logger.error('[ProductExtractor] Error extracting from DOM', error);
-    return {
+    
+    // Also filter the default result
+    return filterRelevantFields({
       id: productId,
       title: 'Marketplace',
-      price: '',
-      description: '',
-      imageUrls: [],
       extractedFromDOM: true,
       extractedFrom: 'dom-error'
-    };
+    });
   }
 }
 
@@ -460,14 +465,19 @@ function fetchProductWithGM(productId, url) {
               productDetails = extractFromDOM(doc, productId);
             }
 
-            // --------------------------------------------------------
-            // INJECT: always collect fresh images from the product DOM
-            // --------------------------------------------------------
-            const domFallback = extractFromDOM(doc, productId);
-            if (domFallback?.imageUrls?.length) {
-              // Override images using properties coherentes
-              productDetails.allImages = domFallback.imageUrls;
-              productDetails.image    = domFallback.imageUrls[0];
+            // IMPORTANT MODIFICATION: Remove unconditional overwriting
+            // Only use DOM images as a fallback if there are no images from JSON
+            if (!productDetails.allImages || productDetails.allImages.length === 0) {
+              logger.debug('[ProductExtractor] No images from JSON, using DOM images as fallback');
+              const domFallback = extractFromDOM(doc, productId);
+              if (domFallback?.imageUrls?.length) {
+                productDetails.allImages = domFallback.imageUrls;
+                productDetails.image = domFallback.imageUrls[0];
+                // Re-filter after adding images
+                productDetails = filterRelevantFields(productDetails);
+              }
+            } else {
+              logger.debug(`[ProductExtractor] Using ${productDetails.allImages.length} images from JSON (higher quality)`);
             }
 
             // Store in cache
@@ -486,14 +496,17 @@ function fetchProductWithGM(productId, url) {
             // Try DOM fallback even if parsing fails
             try {
               const fallbackDetails = extractFromDOM(new DOMParser().parseFromString(response.responseText, 'text/html'), productId);
-              productCache[productId] = fallbackDetails;
+              
+              // Ensure filtering of the fallback result
+              const filteredFallback = filterRelevantFields(fallbackDetails);
+              productCache[productId] = filteredFallback;
 
               // Show fallback details
               console.log("--- PRODUCT DATA (FALLBACK) ---");
-              console.log(JSON.stringify(fallbackDetails, null, 2));
+              console.log(JSON.stringify(filteredFallback, null, 2));
               console.log("--- END PRODUCT DATA ---");
 
-              resolve(fallbackDetails);
+              resolve(filteredFallback);
             } catch (fallbackError) {
               reject(fallbackError);
             }
@@ -546,6 +559,7 @@ function extractProductDetailsFromCurrentPage() {
     // Extract basic details from the DOM
     const result = extractFromDOM(document, productId);
 
+    // Result is already filtered by extractFromDOM
     // Save to cache
     productCache[productId] = result;
     logger.debug(`[ProductExtractor] Product ${productId} cached from DOM extraction`);
@@ -636,7 +650,7 @@ async function getProductDetails(productId, url = null) {
     // If the product is already cached, return the cached version
     if (productCache[productId]) {
       logger.debug(`Retrieved product ${productId} from cache`);
-      return productCache[productId];
+      return productCache[productId]; // Already filtered in cache
     }
 
     // Build URL if not provided
@@ -649,6 +663,19 @@ async function getProductDetails(productId, url = null) {
     try {
       // Try to get details using GM_xmlhttpRequest
       const productDetails = await fetchProductWithGM(productId, url);
+      
+      // KEEP: Use DOM only as a fallback if there are no images
+      if (!productDetails.allImages || productDetails.allImages.length === 0) {
+        logger.debug('[ProductExtractor] No images found in JSON, trying DOM extraction');
+        const domImages = getProductImagesFromChat(document);
+        if (domImages && domImages.length > 0) {
+          productDetails.allImages = domImages;
+          productDetails.image = domImages[0];
+          // Re-filter after adding images 
+          return filterRelevantFields(productDetails);
+        }
+      }
+      
       return productDetails;
     } catch (error) {
       // If the request fails, try to extract details from the DOM of the current page
@@ -658,24 +685,24 @@ async function getProductDetails(productId, url = null) {
       const fallbackDetails = extractProductDetailsFromCurrentPage() || {
         id: productId,
         title: 'Unknown Product',
-        price: '',
-        description: '',
-        imageUrls: [],
         extractedFromDOM: true,
         extractedFrom: 'fallback-error'
       };
 
+      // Ensure filtering even for the final fallback
+      const filteredFallback = filterRelevantFields(fallbackDetails);
+      
       // Save even limited details to the cache
-      productCache[productId] = fallbackDetails;
+      productCache[productId] = filteredFallback;
 
       // If it is a default extraction, show it too
-      if (fallbackDetails.extractedFrom === 'fallback-error') {
+      if (filteredFallback.extractedFrom === 'fallback-error') {
         console.log("--- PRODUCT DATA (DEFAULT FALLBACK) ---");
-        console.log(JSON.stringify(fallbackDetails, null, 2));
+        console.log(JSON.stringify(filteredFallback, null, 2));
         console.log("--- END PRODUCT DATA ---");
       }
 
-      return fallbackDetails;
+      return filteredFallback;
     }
   } catch (error) {
     logger.error(`Error getting product details for ${productId}:`, error);
@@ -683,7 +710,9 @@ async function getProductDetails(productId, url = null) {
   }
 }
 
-// Add a function to manually inspect a product
+/**
+ * Add a function to manually inspect a product
+ */
 function inspectProduct(productId) {
   if (!productId) {
     const productLink = document.querySelector('a[href*="/marketplace/item/"]');
@@ -721,5 +750,6 @@ window.productExtractor = {
   extractProductIdFromUrl,
   extractProductIdFromCurrentChat,
   inspectProduct,
-  getProductImagesFromChat
+  getProductImagesFromChat,
+  filterRelevantFields
 };

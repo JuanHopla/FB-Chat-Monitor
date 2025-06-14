@@ -26,6 +26,9 @@ const sourceFiles = [
   'human-simulator.js',
   'ChatManager.js', // Make sure this line exists and matches the exact file name
   'product-extractor.js',
+  'openai/api-client.js',
+  'openai/thread-manager.js',
+  'openai/message-utils.js',
   'openai-manager.js',
   'assistant-manager-ui.js',
   'ui.js',

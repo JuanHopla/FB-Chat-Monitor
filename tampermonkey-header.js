@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         FB-Chat-Monitor
+// @name         FB-Chat-Monitor DEV
 // @namespace    https://github.com/JuanHopla/FB-Chat-Monitor
 // @version      1.0.0
 // @description  Monitor and auto-respond to Facebook Marketplace messages with AI assistance

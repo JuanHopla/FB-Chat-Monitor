@@ -205,7 +205,16 @@ window.addEventListener('load', () => {
     // If openaiManager does not exist, create it as a backup
     if (!window.openaiManager) {
       logger.warn('OpenAI Manager is not available, creating backup instance');
-      window.openaiManager = new OpenAIManager();
+      
+      // Check if we have the refactored version first
+      if (typeof window.OpenAIManager === 'function') {
+        window.openaiManager = new OpenAIManager();
+        logger.debug('Created new instance using refactored OpenAIManager class');
+      } else {
+        // Fall back to original class
+        window.openaiManager = new OpenAIManager();
+        logger.debug('Created new instance using original OpenAIManager class');
+      }
     }
     
     // If openaiManager exists but is not initialized, try to recover it
@@ -226,7 +235,6 @@ window.addEventListener('load', () => {
     }
     
     // Verify if after the recovery attempts the manager is well initialized
-    // Using more robust functions for verification
     let isReady = false;
     
     if (typeof window.openaiManager.isReady === 'function') {
@@ -243,6 +251,11 @@ window.addEventListener('load', () => {
       logger.warn('Inconsistency detected - forcing isInitialized=true since there is API key');
       window.openaiManager.isInitialized = true;
       isReady = true;
+    }
+    
+    // Ensure API client is initialized properly in the new version
+    if (window.openaiManager.apiClient && window.openaiManager.apiKey) {
+      window.openaiManager.apiClient.setApiKey(window.openaiManager.apiKey);
     }
     
     logger.log(`Final state of OpenAI Manager: ${isReady ? 'READY' : 'NOT AVAILABLE'}`);
