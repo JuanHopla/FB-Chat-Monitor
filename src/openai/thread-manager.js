@@ -157,6 +157,40 @@ class ThreadManager {
   }
 
   /**
+   * Sends a conversation to the thread, dividing messages with extensive content into blocks
+   * @param {Array} messages - Messages prepared to be sent to OpenAI
+   * @param {string} threadId - ID of the thread to use
+   * @param {string} apiKey - API key for authentication (optional, uses this.apiClient by default)
+   * @returns {Promise<boolean>} - True if all messages were sent correctly
+   */
+  async sendConversationInChunks(messages, threadId, apiKey = null) {
+    if (!threadId) {
+      throw new Error('A valid threadId is required to send messages');
+    }
+
+    if (!Array.isArray(messages) || messages.length === 0) {
+      logger.warn('No messages to send to the thread');
+      return false;
+    }
+
+    // API client to use (existing or new with the provided apiKey)
+    const apiClient = apiKey ? new window.OpenAIApiClient(apiKey) : this.apiClient;
+    if (!apiClient) {
+      throw new Error('API client not initialized');
+    }
+
+    logger.debug(`Sending conversation split into blocks to thread ${threadId} (${messages.length} messages)`);
+
+    try {
+      // Use the shared MessageChunker function but passing our apiClient
+      return await window.MessageChunker.sendConversationInChunks(messages, threadId, apiClient);
+    } catch (error) {
+      logger.error(`Error sending conversation in blocks: ${error.message}`, {}, error);
+      throw error;
+    }
+  }
+
+  /**
    * Adds a message with context to a thread
    * @param {string} threadId - Thread ID
    * @param {Object} context - Context including messages and product details
@@ -175,6 +209,15 @@ class ThreadManager {
 
       if (!messageContent || !messageContent.length) {
         throw new Error('No message content to add');
+      }
+
+      // Check if any message has more than 10 elements to use the chunk method
+      const hasLargeContent = messageContent.some(msg =>
+        Array.isArray(msg.content) && msg.content.length > 10);
+
+      if (hasLargeContent) {
+        logger.debug('Detected extensive content, using block sending method');
+        return await this.sendConversationInChunks(messageContent, threadId);
       }
 
       // Add each message to the thread

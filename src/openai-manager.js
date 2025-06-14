@@ -60,6 +60,12 @@ class OpenAIManager {
         // Initialize module components with the API key
         this.apiClient = new window.OpenAIApiClient(this.apiKey);
         this.threadManager = new window.ThreadManager(this.apiClient);
+        
+        // Verify if MessageChunker is available and use its shared instance if needed
+        if (window.MessageChunker) {
+          this.messageChunker = window.MessageChunker;
+          logger.debug('MessageChunker utility detected and connected');
+        }
 
         logger.debug('OpenAI components initialized successfully');
         this.isInitialized = true;
@@ -546,6 +552,53 @@ class OpenAIManager {
       averageResponseTime: this.metrics.successfulCalls ? 
                           (this.metrics.totalResponseTime / this.metrics.successfulCalls) : 0
     };
+  }
+
+  /**
+   * Send a conversation to a thread directly, handling chunking automatically
+   * @param {Array} messages - Messages to send
+   * @param {string} threadId - Thread ID
+   * @returns {Promise<boolean>} True if successful
+   */
+  async sendConversation(messages, threadId) {
+    try {
+      if (!this.isReady()) {
+        throw new Error('OpenAI API not initialized');
+      }
+      
+      // Check if there are any large messages requiring chunking
+      const needsChunking = messages.some(msg => 
+        Array.isArray(msg.content) && msg.content.length > 10);
+      
+      if (needsChunking) {
+        // Use the thread manager's implementation
+        if (this.threadManager) {
+          return await this.threadManager.sendConversationInChunks(messages, threadId);
+        }
+        // Fallback to direct MessageChunker
+        else if (window.MessageChunker) {
+          return await window.MessageChunker.sendConversationInChunks(
+            messages, threadId, this.apiClient || this.apiKey
+          );
+        }
+        // Last resort: use global function
+        else if (typeof window.sendConversationInChunks === 'function') {
+          return await window.sendConversationInChunks(messages, threadId, this.apiKey);
+        }
+        throw new Error('No chunking mechanism available');
+      }
+      
+      // For normal messages, use the standard method via API client
+      for (const message of messages) {
+        if (message.role === 'system') continue; // Skip system messages
+        await this.apiClient.addMessage(threadId, message);
+      }
+      
+      return true;
+    } catch (error) {
+      logger.error(`Error sending conversation: ${error.message}`);
+      throw error;
+    }
   }
 }
 

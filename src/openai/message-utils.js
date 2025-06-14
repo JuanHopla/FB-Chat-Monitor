@@ -17,8 +17,9 @@ class MessageUtils {
         try {
             // Organizes messages chronologically and assigns correct roles
             const formattedMessages = this.organizeMessagesByRole(context.messages);
+            let preparedMessages = [];
 
-            // Adds product details as the first message
+            // Adds product details as the first message (or messages if content exceeds 10 items)
             if (context.productDetails) {
                 // Create content array for multimodal format
                 const productContent = [];
@@ -28,7 +29,7 @@ class MessageUtils {
                 
                 // Exclude images and properties that we don't want in the text
                 const excludeFromText = [
-                    'images', 'image', 'imageUrls', 'allImages', 'sellerProfilePic'
+                    'images', 'imageUrls', 'allImages', 'sellerProfilePic'
                 ];
                 
                 // Generate text with the basic fields first if they exist
@@ -51,14 +52,26 @@ class MessageUtils {
                     }
                 }
 
-                // Add to product content
-                productContent.push({ type: "text", text: productDetailsText.trim() });
+                // Add to product content - IMPROVED: Verify that the text is not empty
+                const trimmedText = productDetailsText.trim();
+                if (trimmedText) {
+                    productContent.push({ type: "text", text: trimmedText });
+                } else {
+                    // If there are no product details, add a default text
+                    productContent.push({ type: "text", text: "Product without available description." });
+                }
 
                 // Add product images (only from allImages, not the seller's profile)
+                // IMPROVED: Verify and filter empty or invalid images
                 if (Array.isArray(context.productDetails.allImages) && context.productDetails.allImages.length > 0) {
                     // Validate images before including them
                     const validItems = [];
                     for (const imgUrl of context.productDetails.allImages.slice(0, 6)) { // Limit to 6 images
+                        // IMPROVED: Verify that the URL is not empty
+                        if (!imgUrl || typeof imgUrl !== 'string' || imgUrl.trim() === '') {
+                            continue; // Skip empty URLs
+                        }
+                        
                         try {
                             const resp = await fetch(imgUrl, { method: 'HEAD' });
                             if (resp.ok) {
@@ -76,115 +89,153 @@ class MessageUtils {
                     }
                 }
 
-                // Insert the product message at the beginning of the conversation
-                formattedMessages.unshift({
-                    role: "user",
-                    content: productContent
-                });
+                // IMPROVED: Ensure that productContent is not empty and has at least one text
+                if (productContent.length === 0) {
+                    productContent.push({ 
+                        type: "text", 
+                        text: "Product information not available." 
+                    });
+                } else if (!productContent.some(item => item.type === 'text')) {
+                    // If there are only images without text, add an informative text element
+                    productContent.unshift({
+                        type: "text",
+                        text: "Product images:"
+                    });
+                }
+
+                // NEW: Divide the product content into blocks of 10 if necessary
+                if (productContent.length > 10) {
+                    logger.debug(`Product details content exceeds 10 items (${productContent.length}), splitting into chunks`);
+                    
+                    for (let i = 0; i < productContent.length; i += 10) {
+                        const chunk = productContent.slice(i, Math.min(i + 10, productContent.length));
+                        const isFirstChunk = i === 0;
+                        
+                        // IMPROVED: Verify if the chunk has at least one text element
+                        const hasText = chunk.some(item => item.type === 'text');
+                        
+                        // If it is a fragment after the first or if it does not have text, add context
+                        if ((!isFirstChunk || !hasText) && chunk[0].type !== 'text') {
+                            chunk.unshift({
+                                type: "text",
+                                text: isFirstChunk ? 
+                                    "Product details:" : 
+                                    "[Continuation of product details]"
+                            });
+                            // If this makes the chunk have 11 elements, remove the last one
+                            if (chunk.length > 10) {
+                                chunk.pop();
+                            }
+                        }
+                        
+                        preparedMessages.push({
+                            role: "user",
+                            content: chunk
+                        });
+                    }
+                } else {
+                    // If it does not exceed 10 elements, add as a single message
+                    preparedMessages.push({
+                        role: "user",
+                        content: productContent
+                    });
+                }
             }
 
+            // Ignore trivial messages that do not add value to the conversation
+            // IMPROVED: Filter trivial messages
+            const filteredMessages = this.filterTrivialMessages(formattedMessages);
+            
             // Convert message objects to the appropriate format for the API with validation
-            const finalMessages = formattedMessages.map((message, index) => {
-                // If the message has no content, use a default empty text message
-                if (!message.content) {
-                    logger.debug(`Message #${index} has no content. Using default empty text.`);
-                    return {
-                        role: message.role || "user",
-                        content: [{ type: "text", text: " " }] // Space as minimum valid content
-                    };
-                }
-
-                // Ensure that the message has a valid role
-                if (!message.role || !["user", "assistant", "system"].includes(message.role)) {
-                    message.role = "user"; // Default to user if the role is invalid
-                }
-
-                // If the content is already in array format, validate each element
-                if (Array.isArray(message.content)) {
-                    const validContent = message.content
-                        .map(item => {
-                            // PASSTHROUGH for images
-                            if (item.type === 'image_url' && item.image_url?.url !== undefined) {
-                                return item;
-                            }
-                            // Keep texts
-                            if (item.type === 'text' && typeof item.text === 'string') {
-                                return item;
-                            }
-                            // discard everything else
-                            return null;
-                        })
-                        .filter(item => item !== null);
-
-                    return {
-                        role: message.role,
-                        content: validContent.length ? validContent : [{ type: "text", text: " " }]
-                    };
+            // MODIFIED: Process each message and divide into chunks if necessary
+            for (const message of filteredMessages) {
+                // Prepare the message content
+                const messageContentArray = this.prepareMessageContentItems(message);
+                
+                // IMPROVED: Verify that the array is not empty and has at least one text
+                if (messageContentArray.length === 0) {
+                    continue; // Skip messages without content
                 }
                 
-                // For content of type string, convert to appropriate format
-                if (typeof message.content === 'string') {
-                    return {
-                        role: message.role,
-                        content: [{
-                            type: "text",
-                            text: message.content || " " // Use space if empty
-                        }]
-                    };
-                }
-                
-                // For content object with text and media
-                if (typeof message.content === 'object' && message.content !== null) {
-                    const contentArray = [];
-                    
-                    // Add text content if available and valid
-                    if (message.content.text && typeof message.content.text === 'string') {
-                        contentArray.push({
-                            type: "text",
-                            text: message.content.text.trim() || " " // Space as fallback
-                        });
-                    }
-                    
-                    // Add images if available and not skipped
-                    if (message.content.imageUrls && Array.isArray(message.content.imageUrls)) {
-                        message.content.imageUrls.forEach(imageUrl => {
-                            if (imageUrl && typeof imageUrl === 'string') {
-                                contentArray.push({
-                                    type: "image_url",
-                                    image_url: {
-                                        url: imageUrl
-                                    }
-                                });
-                            }
-                        });
-                    }
-                    
-                    // Ensure we have at least one valid content element
-                    if (contentArray.length === 0) {
-                        contentArray.push({
-                            type: "text",
-                            text: " " // Space as minimum valid content
-                        });
-                    }
-                    
-                    return {
-                        role: message.role,
-                        content: contentArray
-                    };
-                }
-                
-                // Fallback for unexpected formats
-                return {
-                    role: message.role,
-                    content: [{
+                // Ensure that there is at least one text element
+                if (!messageContentArray.some(item => item.type === 'text')) {
+                    // If there are only images/files, add a descriptive text
+                    const mediaTypes = [...new Set(messageContentArray.map(item => item.type))];
+                    messageContentArray.unshift({
                         type: "text",
-                        text: " " // Space as minimum valid content
-                    }]
-                };
-            });
+                        text: mediaTypes.length === 1 ? 
+                            `[Content of type ${mediaTypes[0]}]` : 
+                            `[Multimedia content: ${mediaTypes.join(', ')}]`
+                    });
+                }
+                
+                // Divide into chunks if necessary (limit of 10 elements per message)
+                if (messageContentArray.length > 10) {
+                    logger.debug(`Message content exceeds 10 items (${messageContentArray.length}), splitting into chunks`);
+                    
+                    for (let i = 0; i < messageContentArray.length; i += 10) {
+                        const chunk = messageContentArray.slice(i, Math.min(i + 10, messageContentArray.length));
+                        const isFirstChunk = i === 0;
+                        
+                        // IMPROVED: Verify if the chunk has at least one text element
+                        const hasText = chunk.some(item => item.type === 'text');
+                        
+                        // If it does not have text or is not the first fragment and starts with an image, add a context text
+                        if ((!hasText || !isFirstChunk) && chunk[0].type !== 'text') {
+                            chunk.unshift({
+                                type: "text",
+                                text: message.role === 'assistant' ? 
+                                      (isFirstChunk ? "Response:" : "[Continuation of response]") : 
+                                      (isFirstChunk ? "Message:" : "[Continuation of message]")
+                            });
+                            // If this makes the chunk have 11 elements, remove the last one
+                            if (chunk.length > 10) {
+                                chunk.pop();
+                            }
+                        }
+                        
+                        // If this is a chunk after the first and contains text, add indicator
+                        if (!isFirstChunk && chunk.some(item => item.type === 'text')) {
+                            const firstTextIndex = chunk.findIndex(item => item.type === 'text');
+                            if (firstTextIndex >= 0) {
+                                const prefix = '[Continuation] ';
+                                chunk[firstTextIndex] = {
+                                    ...chunk[firstTextIndex],
+                                    text: prefix + chunk[firstTextIndex].text
+                                };
+                            }
+                        }
+                        
+                        // If this is not the last chunk and contains text, add indicator
+                        const isLastChunk = i + 10 >= messageContentArray.length;
+                        if (!isLastChunk) {
+                            const lastTextIndex = [...chunk].reverse().findIndex(item => item.type === 'text');
+                            if (lastTextIndex >= 0) {
+                                const actualIndex = chunk.length - 1 - lastTextIndex;
+                                const suffix = ' [Continues...]';
+                                chunk[actualIndex] = {
+                                    ...chunk[actualIndex],
+                                    text: chunk[actualIndex].text + suffix
+                                };
+                            }
+                        }
+                        
+                        preparedMessages.push({
+                            role: message.role || 'user',
+                            content: chunk
+                        });
+                    }
+                } else {
+                    // If it does not exceed 10 elements, add as a single message
+                    preparedMessages.push({
+                        role: message.role || 'user',
+                        content: messageContentArray
+                    });
+                }
+            }
 
             // Final validation to register potential problems
-            finalMessages.forEach((msg, index) => {
+            preparedMessages.forEach((msg, index) => {
                 // Check that the content array is valid
                 const hasValidContent = msg.content && Array.isArray(msg.content) && msg.content.length > 0;
                 
@@ -206,14 +257,186 @@ class MessageUtils {
             // Register the exact messages being sent to OpenAI
             logger.debug('=== EXACT MESSAGE SENT TO OPENAI ===');
             logger.debug('1. Context Role:', context.role);
-            logger.debug('2. Messages:', JSON.stringify(finalMessages));
-            console.log('OPENAI_PAYLOAD →', finalMessages);
+            logger.debug('2. Messages:', JSON.stringify(preparedMessages));
+            logger.debug(`3. Total messages: ${preparedMessages.length}, with chunking applied`);
             
-            return finalMessages;
+            // Log a summary of the chunks
+            const chunkSummary = preparedMessages.map((msg, i) => 
+                `Msg #${i+1}: role=${msg.role}, items=${msg.content.length}, ` +
+                `types=[${[...new Set(msg.content.map(item => item.type))].join(',')}]`
+            );
+            logger.debug(`Message chunks summary:\n${chunkSummary.join('\n')}`);
+            
+            console.log('OPENAI_PAYLOAD →', preparedMessages);
+            
+            return preparedMessages;
         } catch (error) {
             logger.error(`Error preparing message content: ${error.message}`, {}, error);
             return [];
         }
+    }
+
+    /**
+     * Filters trivial messages that do not add value to the conversation
+     * @param {Array} messages - List of messages
+     * @returns {Array} - Filtered list of messages
+     * @private
+     */
+    static filterTrivialMessages(messages) {
+        if (!Array.isArray(messages) || messages.length === 0) return [];
+
+        // Regular expressions to identify trivial messages
+        const trivialPatterns = [
+            /^(👍|👌|✅|🙏|😊)$/,
+        ];
+
+        // 1. Identify which messages are trivial
+        const messagesToKeep = messages.filter(msg => {
+            // If the message has no content or is not text, we keep it
+            if (!msg.content || typeof msg.content !== 'object' || !msg.content.text) {
+                return true;
+            }
+
+            const messageText = typeof msg.content.text === 'string' 
+                ? msg.content.text.trim() 
+                : msg.content.text;
+                
+            // If it has images or other media, it is not trivial
+            if (msg.content.imageUrls && msg.content.imageUrls.length > 0) {
+                return true;
+            }
+            
+            if (msg.content.media && Object.values(msg.content.media).some(v => v !== null && v.length > 0)) {
+                return true;
+            }
+            
+            // Check if it matches any trivial pattern
+            for (const pattern of trivialPatterns) {
+                if (pattern.test(messageText)) {
+                    return false; // It is trivial, we exclude it
+                }
+            }
+            
+            return true; // It is not trivial, we keep it
+        });
+
+        logger.debug(`Filtered out ${messages.length - messagesToKeep.length} trivial messages`);
+        return messagesToKeep;
+    }
+
+    /**
+     * Prepares the content items for an individual message
+     * @param {Object} message - Message to prepare
+     * @returns {Array} Array of content items
+     * @private
+     */
+    static prepareMessageContentItems(message) {
+        if (!message) return [{ type: "text", text: "No content" }];
+        
+        // If the message has no content, use an informative text
+        if (!message.content) {
+            return [{ type: "text", text: "No content" }];
+        }
+        
+        // If the content is already in array format, validate each element
+        if (Array.isArray(message.content)) {
+            // IMPROVED: Filter valid elements more strictly
+            const validContent = message.content
+                .map(item => {
+                    // For images, verify that the URL exists and is not empty
+                    if (item.type === 'image_url' && 
+                        item.image_url?.url !== undefined && 
+                        typeof item.image_url.url === 'string' && 
+                        item.image_url.url.trim() !== '') {
+                        return item;
+                    }
+                    
+                    // For text, verify that the text is not empty
+                    if (item.type === 'text' && 
+                        typeof item.text === 'string' && 
+                        item.text.trim() !== '') {
+                        return item;
+                    }
+                    
+                    // discard everything else
+                    return null;
+                })
+                .filter(item => item !== null);
+            
+            // IMPROVED: If no valid elements remain, return a default text
+            return validContent.length ? validContent : [{ type: "text", text: "No valid content" }];
+        }
+        
+        // For content of type string, convert to the appropriate format
+        if (typeof message.content === 'string') {
+            const trimmedText = message.content.trim();
+            return [{
+                type: "text",
+                text: trimmedText || "No content" // Empty text replaced
+            }];
+        }
+        
+        // For content object with text and media
+        if (typeof message.content === 'object' && message.content !== null) {
+            const contentArray = [];
+            
+            // Add text content if available and valid
+            if (message.content.text && typeof message.content.text === 'string' && message.content.text.trim() !== '') {
+                contentArray.push({
+                    type: "text",
+                    text: message.content.text.trim()
+                });
+            }
+            
+            // Add images if available
+            if (message.content.imageUrls && Array.isArray(message.content.imageUrls)) {
+                // IMPROVED: Filter empty or invalid URLs
+                message.content.imageUrls
+                    .filter(url => url && typeof url === 'string' && url.trim() !== '')
+                    .forEach(imageUrl => {
+                        contentArray.push({
+                            type: "image_url",
+                            image_url: { url: imageUrl }
+                        });
+                    });
+            }
+            
+            // Support for media.images from enhanced message structure
+            if (message.content.media && Array.isArray(message.content.media.images)) {
+                // IMPROVED: Filter images without URL or with empty URL
+                message.content.media.images
+                    .filter(image => image && image.url && typeof image.url === 'string' && image.url.trim() !== '')
+                    .forEach(image => {
+                        contentArray.push({
+                            type: "image_url",
+                            image_url: { url: image.url }
+                        });
+                    });
+            }
+            
+            // IMPROVED: If there is no valid content, add a default text
+            // and ensure that there is always at least one element of type text
+            if (contentArray.length === 0) {
+                contentArray.push({
+                    type: "text",
+                    text: "No valid content"
+                });
+            } else if (!contentArray.some(item => item.type === 'text')) {
+                // If there are only images, add a descriptive text
+                contentArray.unshift({
+                    type: "text",
+                    text: "Multimedia content:"
+                });
+            }
+            
+            return contentArray;
+        }
+        
+        // Fallback for unexpected formats
+        return [{
+            type: "text",
+            text: "Unrecognized content"
+        }];
     }
 
     /**

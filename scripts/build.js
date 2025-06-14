@@ -29,6 +29,7 @@ const sourceFiles = [
   'openai/api-client.js',
   'openai/thread-manager.js',
   'openai/message-utils.js',
+  'openai/message-chunker.js',
   'openai-manager.js',
   'assistant-manager-ui.js',
   'ui.js',
