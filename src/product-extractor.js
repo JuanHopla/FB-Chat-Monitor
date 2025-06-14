@@ -200,26 +200,127 @@ function extractFromInlineJson(doc, originalUrl) {
         source: 'inline_json',
         title: target.marketplace_listing_title || '',
         description: target.redacted_description?.text || '',
-        price: formattedPrice, // Use the formatted price (original or generated)
+        price: target.formatted_price?.text || '',
         currency: target.listing_price?.currency || '',
         amount: target.listing_price?.amount || '',
         url: target.story?.url || originalUrl,
         listingId: target.id || '',
         image: allImages.length > 0 ? allImages[0] : '',
-        imageUrls: allImages,
+        allImages: allImages,
         sellerName: seller?.name || '',
         sellerId: seller?.id || '',
         sellerProfilePic: seller?.profile_picture?.uri || '',
+        sellerJoinTimestamp: seller?.join_time || null,
         categoryName: target.marketplace_listing_category_name || '',
+        categorySlug: target.marketplace_listing_category?.slug || '',
         isSold: target.is_sold || false,
         isLive: target.is_live || false,
+        deliveryTypes: target.delivery_types || [],
         city: location?.city || '',
         state: location?.state || '',
         postalCode: location?.postal_code || '',
-        extractedFrom: 'inline_json'
-      };
-      logger.debug('[ProductExtractor] Extraction completed from embedded JSON.');
-      return result;
+        latitude: target.location?.latitude || null,
+        longitude: target.location?.longitude || null,
+
+        // --- All nodes/subsets for later filtering ---
+        pageTypename: mainJsonData.__bbox.result.data.viewer.marketplace_product_details_page.__typename || '',
+        productDetailsType: mainJsonData.__bbox.result.data.viewer.marketplace_product_details_page.product_details_type || '',
+        pageId: mainJsonData.__bbox.result.data.viewer.marketplace_product_details_page.id || '',
+
+        // marketplace_listing_renderable_target
+        listingRenderableTargetTypename: rt.__typename || '',
+        listingRenderableTargetSweepstake: rt.sweepstake_enabled || false,
+        listingRenderableTargetId: rt.id || '',
+        seoVirtualCategory: rt.seo_virtual_category || '',
+        personalizationInfo: rt.personalization_info || '',
+        isShippingOffered: rt.is_shipping_offered || false,
+        listingRenderableTargetLatitude: rt.location?.latitude || null,
+        listingRenderableTargetLongitude: rt.location?.longitude || null,
+
+        // target (main detail)
+        inventoryType: target.listing_inventory_type || '',
+        boostedMarketplaceListing: target.product_item?.boosted_marketplace_listing || null,
+        promotedListing: target.product_item?.promoted_listing || null,
+        originGroup: target.origin_group || null,
+        loggingId: target.logging_id || '',
+        messagingEnabled: target.messaging_enabled || false,
+        canShare: target.can_share || false,
+        shareUri: target.share_uri || '',
+        rebuyOrderReceipt: target.rebuy_order_receipt || null,
+        activeOrder: target.active_order || null,
+        orderSummaries: target.order_summaries || [],
+
+        // story
+        storyUrl: target.story?.url || '',
+        storyActors: target.story?.actors?.map(a => ({ id: a.id, name: a.name })) || [],
+
+        // marketplace_listing_seller
+        sellerUserProfileId: seller?.marketplace_user_profile?.id || '',
+
+        // cross-post
+        crossPostSyncMetadata: target.cross_post_sync_metadata || null,
+
+        // additional target detail
+        customTitle: target.custom_title || '',
+        hasChildren: target.has_children || false,
+        hiddenFromFriends: target.hidden_from_friends || false,
+        canSellerChangeAvailability: target.can_seller_change_availability || false,
+        isOnMarketplace: target.is_on_marketplace || false,
+        listingIsRejected: target.listing_is_rejected || false,
+        listingPriceWithOffset: target.listing_price?.amount_with_offset || '',
+        crossPostIds: target.cross_post_info?.all_listings?.map(l => l.id) || [],
+        productItemId: target.product_item?.id || '',
+        defaultVariantListingId: target.default_variant_listing?.id || '',
+        primaryMpEntId: target.primary_mp_ent?.id || '',
+        energyEfficiencyClassEu: target.energy_efficiency_class_eu || '',
+        shippingEligible: target.c2c_shipping_eligible || false,
+        shouldHidePdpShippingContent: target.should_hide_pdp_shipping_content || false,
+        shippingProfile: target.shipping_profile || null,
+        inventoryCount: target.inventory_count || null,
+        paymentTimePeriod: target.payment_time_period || null,
+        isPending: target.is_pending || false,
+        isDraft: target.is_draft || false,
+        isCheckoutEnabled: target.is_checkout_enabled || false,
+        canSellerEdit: target.can_seller_edit || false,
+        realEstateListingAgentId: target.real_estate_listing_agent?.id || '',
+        listedById: target.listed_by?.id || '',
+        marketplaceLeadGenForm: target.marketplace_lead_gen_form || null,
+
+        // seller extra info
+        sellerUserId: seller?.user_id || '',
+        c2cOrdersShipped: seller?.marketplace_user_profile?.c2c_orders_shipped || null,
+        sellerVerifiedBadge: seller?.marketplace_should_display_verified_badge || false,
+        sellerRatingsFiveStarAverage: seller?.marketplace_ratings_stats_by_role?.seller_stats?.five_star_ratings_average || null,
+        sellerRatingsTotalCount: seller?.marketplace_ratings_stats_by_role?.seller_stats?.five_star_total_rating_count_by_role || null,
+        sellerRatingsArePrivate: seller?.marketplace_ratings_stats_by_role?.seller_ratings_are_private || false,
+
+        // viewer info
+        viewerInDMA: mainJsonData.__bbox.result.data.viewer.marketplace_product_details_page.viewer?.marketplace_actor_with_integrity_status?.marketplace_user_in_dma || false,
+        viewerLoanPaymentOptions: mainJsonData.__bbox.result.data.viewer.marketplace_product_details_page.viewer?.marketplace_settings?.loan_payment_options || null,
+
+        // generic Real Estate fields (already existed)
+        additionalFeesDescription: target.additional_fees_description?.text || '',
+        unitAreaInfo: target.unit_area_info || null,
+        unitRoomInfo: target.unit_room_info || null,
+        bikeScoreInfo: target.bike_score_info || null,
+        transitScoreInfo: target.transit_score_info || null,
+        walkScoreInfo: target.walk_score_info || null,
+        nearbySchools: target.nearby_schools || [],
+        nearbyTransits: target.nearby_transits || [],
+            };
+            // --- New: filter only "relevant" fields ---
+            const filtered = Object.entries(result).reduce((acc, [key, val]) => {
+        const isNonEmptyString = (typeof val === 'string' && val !== '');
+        const isNonEmptyArray = (Array.isArray(val) && val.length > 0);
+        const isNonNullNumber = (typeof val === 'number' && !isNaN(val));
+        const isBoolean = (typeof val === 'boolean');
+        if (isNonEmptyString || isNonEmptyArray || isNonNullNumber || isBoolean) {
+          acc[key] = val;
+        }
+        return acc;
+            }, {});
+            logger.debug('[ProductExtractor] Extraction completed from embedded JSON.');
+            return filtered;
     } catch (error) {
       logger.error('[ProductExtractor] Error processing main JSON data:', error);
     }
@@ -352,27 +453,28 @@ function fetchProductWithGM(productId, url) {
           try {
             const doc = new DOMParser().parseFromString(response.responseText, 'text/html');
 
-                  // EXTRACT embedded JSON data
-                  let productDetails = extractFromInlineJson(doc, url);
-                  if (!productDetails) {
-                    logger.warn('[ProductExtractor] Inline JSON failed, using DOM'); 
-                    productDetails = extractFromDOM(doc, productId);
-                  }
+            // EXTRACT embedded JSON data
+            let productDetails = extractFromInlineJson(doc, url);
+            if (!productDetails) {
+              logger.warn('[ProductExtractor] Inline JSON failed, using DOM');
+              productDetails = extractFromDOM(doc, productId);
+            }
 
-                  // --------------------------------------------------------
-                  // INJECT: always collect fresh images from the product DOM
-                  // --------------------------------------------------------
-                  const domFallback = extractFromDOM(doc, productId);
-                  if (domFallback && Array.isArray(domFallback.imageUrls) && domFallback.imageUrls.length) {
-                    productDetails.imageUrls = domFallback.imageUrls;
-                    productDetails.image = domFallback.imageUrls[0];
-                  }
+            // --------------------------------------------------------
+            // INJECT: always collect fresh images from the product DOM
+            // --------------------------------------------------------
+            const domFallback = extractFromDOM(doc, productId);
+            if (domFallback?.imageUrls?.length) {
+              // Override images using properties coherentes
+              productDetails.allImages = domFallback.imageUrls;
+              productDetails.image    = domFallback.imageUrls[0];
+            }
 
-                  // Store in cache
-                  productCache[productId] = productDetails;
-                  logger.debug(`[ProductExtractor] Product ${productId} cached`);
+            // Store in cache
+            productCache[productId] = productDetails;
+            logger.debug(`[ProductExtractor] Product ${productId} cached`);
 
-                  // Show the complete details of the extracted product
+            // Show the complete details of the extracted product
             console.log("--- EXTRACTED PRODUCT DATA ---");
             console.log(JSON.stringify(productDetails, null, 2));
             console.log("--- END PRODUCT DATA ---");
