@@ -2,6 +2,7 @@
 
 /**
  * OpenAI Manager - Handles OpenAI API integration with assistant selection based on role
+ * Version 2.0: Refactorized to use modular components
  */
 class OpenAIManager {
   constructor() {
@@ -9,9 +10,7 @@ class OpenAIManager {
     this.apiKey = storageUtils.get('FB_CHAT_MONITOR_OPENAI_KEY', '') || '';
     this.model = "gpt-4o"; // Fixed to gpt-4o
     this.isInitialized = false;
-    this.activeThreads = new Map(); // Store active threads by chatId
-    this.threadTTL = 30 * 60 * 1000; // 30 minutes
-
+    
     // Assistant IDs by role
     this.assistants = {
       seller: storageUtils.get('FB_CHAT_MONITOR_SELLER_ASSISTANT_ID', ''),
@@ -28,6 +27,10 @@ class OpenAIManager {
       avgResponseTime: 0,
       totalResponseTime: 0
     };
+    
+    // Initialize module components (will be set in initialize())
+    this.apiClient = null;
+    this.threadManager = null;
   }
 
   /**
@@ -53,147 +56,12 @@ class OpenAIManager {
       this.model = "gpt-4o";
       CONFIG.AI.model = "gpt-4o";
 
-      // NEW: Create and initialize the OpenAI client if we have an API key
       if (this.apiKey) {
-        // Initialize the client to communicate with the OpenAI API
-        this.client = {
-          beta: {
-            threads: {
-              create: async () => {
-                const response = await fetch('https://api.openai.com/v1/threads', {
-                  method: 'POST',
-                  headers: {
-                    'Authorization': `Bearer ${this.apiKey}`,
-                    'Content-Type': 'application/json',
-                    'OpenAI-Beta': 'assistants=v2'
-                  },
-                  body: JSON.stringify({})
-                });
-                
-                if (!response.ok) {
-                  const errorData = await response.json();
-                  throw new Error(`Error creating thread: ${errorData.error?.message || response.statusText}`);
-                }
-                
-                return response.json();
-              },
-              messages: {
-                create: async (threadId, messageData) => {
-                  const response = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages`, {
-                    method: 'POST',
-                    headers: {
-                      'Authorization': `Bearer ${this.apiKey}`,
-                      'Content-Type': 'application/json',
-                      'OpenAI-Beta': 'assistants=v2'
-                    },
-                    body: JSON.stringify(messageData)
-                  });
-                  
-                  if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(`Error creating message: ${errorData.error?.message || response.statusText}`);
-                  }
-                  
-                  return response.json();
-                },
-                list: async (threadId, options = {}) => {
-                  const queryParams = new URLSearchParams(options).toString();
-                  const url = `https://api.openai.com/v1/threads/${threadId}/messages${queryParams ? `?${queryParams}` : ''}`;
-                  
-                  const response = await fetch(url, {
-                    headers: {
-                      'Authorization': `Bearer ${this.apiKey}`,
-                      'Content-Type': 'application/json',
-                      'OpenAI-Beta': 'assistants=v2'
-                    }
-                  });
-                  
-                  if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(`Error listing messages: ${errorData.error?.message || response.statusText}`);
-                  }
-                  
-                  return response.json();
-                }
-              },
-              runs: {
-                create: async (threadId, runData) => {
-                  const response = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
-                    method: 'POST',
-                    headers: {
-                      'Authorization': `Bearer ${this.apiKey}`,
-                      'Content-Type': 'application/json',
-                      'OpenAI-Beta': 'assistants=v2'
-                    },
-                    body: JSON.stringify(runData)
-                  });
-                  
-                  if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(`Error creating run: ${errorData.error?.message || response.statusText}`);
-                  }
-                  
-                  return response.json();
-                },
-                retrieve: async (threadId, runId) => {
-                  const response = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
-                    headers: {
-                      'Authorization': `Bearer ${this.apiKey}`,
-                      'Content-Type': 'application/json',
-                      'OpenAI-Beta': 'assistants=v2'
-                    }
-                  });
-                  
-                  if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(`Error retrieving run: ${errorData.error?.message || response.statusText}`);
-                  }
-                  
-                  return response.json();
-                }
-              }
-            },
-            assistants: {
-              retrieve: async (assistantId) => {
-                const response = await fetch(`https://api.openai.com/v1/assistants/${assistantId}`, {
-                  headers: {
-                    'Authorization': `Bearer ${this.apiKey}`,
-                    'Content-Type': 'application/json',
-                    'OpenAI-Beta': 'assistants=v2'
-                  }
-                });
-                
-                if (!response.ok) {
-                  const errorData = await response.json();
-                  throw new Error(`Error retrieving assistant: ${errorData.error?.message || response.statusText}`);
-                }
-                
-                return response.json();
-              },
-              list: async (options = {}) => {
-                const queryParams = new URLSearchParams(options).toString();
-                const url = `https://api.openai.com/v1/assistants${queryParams ? `?${queryParams}` : ''}`;
-                
-                const response = await fetch(url, {
-                  headers: {
-                    'Authorization': `Bearer ${this.apiKey}`,
-                    'Content-Type': 'application/json',
-                    'OpenAI-Beta': 'assistants=v2'
-                  }
-                });
-                
-                if (!response.ok) {
-                  const errorData = await response.json();
-                  throw new Error(`Error listing assistants: ${errorData.error?.message || response.statusText}`);
-                }
-                
-                return response.json();
-              }
-            }
-          }
-        };
+        // Initialize module components with the API key
+        this.apiClient = new window.OpenAIApiClient(this.apiKey);
+        this.threadManager = new window.ThreadManager(this.apiClient);
 
-        logger.debug('OpenAI client created successfully');
+        logger.debug('OpenAI components initialized successfully');
         this.isInitialized = true;
       } else {
         this.isInitialized = false;
@@ -201,9 +69,6 @@ class OpenAIManager {
       }
       
       logger.log(`OpenAI Manager initialized: ${this.isInitialized ? 'SUCCESS' : 'FAILED - No API Key'}`);
-
-      // Schedule thread cleanup
-      setInterval(() => this.cleanupOldThreads(), 15 * 60 * 1000); // Every 15 minutes
 
       // Schedule periodic service verification
       this.schedulePeriodicChecks();
@@ -241,6 +106,13 @@ class OpenAIManager {
     // run real validation against OpenAI
     const valid = await this.validateApiKey();
     this.isInitialized = valid;
+    
+    if (valid) {
+      // Re-initialize components with new API key
+      this.apiClient = new window.OpenAIApiClient(this.apiKey);
+      this.threadManager = new window.ThreadManager(this.apiClient);
+    }
+    
     return valid;
   }
 
@@ -254,7 +126,6 @@ class OpenAIManager {
     // Additional verification: ensure that "this" is the correct instance
     if (this !== window.openaiManager) {
       logger.warn('Incorrect openaiManager instance, correcting reference...');
-      // This could happen if there are multiple instances or lost context
       Object.assign(this, window.openaiManager);
     }
     
@@ -279,6 +150,19 @@ class OpenAIManager {
       }
     }
     
+    // Verify components are initialized
+    if (this.isInitialized && this.apiKey) {
+      if (!this.apiClient) {
+        logger.debug('API client not initialized, creating instance');
+        this.apiClient = new window.OpenAIApiClient(this.apiKey);
+      }
+      
+      if (!this.threadManager) {
+        logger.debug('Thread manager not initialized, creating instance');
+        this.threadManager = new window.ThreadManager(this.apiClient);
+      }
+    }
+    
     // Highest priority: having an API key should mean we are ready
     const isReady = !!this.apiKey;
     
@@ -299,7 +183,6 @@ class OpenAIManager {
    * Schedules periodic checks to keep the service in good condition
    */
   schedulePeriodicChecks() {
-    // No need to verify immediately, as initialize() already does it
     // Schedule periodic checks
     setInterval(() => this.verifyServiceState(), 60000); // Every minute
     logger.debug('Periodic service checks scheduled');
@@ -319,6 +202,13 @@ class OpenAIManager {
         this.isInitialized = true;
         logger.debug('Auto-corrected isInitialized to true since API key exists');
       }
+      // Ensure components are initialized
+      if (!this.apiClient) {
+        this.apiClient = new window.OpenAIApiClient(this.apiKey);
+      }
+      if (!this.threadManager) {
+        this.threadManager = new window.ThreadManager(this.apiClient);
+      }
       return true;
     }
     
@@ -335,6 +225,12 @@ class OpenAIManager {
     }
 
     try {
+      // Use API client if available
+      if (this.apiClient) {
+        return await this.apiClient.validateApiKey();
+      }
+      
+      // Fallback to direct validation
       const response = await fetch('https://api.openai.com/v1/models', {
         method: 'GET',
         headers: {
@@ -363,524 +259,41 @@ class OpenAIManager {
    * @returns {Promise<Array>} Message content array
    */
   async prepareMessageContent(context) {
-    if (!context || !context.messages || !Array.isArray(context.messages)) {
-      logger.error('Invalid context for message preparation');
-      return [];
-    }
-
-    try {
-      // Format in chronological order and assign correct roles
-      const formattedMessages = this._organizeMessagesByRole(context.messages);
-
-      // Add product details as first message
-      if (context.productDetails) {
-        // Destructure common fields for clarity
-        const { title, price, condition, description, url, images, image, sellerProfilePic } = context.productDetails;
-        
-        // Create product details content array for multimodal format
-        const productContent = [];
-        
-        // Add combined text elements with validation to stay under OpenAI's limit of 10 content elements per message
-        let productDetailsText = "PRODUCT DETAILS:\n";
-        
-        // Add product category header if available
-        let category = context.productDetails.category || context.productDetails.categoryName || "";
-        let isCar = false;
-        let isApartment = false;
-        
-        // Detect category from fields if not explicitly provided
-        if (!category) {
-          if (context.productDetails.make || context.productDetails.model || 
-              context.productDetails.year || context.productDetails.mileage) {
-            category = "CARS";
-            isCar = true;
-          } else if (context.productDetails.bedrooms || context.productDetails.bathrooms || 
-                    context.productDetails.squareMeters || context.productDetails.squareFeet) {
-            category = "APARTMENTS";
-            isApartment = true;
-          }
-        } else {
-          // Check if existing category matches our special categories
-          isCar = /cars?|vehicles?|autos?|automóviles?/i.test(category);
-          isApartment = /apartments?|house|home|real estate|propiedad|casa|apartamento/i.test(category);
-        }
-        
-        // Add category if detected
-        if (category) {
-          productDetailsText += `Category: ${category}\n`;
-        }
-        
-        // Add core product details
-        productDetailsText += `Title: ${title || 'N/A'}\n`;
-        productDetailsText += `Price: ${price || 'N/A'}\n`;
-        productDetailsText += `Condition: ${condition || 'N/A'}\n`;
-        
-        // ALWAYS include car fields, even if they are not present
-        productDetailsText += "Car Details: ";
-        if (isCar) {
-          const carDetails = [];
-          if (context.productDetails.make) carDetails.push(`Make: ${context.productDetails.make}`);
-          if (context.productDetails.model) carDetails.push(`Model: ${context.productDetails.model}`);
-          if (context.productDetails.year) carDetails.push(`Year: ${context.productDetails.year}`);
-          if (context.productDetails.mileage) carDetails.push(`Mileage: ${context.productDetails.mileage}`);
-          if (context.productDetails.transmission) carDetails.push(`Transmission: ${context.productDetails.transmission}`);
-          if (context.productDetails.fuel) carDetails.push(`Fuel Type: ${context.productDetails.fuel}`);
-          
-          if (carDetails.length > 0) {
-            productDetailsText += carDetails.join(', ') + '\n';
-          } else {
-            productDetailsText += 'N/A\n';
-          }
-        } else {
-          productDetailsText += 'N/A\n';
-        }
-        
-        // ALWAYS include apartment fields, even if they are not present
-        productDetailsText += "Property Details: ";
-        if (isApartment) {
-          const propertyDetails = [];
-          if (context.productDetails.bedrooms) propertyDetails.push(`Bedrooms: ${context.productDetails.bedrooms}`);
-          if (context.productDetails.bathrooms) propertyDetails.push(`Bathrooms: ${context.productDetails.bathrooms}`);
-          
-          const area = context.productDetails.squareMeters || context.productDetails.squareFeet;
-          const areaUnit = context.productDetails.squareMeters ? 'm²' : 'ft²';
-          if (area) propertyDetails.push(`Area: ${area} ${areaUnit}`);
-          if (context.productDetails.floor) propertyDetails.push(`Floor: ${context.productDetails.floor}`);
-          
-          if (propertyDetails.length > 0) {
-            productDetailsText += propertyDetails.join(', ') + '\n';
-          } else {
-            productDetailsText += 'N/A\n';
-          }
-        } else {
-          productDetailsText += 'N/A\n';
-        }
-        
-        // EXCLUDE image fields before assembling Additional Details
-        const standardFields = [
-          'title','price','condition','description','url',
-          'images','image','imageUrls','sellerProfilePic',
-          'category','categoryName','make','model','year','mileage',
-          'transmission','fuel','bedrooms','bathrooms','squareMeters',
-          'squareFeet','floor'
-        ];
-        const additionalFields = [];
-        for (const [key, value] of Object.entries(context.productDetails)) {
-          if (!standardFields.includes(key) && value != null) {
-            additionalFields.push(`${key}: ${value}`);
-          }
-        }
-        if (additionalFields.length) {
-          productDetailsText += `Additional Details: ${additionalFields.join(', ')}\n`;
-        }
-        
-        // description and URL at the end
-        productDetailsText += `Description: ${description || 'N/A'}\n`;
-        if (url) productDetailsText += `URL: ${url}\n`;
-
-        productContent.push({ type: "text", text: productDetailsText.trim() });
-
-        // --------------------------------------------------------
-        // Always filter HEAD and build image_url
-        // --------------------------------------------------------
-        const testUrls = [
-          ...(Array.isArray(images) ? images.slice(0, 6) : []),
-          ...(image ? [image] : []),
-          ...(sellerProfilePic ? [sellerProfilePic] : [])
-        ];
-        const validItems = [];
-        for (const imgUrl of testUrls) {
-          try {
-            const resp = await fetch(imgUrl, { method: 'HEAD' });
-            if (resp.ok) {
-              validItems.push({ type: "image_url", image_url: { url: imgUrl } });
-            }
-          } catch { /* omit */ }
-        }
-        if (validItems.length) {
-          productContent.push(...validItems);
-        } else {
-          productContent.push({ type: "image_url", image_url: { url: '' } });
-        }
-
-        formattedMessages.unshift({
-          role: "user",
-          content: productContent
-        });
-            }
-
-
-      // Convert message objects to proper format for the API with validation
-      const finalMessages = formattedMessages.map((message, index) => {
-        // If message has no content, use a default empty text message
-        if (!message.content) {
-          logger.debug(`Message #${index} has no content. Using default empty text.`);
-          return {
-            role: message.role || "user",
-            content: [{ type: "text", text: " " }] // Space as minimum valid content
-          };
-        }
-
-        // Ensure message has a valid role
-        if (!message.role || !["user", "assistant", "system"].includes(message.role)) {
-          message.role = "user"; // Default to user if role is invalid
-        }
-
-        // If content is already in array format, validate each item
-        if (Array.isArray(message.content)) {
-          const validContent = message.content
-            .map(item => {
-              // PASSTHROUGH para imágenes
-              if (item.type === 'image_url' && item.image_url?.url !== undefined) {
-                return item;
-              }
-              // Conserva textos
-              if (item.type === 'text' && typeof item.text === 'string') {
-                return item;
-              }
-              // descartar todo lo demás
-              return null;
-            })
-            .filter(item => item !== null);
-
-          return {
-            role: message.role,
-            content: validContent.length ? validContent : [{ type: "text", text: " " }]
-          };
-        }
-        
-        // For string content, convert to proper format
-        if (typeof message.content === 'string') {
-          return {
-            role: message.role,
-            content: [{
-              type: "text",
-              text: message.content || " " // Use space if empty
-            }]
-          };
-        }
-        
-        // For content object with text and media
-        if (typeof message.content === 'object' && message.content !== null) {
-          const contentArray = [];
-          
-          // Add text content if available and valid
-          if (message.content.text && typeof message.content.text === 'string') {
-            contentArray.push({
-              type: "text",
-              text: message.content.text.trim() || " " // Space as fallback
-            });
-          }
-          
-          // Add images if available and not skipping
-          if (message.content.imageUrls && Array.isArray(message.content.imageUrls)) {
-            message.content.imageUrls.forEach(imageUrl => {
-              if (imageUrl && typeof imageUrl === 'string') {
-                contentArray.push({
-                  type: "image_url",
-                  image_url: {
-                    url: imageUrl
-                  }
-                });
-              }
-            });
-          }
-          
-          // Ensure we have at least one valid content item
-          if (contentArray.length === 0) {
-            contentArray.push({
-              type: "text",
-              text: " " // Space as minimum valid content
-            });
-          }
-          
-          return {
-            role: message.role,
-            content: contentArray
-          };
-        }
-        
-        // Fallback for unexpected formats
-        return {
-          role: message.role,
-          content: [{
-            type: "text",
-            text: " " // Space as minimum valid content
-          }]
-        };
-      });
-
-      // Final validation to log any potential issues
-      finalMessages.forEach((msg, index) => {
-        // Check content array is valid
-        const hasValidContent = msg.content && Array.isArray(msg.content) && msg.content.length > 0;
-        
-        if (!hasValidContent) {
-          logger.warn(`Message #${index} has an invalid content array. Role: ${msg.role}`);
-        } else {
-          // Check each content item
-          msg.content.forEach((item, itemIndex) => {
-            if (item.type === "text" && (!item.text || typeof item.text !== 'string')) {
-              logger.warn(`Message #${index}, content item #${itemIndex} has invalid text.`);
-            }
-            if (item.type === "image_url" && (!item.image_url || !item.image_url.url)) {
-              logger.warn(`Message #${index}, content item #${itemIndex} has invalid image_url.`);
-            }
-          });
-        }
-      });
-
-      // Log the exact messages being sent to OpenAI
-      logger.debug('=== EXACT MESSAGE SENT TO OPENAI ===');
-      logger.debug('1. Context Role:', context.role);
-      logger.debug('2. Messages:', JSON.stringify(finalMessages));
-      console.log('OPENAI_PAYLOAD →', finalMessages);
-      return finalMessages;
-    } catch (error) {
-      logger.error(`Error preparing message content: ${error.message}`, {}, error);
-      return [];
-    }
+    // Delegate to MessageUtils
+    return window.MessageUtils.prepareMessageContent(context);
   }
 
   /**
-   * Organizes messages into user and assistant categories and ensures chronological order
-   * @param {Array} messages - List of messages
-   * @returns {Array} Messages organized by chronological order with proper roles
-   * @private
+   * Generate a response using OpenAI API
+   * @param {Object} context - Context data including role, messages, and product details
+   * @returns {Promise<Object>} Generated structured response object or an error object
    */
-  _organizeMessagesByRole(messages) {
-    if (!Array.isArray(messages) || messages.length === 0) {
-      return [];
-    }
-    
+  async generateResponse(context) {
     try {
-      // Make a copy of messages to avoid modifying the original
-      const sortedMessages = [...messages];
-      
-      // Sort messages chronologically by timestamp if it exists
-      sortedMessages.sort((a, b) => {
-        // If both have timestamp, use it to sort
-        if (a.timestamp && b.timestamp) {
-          return new Date(a.timestamp) - new Date(b.timestamp);
-        }
-        // If only one has timestamp, put it first
-        else if (a.timestamp) return -1;
-        else if (b.timestamp) return 1;
-        
-        // If they have sequential id (like msg_chat_1, msg_chat_2)
-        if (a.id && b.id && a.id.includes('_') && b.id.includes('_')) {
-          const aNum = parseInt(a.id.split('_').pop());
-          const bNum = parseInt(b.id.split('_').pop());
-          if (!isNaN(aNum) && !isNaN(bNum)) {
-          return aNum - bNum;
-          }
-        }
-        
-        // Default: keep the original order (which is usually chronological)
-        return 0;
-        });
-        
-        // Assign proper roles based on sentByUs flag
-        for (let i = 0; i < sortedMessages.length; i++) {
-        const message = sortedMessages[i];
-        
-        // Ensure each message has content
-        if (!message.content) {
-          message.content = { text: "" };
-        }
-        // If content is a direct string, convert it to an object
-        else if (typeof message.content === 'string') {
-          message.content = { text: message.content };
-        }
-        
-        // Assign the correct role based on who sent it
-        // CORRECTION: The logic must be:
-        // - If it was sent by us (sentByUs=true), then it is the assistant
-        // - If it was sent by the other (sentByUs=false), then it is the user
-        if (typeof message.sentByUs === 'boolean') {
-          message.role = message.sentByUs ? "assistant" : "user";
-        } else if (!message.role || !["user", "assistant", "system"].includes(message.role)) {
-          // If there is no information about who sent it and it does not have a valid role,
-          // assign a role based on alternation
-          // We assume that the first message is always from the user
-          message.role = (i % 2 === 0) ? "user" : "assistant";
-        }
-        }
-        
-        logger.debug(`Messages organized: ${sortedMessages.length} messages with proper roles`);
-        return sortedMessages;
-      } catch (error) {
-        logger.error(`Error organizing messages: ${error.message}`);
-        return [...messages]; // Return a copy of the original messages without changes
-      }
-      }
+      if (!this.isReady()) throw new Error('OpenAI API not ready');
 
-      /**
-       * Generate a response using OpenAI API
-       * @param {Object} context - Context data including role, messages, and product details
-       * @returns {Promise<Object>} Generated structured response object or an error object
-       */
-      async generateResponse(context) {
-      try {
-        if (!this.isReady()) throw new Error('OpenAI API not ready');
+      const role = context?.role || 'buyer';
+      logger.log(`Generating response as ${role} using OpenAI Assistants API`);
 
-        const role = context?.role || 'buyer';
-        logger.log(`Generating response as ${role} using OpenAI Assistants API`);
-
-        if (!this.client) {
+      if (!this.apiClient || !this.threadManager) {
         const success = await this.initialize();
         if (!success) throw new Error('Could not initialize OpenAI API');
-        }
-
-        // Prepare messages ONLY once
-        context.preparedMessages = await this.prepareMessageContent(context);
-
-        // Thread and message sending
-        const assistantId = this.getAssistantIdForRole(role);
-        const chatId = context.chatId || 'default_chat';
-        const thread = await this.getOrCreateThread(chatId);
-
-        await this.addMessageToThread(thread.id, context);
-        return await this.runAssistant(thread.id, assistantId);
-
-      } catch (error) {
-        logger.error(`Error generating response: ${error.message}`);
-        throw error;
-      }
       }
 
-  /**
-   * Uploads an image URL to OpenAI Files (purpose "assistants") and returns the file_id
-   * @param {string} imageUrl
-   * @returns {Promise<string>}
-   */
-  async uploadImageFile(imageUrl) {
-    // download the image as a blob
-    const resp = await fetch(imageUrl);
-    if (!resp.ok) throw new Error(`Download failed: ${resp.statusText}`);z
-    const blob = await resp.blob();
+      // Prepare messages ONLY once
+      context.preparedMessages = await window.MessageUtils.prepareMessageContent(context);
 
-    // prepare the form
-    const form = new FormData();
-    form.append('file', blob, 'image.jpg');
-    form.append('purpose', 'assistants');
+      // Thread and message sending
+      const assistantId = this.getAssistantIdForRole(role);
+      const chatId = context.chatId || 'default_chat';
+      const thread = await this.threadManager.getOrCreateThread(chatId);
 
-    // upload to OpenAI
-    const upload = await fetch('https://api.openai.com/v1/files', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${this.apiKey}` },
-      body: form
-    });
-    if (!upload.ok) {
-      const err = await upload.text();
-      throw new Error(`Upload failed: ${err}`);
-    }
-    const body = await upload.json();
-    return body.id;
-  }
+      await this.threadManager.addMessageToThread(thread.id, context);
+      return await this.threadManager.runAssistant(thread.id, assistantId);
 
-  /**
-   * Add a message with context to a thread
-   * @param {string} threadId - Thread ID
-   * @param {Object} context - Context including messages and product details
-   */
-  async addMessageToThread(threadId, context) {
-    try {
-      // Always wait for message preparation (includes images)
-      const messageContent = context.preparedMessages || await this.prepareMessageContent(context);
-      
-      // Make sure we have a valid threadId
-      if (!threadId) {
-        throw new Error('Invalid threadId');
-      }
-
-      if (!messageContent || !messageContent.length) {
-        throw new Error('No message content to add');
-      }
-      
-      /*// NEW: Log exactly what is being added to the thread
-      console.log(`🧵 Adding exactly ${messageContent.length} messages to thread: ${threadId}`);
-      console.table(messageContent.map((msg, idx) => ({
-        idx,
-        role: msg.role,
-        content: typeof msg.content === 'string' 
-          ? (msg.content.length > 30 ? msg.content.substring(0, 30) + '...' : msg.content)
-          : (Array.isArray(msg.content) ? `${msg.content.length} parts` : typeof msg.content)
-      })));*/
-
-      // Check if we have OpenAI client initialized
-      if (!this.client || !this.client.beta || !this.client.beta.threads || !this.client.beta.threads.messages) {
-        // Attempt to re-initialize the client if not available
-        logger.warn('OpenAI client not initialized, attempting to recreate it');
-        this.initialize(this.apiKey);
-        
-        // Check again after re-initialization
-        if (!this.client || !this.client.beta || !this.client.beta.threads || !this.client.beta.threads.messages) {
-          throw new Error('OpenAI client not properly initialized');
-        }
-      }
-
-      // Add each message to the thread
-      for (let i = 0; i < messageContent.length; i++) {
-        const msg = messageContent[i];
-        
-        // Skip system messages as they cannot be added directly
-        if (msg.role === 'system') {
-          continue;
-        }
-        
-        // Make sure the message format is valid (especially the content array)
-        if (!Array.isArray(msg.content) || msg.content.length === 0) {
-          logger.warn(`Message #${i+1} has invalid content structure. Skipping.`);
-          continue;
-        }
-        
-        // ---- Automatic image upload handling ----
-        // Verify that skipImages (the function parameter) is defined and boolean.
-        // If skipImages is true, the image will not be attempted to be uploaded.
-        const shouldProcessImage = (typeof skipImages === 'boolean' ? !skipImages : true);
-
-        if (shouldProcessImage && msg.content[0].type === 'image_url' && msg.content[0].image_url && msg.content[0].image_url.url) {
-          try {
-            const url = msg.content[0].image_url.url;
-            logger.debug(`Attempting to upload image: ${url}`);
-            const fileId = await this.uploadImageFile(url);
-            await this.client.beta.threads.messages.create(threadId, {
-              role: msg.role,
-              content: [{ type: "image_file", image_file: { file_id: fileId } }]
-            });
-            logger.debug(`Image uploaded and sent as file ${fileId} for message #${i+1}`);
-            continue; // Move to the next message
-          } catch (uploadError) {
-            logger.error(`Image upload error for message #${i+1} (URL: ${msg.content[0].image_url.url}): ${uploadError.message}. Sending as URL if possible or skipping image content.`);
-            // If the upload fails, it will be attempted to be sent as image_url or it will be omitted if the content is only the failed image.
-            // If the original message had text + image, and the image fails to upload,
-            // here you could decide to send only the text or the original message with image_url.
-            // For simplicity, if the upload fails, the original message (which could be image_url) will be sent.
-            // If `prepareMessageContent` has already removed the image because `skipImages` was true, msg.content will not have the image.
-          }
-        }
-
-        // Normal sending for text or fallback
-        try {
-          await this.client.beta.threads.messages.create(
-            threadId,
-            {
-              role: msg.role,
-              content: msg.content // This content should already be prepared according to skipImages
-            }
-          );
-          logger.debug(`Added message #${i+1} with role ${msg.role} to thread ${threadId}`);
-        } catch (msgError) {
-          logger.error(`Error adding message #${i+1} to thread ${threadId}: ${msgError.message}`, { messageData: msg });
-          throw msgError; // Rethrow the error so it can be caught by generateResponse if necessary
-        }
-      }
-
-      return true;
     } catch (error) {
-      logger.error(`Error in addMessageToThread (threadId: ${threadId}): ${error.message}`);
-      throw error; // Rethrow the error so generateResponse can handle it
+      logger.error(`Error generating response: ${error.message}`);
+      throw error;
     }
   }
 
@@ -1027,241 +440,6 @@ class OpenAIManager {
   }
 
   /**
-   * Get or create a thread for a chat
-   * @param {string} chatId - Chat ID
-   * @returns {Promise<Object>} Thread data
-   */
-  async getOrCreateThread(chatId) {
-    // Check if we already have a thread for this chat
-    const existingThread = this.activeThreads.get(chatId);
-    if (existingThread && (Date.now() - existingThread.lastUsed < this.threadTTL)) {
-      // NEW: Log of the existing thread
-      console.log(`🧵 Reusing existing thread: ${existingThread.id} for chat: ${chatId}`);
-      logger.debug(`Reusing existing thread ${existingThread.id} for chat ${chatId}`);
-      
-      // Update last used timestamp
-      existingThread.lastUsed = Date.now();
-      return {id: existingThread.id, isNew: false};
-    }
-
-    try {
-      // Check if this.client is initialized
-      if (!this.client || !this.client.beta || !this.client.beta.threads) {
-        // Attempt to reinitialize
-        logger.warn('OpenAI client not initialized for thread creation, attempting to recreate');
-        this.initialize(this.apiKey);
-        
-        if (!this.client || !this.client.beta || !this.client.beta.threads) {
-          throw new Error('OpenAI client not properly initialized for thread operations');
-        }
-      }
-
-      // Create a new thread
-      const response = await this.client.beta.threads.create();
-      const threadId = response.id;
-
-      // NEW: Log of the new thread
-      console.log(`🧵 New thread created: ${threadId} for chat: ${chatId}`);
-      logger.log(`Created new thread ${threadId} for chat ${chatId}`);
-
-      // Store in active threads
-      this.activeThreads.set(chatId, {
-        id: threadId,
-        lastUsed: Date.now()
-      });
-
-      return {id: threadId, isNew: true};
-    } catch (error) {
-      logger.error(`Error creating thread: ${error.message}`);
-      throw error;
-    }
-  }
-
-  /**
-   * Run an assistant on a thread and get the response
-   * @param {string} threadId - Thread ID
-   * @param {string} assistantId - Assistant ID
-   * @returns {Promise<Object>} Parsed JSON structured response object
-   */
-  async runAssistant(threadId, assistantId) {
-    try {
-      // NEW: Log with threadId and assistantId
-      console.log(`🧵 Running assistant: ${assistantId} on thread: ${threadId}`);
-      logger.log(`Running assistant ${assistantId} on thread ${threadId}`);
-
-      // Start a run
-      const runResponse = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-          'OpenAI-Beta': 'assistants=v2'
-        },
-        body: JSON.stringify({
-          assistant_id: assistantId
-        })
-      });
-
-      if (!runResponse.ok) {
-        const errorData = await runResponse.json().catch(() => ({ error: { message: runResponse.statusText } }));
-        throw new Error(`Failed to start run: ${errorData.error?.message || runResponse.statusText}`);
-      }
-
-      const run = await runResponse.json();
-      logger.debug(`Started run ${run.id} on thread ${threadId} with response_format: json_object`);
-
-      // Poll for completion
-      await this.pollRunUntilComplete(threadId, run.id);
-
-      // Get the assistant's message as plain text
-      const textResponse = await this.getAssistantResponseFromRun(threadId, run.id);
-      
-      logger.debug("Retrieved assistant's text response");
-      return textResponse;
-    } catch (error) {
-      logger.error(`Error running assistant: ${error.message}`);
-      throw error; 
-    }
-  }
-
-  /**
-   * Polls a run until it's completed, failed, or cancelled.
-   * @param {string} threadId - The ID of the thread.
-   * @param {string} runId - The ID of the run.
-   * @returns {Promise<void>} Resolves when the run is in a terminal state.
-   * @throws {Error} If the run fails or is cancelled, or if polling times out.
-   */
-  async pollRunUntilComplete(threadId, runId) {
-    const pollInterval = 1000; // Poll every 1 second
-    const maxAttempts = 60; // Max 60 attempts (e.g., 60 seconds)
-    let attempts = 0;
-
-    logger.debug(`[pollRunUntilComplete] Starting polling for run ${runId} on thread ${threadId}`);
-
-    return new Promise(async (resolve, reject) => {
-      const checkStatus = async () => {
-        try {
-          attempts++;
-          if (attempts > maxAttempts) {
-            logger.error(`[pollRunUntilComplete] Polling timed out for run ${runId} after ${maxAttempts} attempts.`);
-            reject(new Error(`Polling timed out for run ${runId}`));
-            return;
-          }
-
-          const runStatusResponse = await fetch(`https://api.openai.com/v1/threads/${threadId}/runs/${runId}`, {
-            method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${this.apiKey}`,
-              'Content-Type': 'application/json',
-              'OpenAI-Beta': 'assistants=v2'
-            }
-          });
-
-          if (!runStatusResponse.ok) {
-            const errorData = await runStatusResponse.json().catch(() => ({ error: { message: runStatusResponse.statusText } }));
-            logger.error(`[pollRunUntilComplete] Error fetching run status for ${runId}: ${errorData.error?.message || runStatusResponse.statusText}`);
-            // Depending on the error, you might want to retry or reject immediately.
-            // For now, let's retry a few times for transient network issues.
-            if (attempts < 5 && (runStatusResponse.status === 500 || runStatusResponse.status === 503)) {
-                logger.warn(`[pollRunUntilComplete] Retrying due to server error (status ${runStatusResponse.status}). Attempt ${attempts}/5.`);
-                setTimeout(checkStatus, pollInterval * attempts); // Exponential backoff might be better
-                return;
-            }
-            reject(new Error(`Failed to fetch run status: ${errorData.error?.message || runStatusResponse.statusText}`));
-            return;
-          }
-
-          const runStatus = await runStatusResponse.json();
-          logger.debug(`[pollRunUntilComplete] Run ${runId} status: ${runStatus.status} (Attempt: ${attempts})`);
-
-          switch (runStatus.status) {
-            case 'queued':
-            case 'in_progress':
-            case 'requires_action': // If you implement function calling, you'd handle this. For now, we wait.
-              setTimeout(checkStatus, pollInterval);
-              break;
-            case 'completed':
-              logger.log(`[pollRunUntilComplete] Run ${runId} completed successfully.`);
-              resolve();
-              break;
-            case 'failed':
-              logger.error(`[pollRunUntilComplete] Run ${runId} failed. Reason: ${runStatus.last_error?.message || 'Unknown error'}`);
-              reject(new Error(`Run failed: ${runStatus.last_error?.message || 'Unknown error'}`));
-              break;
-            case 'cancelled':
-              logger.warn(`[pollRunUntilComplete] Run ${runId} was cancelled.`);
-              reject(new Error('Run was cancelled'));
-              break;
-            case 'expired':
-              logger.error(`[pollRunUntilComplete] Run ${runId} expired.`);
-              reject(new Error('Run expired'));
-              break;
-            default:
-              logger.error(`[pollRunUntilComplete] Unknown run status for ${runId}: ${runStatus.status}`);
-              reject(new Error(`Unknown run status: ${runStatus.status}`));
-          }
-        } catch (error) {
-          logger.error(`[pollRunUntilComplete] Error during polling for run ${runId}: ${error.message}`);
-          // Retry for a few attempts in case of network errors
-          if (attempts < 5) {
-            logger.warn(`[pollRunUntilComplete] Retrying due to polling error. Attempt ${attempts}/5.`);
-            setTimeout(checkStatus, pollInterval * attempts);
-            return;
-          }
-          reject(error);
-        }
-      };
-
-      checkStatus(); // Start the polling
-    });
-  }
-
-  /**
-   * Get the assistant's response from a completed run
-   * @param {string} threadId - Thread ID
-   * @param {string} runId - Run ID (Note: runId is not strictly needed if fetching latest messages)
-   * @returns {Promise<string>} Raw JSON string response text from the assistant
-   */
-  async getAssistantResponseFromRun(threadId, runId) { // runId kept for context, though messages are fetched for thread
-    try {
-      const response = await fetch(`https://api.openai.com/v1/threads/${threadId}/messages?limit=1&order=desc`, { // Fetch latest message
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'OpenAI-Beta': 'assistants=v2'
-        }
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: { message: response.statusText } }));
-        throw new Error(`Failed to retrieve messages: ${errorData.error?.message || response.statusText}`);
-      }
-
-      const messagesResponse = await response.json();
-
-      const assistantMessage = messagesResponse.data && messagesResponse.data.length > 0 ? messagesResponse.data[0] : null;
-
-      if (!assistantMessage || assistantMessage.role !== 'assistant') {
-        logger.error('No assistant message found as the latest message, or latest message not from assistant.', { messagesData: messagesResponse.data });
-        throw new Error('No assistant message found as the latest message in the thread.');
-      }
-
-      if (assistantMessage.content && assistantMessage.content.length > 0) {
-        const textContentItem = assistantMessage.content.find(contentItem => contentItem.type === 'text');
-        if (textContentItem && textContentItem.text && typeof textContentItem.text.value === 'string') {
-          logger.debug("Retrieved assistant's message content (expected to be JSON string).");
-          return textContentItem.text.value;
-        }
-      }
-
-      logger.error('No text content found in assistant message or content is not in expected format.', { assistantMessage });
-      throw new Error('No text content found in assistant message or content is not in expected format.');
-    } catch (error) {
-      logger.error(`Error retrieving assistant response: ${error.message}`);
-      throw error;
-    }
-  }
-
-  /**
    * Set the assistant ID for a specific role
    * @param {string} role - 'seller' or 'buyer'
    * @param {string} assistantId - Assistant ID
@@ -1281,7 +459,6 @@ class OpenAIManager {
 
   /**
    * Create or update a wizard with name and instructions.
-   * The instructions should guide the assistant to output JSON matching the desired schema.
    * @param {'seller'|'buyer'|'default'} role
    * @param {string} name
    * @param {string} instructions - These instructions MUST guide the assistant to produce JSON.
@@ -1292,58 +469,39 @@ class OpenAIManager {
         logger.error('API key not initialized. Cannot create or update assistant.');
         throw new Error('API key not initialized');
     }
-    let assistantId = this.assistants[role];
-    const headers = {
-      'Authorization': `Bearer ${this.apiKey}`,
-      'Content-Type': 'application/json',
-      'OpenAI-Beta': 'assistants=v2'
-    };
 
+    let assistantId = this.assistants[role];
     const modelToUse = this.model || "gpt-4o"; 
 
-    const assistantBody = {
-        name,
-        instructions, // Crucial: these instructions must tell the assistant to output JSON according to your schema
-        model: modelToUse,
-        // response_format: { type: "json_object" } // Can be set here too, but setting per-run gives more flexibility
-    };
-
-    let requestUrl;
-    let method;
-
-    if (assistantId) {
-      requestUrl = `https://api.openai.com/v1/assistants/${assistantId}`;
-      method = 'POST'; // OpenAI API uses POST for updates to assistants.
-      logger.debug(`Updating assistant ${assistantId} for role ${role} with model ${modelToUse}.`);
-    } else {
-      requestUrl = 'https://api.openai.com/v1/assistants';
-      method = 'POST';
-      logger.debug(`Creating new assistant for role ${role} with model ${modelToUse}.`);
-    }
-
     try {
-        const res = await fetch(requestUrl, {
-            method: method,
-            headers,
-            body: JSON.stringify(assistantBody)
-        });
-
-        if (!res.ok) {
-            const errText = await res.text();
-            logger.error(`Failed to ${assistantId ? 'update' : 'create'} assistant for role ${role}: ${res.status} ${res.statusText}`, { errorBody: errText });
-            const errJson = JSON.parse(errText); // Attempt to parse error
-            throw new Error(errJson.error?.message || `Failed to ${assistantId ? 'update' : 'create'} assistant: ${res.status}`);
+        // Use the API client for this operation
+        if (!this.apiClient) {
+            this.apiClient = new window.OpenAIApiClient(this.apiKey);
         }
 
-        const data = await res.json();
-        assistantId = data.id; // Update assistantId if it was a creation
+        const assistantBody = {
+            name,
+            instructions,
+            model: modelToUse
+        };
+
+        // Create or update the assistant
+        let data;
+        if (assistantId) {
+            logger.debug(`Updating assistant ${assistantId} for role ${role} with model ${modelToUse}.`);
+            data = await this.apiClient.createOrUpdateAssistant(assistantId, assistantBody);
+        } else {
+            logger.debug(`Creating new assistant for role ${role} with model ${modelToUse}.`);
+            data = await this.apiClient.createOrUpdateAssistant(null, assistantBody);
+        }
+
+        assistantId = data.id;
         this.assistants[role] = assistantId;
         storageUtils.set(`FB_CHAT_MONITOR_${role.toUpperCase()}_ASSISTANT_ID`, assistantId);
-        logger.log(`Assistant ${assistantId} ${assistantId && method === 'POST' && requestUrl.includes(assistantId) ? 'updated' : 'created'} successfully for role ${role}.`);
+        
+        logger.log(`Assistant ${assistantId} ${assistantId === data.id ? 'updated' : 'created'} successfully for role ${role}.`);
         return assistantId;
-
     } catch (error) {
-        // If error is already an Error object with a message, rethrow it. Otherwise, create a new one.
         if (error.message) {
             throw error;
         } else {
@@ -1358,20 +516,11 @@ class OpenAIManager {
    */
   async listAssistants() {
     try {
-      const response = await fetch('https://api.openai.com/v1/assistants?limit=100', {
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'OpenAI-Beta': 'assistants=v2'  // Updated to v2
-        }
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error?.message || 'Failed to list assistants');
+      if (!this.apiClient) {
+        this.apiClient = new window.OpenAIApiClient(this.apiKey);
       }
-
-      const assistants = await response.json();
-      return assistants.data;
+      const assistantsList = await this.apiClient.listAssistants();
+      return assistantsList.data || [];
     } catch (error) {
       logger.error(`Error listing assistants: ${error.message}`);
       throw error;
@@ -1383,73 +532,26 @@ class OpenAIManager {
    * @returns {Object} Metrics
    */
   getMetrics() {
-    const threadCount = this.activeThreads.size;
+    const threadCount = this.threadManager ? 
+                        this.threadManager.activeThreads.size : 0;
     
-    // NEW: Method to show detailed information of active threads
-    this.logActiveThreads();
+    // Log active threads if available
+    if (this.threadManager) {
+      this.threadManager.logActiveThreads();
+    }
     
     return {
       ...this.metrics,
       activeThreads: threadCount,
-      averageResponseTime: this.metrics.successfulCalls ? (this.metrics.totalResponseTime / this.metrics.successfulCalls) : 0
+      averageResponseTime: this.metrics.successfulCalls ? 
+                          (this.metrics.totalResponseTime / this.metrics.successfulCalls) : 0
     };
-  }
-  
-  /**
-   * NEW: Displays information about all active threads in the console
-   */
-  logActiveThreads() {
-    console.log(`🧵 === ACTIVE THREADS (${this.activeThreads.size}) ===`);
-    if (this.activeThreads.size === 0) {
-      console.log("No active threads at the moment");
-      return;
-    }
-    
-    const threadsInfo = [];
-    this.activeThreads.forEach((threadInfo, chatId) => {
-      const timeSinceLastUse = Math.round((Date.now() - threadInfo.lastUsed) / 1000);
-      threadsInfo.push({
-        chatId,
-        threadId: threadInfo.id,
-        lastUsed: new Date(threadInfo.lastUsed).toLocaleTimeString(),
-        secondsAgo: timeSinceLastUse,
-        expires: Math.round((this.threadTTL - (Date.now() - threadInfo.lastUsed)) / 1000)
-      });
-    });
-    
-    console.table(threadsInfo);
-  }
-
-  /**
-   * Clean up old threads to prevent memory leaks
-   */
-  cleanupOldThreads() {
-    // NEW: Log before cleanup
-    const initialCount = this.activeThreads.size;
-    console.log(`🧵 Starting cleanup of threads (${initialCount} active)`);
-    
-    const now = Date.now();
-    let count = 0;
-
-    for (const [chatId, threadData] of this.activeThreads.entries()) {
-      if (now - threadData.lastUsed > this.threadTTL) {
-        this.activeThreads.delete(chatId);
-        count++;
-      }
-    }
-
-    if (count > 0) {
-      logger.debug(`Cleaned up ${count} expired threads`);
-    } else {
-      console.log(`🧵 No expired threads found for deletion (${finalCount} active)`);
-    }
   }
 }
 
 // expose
 const openAIManager = new OpenAIManager();
 window.openaiManager = openAIManager;
-// Ensure that openaiManager is globally accessible
 console.log('[OpenAI Manager] Instance exposed globally as window.openaiManager');
 
 // Add a checker that will run after the DOM is loaded AND when the script is executed
@@ -1462,7 +564,6 @@ console.log('[OpenAI Manager] Instance exposed globally as window.openaiManager'
     // Verify that critical methods exist
     if (typeof window.openaiManager.initialize !== 'function') {
       console.error('[OpenAI Manager] CRITICAL ERROR! The initialize method is not available after reinstalling');
-      // Add the method if missing
       window.openaiManager.initialize = function(apiKey = null) {
         return openAIManager.initialize(apiKey);
       };
@@ -1507,7 +608,6 @@ window.addEventListener('DOMContentLoaded', function() {
       window.openaiManager.listAssistants()
         .then(assistants => {
           console.log(`[OpenAI Manager] ${assistants.length} assistants found automatically`);
-          // If there is a UI handler for assistants, update the interface
           if (window.updateAssistantsList) {
             window.updateAssistantsList(assistants);
           }
