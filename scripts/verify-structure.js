@@ -6,7 +6,9 @@ const path = require('path');
 
 // Essential files for the build process
 const essentialFiles = [
-  'tampermonkey-header.js',
+  // Headers in templates folder
+  'templates/header.js',
+  'templates/header-prod.js',
 
   // Config modules
   'src/config/basicConfig.js',
@@ -37,13 +39,9 @@ const essentialFiles = [
   'scripts/extract-source.js',
   'scripts/clean.js',
   'scripts/verify-structure.js',
-
-  // Configuration files
   'package.json',
   'package-lock.json',
   '.gitignore',
-
-  // Documentation
   'README.md',
   'CONTRIBUTING.md'
 ];

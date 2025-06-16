@@ -12,6 +12,9 @@ const SRC_DIR = path.join(__dirname, '../src');
 const DIST_DIR = path.join(__dirname, '../dist');
 const OUTPUT_FILE = path.join(DIST_DIR, isProd ? 'main.user.js' : 'dev.user.js');
 
+// Define header paths based on build mode
+const HEADER_PATH = path.join(__dirname, '../templates', isProd ? 'header-prod.js' : 'header.js');
+
 // Ensure the dist directory exists
 if (!fs.existsSync(DIST_DIR)) {
   fs.mkdirSync(DIST_DIR, { recursive: true });
@@ -19,7 +22,7 @@ if (!fs.existsSync(DIST_DIR)) {
 
 // List of files to combine in order (make sure ChatManager.js is included)
 const sourceFiles = [
-  'tampermonkey-header.js',
+  // Header will be handled separately now, not in this list
   'config.js',
   'utils.js',
   'responseManager.js',
@@ -27,14 +30,17 @@ const sourceFiles = [
   'ChatManager.js', // Make sure this line exists and matches the exact file name
   'product-extractor.js',
   'openai/api-client.js',
-  'openai/thread-manager.js',
   'openai/message-utils.js',
+  'openai/timestamp-utils.js',
   'openai/message-chunker.js',
+  'openai/thread-message-handler.js',
+  'openai/thread-manager.js',
+  'openai/chat-thread-system.js',
   'openai-manager.js',
   'assistant-manager-ui.js',
   'ui.js',
   'main.js',
-  'init.js'
+  'init.js',
 ];
 
 // Function to read a file with error handling
@@ -49,17 +55,17 @@ function readFileWithFallback(filepath) {
 
 async function build() {
   // Save the header separately to ensure it is preserved
-  const headerPath = path.join(__dirname, '../tampermonkey-header.js');
-  const headerContent = readFileWithFallback(headerPath);
+  const headerContent = readFileWithFallback(HEADER_PATH);
+  console.log(`Using header from: ${HEADER_PATH}`);
 
   let combinedCode = '';
 
   // Add IIFE start (do not add the header here, we will do it later)
   combinedCode += '(function () {\n\n';
 
-  // Combine all source files (except the header)
-  for (let i = 1; i < sourceFiles.length; i++) {
-    const filePath = path.join(SRC_DIR, sourceFiles[i]);
+  // Combine all source files
+  for (const sourceFile of sourceFiles) {
+    const filePath = path.join(SRC_DIR, sourceFile);
     console.log(`Processing: ${filePath}`);
 
     if (fs.existsSync(filePath)) {
