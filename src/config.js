@@ -149,7 +149,7 @@ Object.assign(CONFIG, {
             const isTimestamp = /^\s*\d+[smhdwy]\s*$/i.test(text);
             // Exclude Marketplace notifications
             const isMarketplaceNotification = text.includes("Marketplace ·");
-            // Treat as message if it contains ":" or is longer than 8 chars
+            // Treat as message if it contains ":" or text.length > 8
             const isMessage = text.includes(":") || text.length > 8;
             return !isTimestamp && !isMarketplaceNotification && isMessage;
           });
@@ -271,11 +271,11 @@ Object.assign(CONFIG, {
         'div[role="button"][tabindex="0"]:not([style*="visibility: hidden"])'
       ],
       scrollbar: [
-        // Selector que encontró el diagnóstico (contiene el scroll real)
+        // Selector found by diagnostics (contains the real scroll)
         'div.x78zum5.xdt5ytf.x1iyjqo2 > div[role="none"]',
         'div[style*="overflow-y: auto"][style*="height"]',
         'div[style*="overflow: auto"][style*="height"]',
-        // Selectores existentes como respaldo
+        // Existing selectors as backup
         '.x1uipg7g > div:nth-child(1) > div:nth-child(1)',
         'div.x4k7w5x > div[style*="height"]',
         'div[role="main"] div.x1n2onr6[style*="height"]'
@@ -672,7 +672,30 @@ Object.assign(CONFIG, {
       operationMode: this.operationMode,
       hasAssistants,
     };
-  }
+  },
+
+  // Thread management system configurations
+  threadSystem: {
+    // Configurations for new threads
+    newThreads: {
+      maxMessages: 50,          // Limit the number of messages in new threads
+      maxProductImages: 5,      // Maximum number of product images to include
+      imageDetail: "high",      // Image quality: "high" or "low"
+    },
+    
+    // Configurations for existing threads
+    existingThreads: {
+      ignoreOlderThan: 24 * 60 * 60 * 1000, // 24h in milliseconds
+      onlyNewConversations: false,          // If true, ignore old chats
+    },
+    
+    // General configurations for the thread system
+    general: {
+      threadTTL: 2 * 60 * 60 * 1000,       // Thread lifetime: 2 hours
+      threadCleanupInterval: 15 * 60 * 1000, // Cleanup interval: 15 minutes
+      threadInfoMaxAge: 30 * 24 * 60 * 60 * 1000 // Maximum age for thread information: 30 days
+    }
+  },
 });
 
 // Export the configuration

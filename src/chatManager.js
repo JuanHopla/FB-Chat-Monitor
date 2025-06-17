@@ -487,8 +487,8 @@ class ChatManager {
         // Pass productLink to extractor
         productDetails = await productExtractor.getProductDetails(productId, productLink);
         // INJECT: revert to fresh URLs from the DOM
-        productDetails.images = productExtractor.getProductImagesFromChat(chatContainer);
-        logger.debug(`Product images extracted from DOM: ${productDetails.images.length} URLs`);
+        // productDetails.images = productExtractor.getProductImagesFromChat(chatContainer); // Comentado: getProductImagesFromChat no está disponible en productExtractor
+        // logger.debug(`Product images extracted from DOM: ${productDetails.images.length} URLs`); // Comentar o ajustar si la línea anterior se elimina
       }
 
       // Get the messages container
@@ -743,7 +743,11 @@ class ChatManager {
           messages.push({
             id: `msg_${this.currentChatId}_${idx}`,
             sentByUs,
-            content: { text, type }
+            content: { 
+              text, 
+              type, 
+              media: {}
+            }
           });
           logger.debug(`#${idx + 1}: ${type} – ${text.substring(0, 30)}${text.length > 30 ? '…' : ''}`);
         } else {
@@ -2029,9 +2033,6 @@ class ChatManager {
         content: {
           text: '',
           type: 'unknown',
-          imageUrls: [], // Compatibility
-          audioUrl: null, // Compatibility
-          transcribedAudio: null, // Compatibility
           media: {
             images: [],
             audio: null,
@@ -2481,8 +2482,8 @@ class ChatManager {
 
         // PHASE 3: Verify the cleaning status before inserting
         const isContentEditable = inputField.getAttribute('contenteditable') === 'true';
-        const currentContent = isContentEditable ?
-          (inputField.textContent || '').trim() :
+        const currentContent = isContentEditable ? 
+          (inputField.textContent || '').trim() : 
           (inputField.value || '').trim();
 
         if (currentContent) {
