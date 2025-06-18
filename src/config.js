@@ -268,7 +268,8 @@ Object.assign(CONFIG, {
         'div.x1i10hfl[role="button"].xjbqb8w',
         'div.x78zum5[role="button"].xjbqb8w',
         'div.x1i10hfl[role="button"]:not([aria-hidden="true"])',
-        'div[role="button"][tabindex="0"]:not([style*="visibility: hidden"])'
+        'div[role="button"][tabindex="0"]:not([style*="visibility: hidden"])',
+        'div[aria-label="Press enter to send"][role="button"]',
       ],
       scrollbar: [
         // Selector found by diagnostics (contains the real scroll)

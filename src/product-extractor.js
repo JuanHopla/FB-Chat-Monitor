@@ -347,8 +347,8 @@ function extractFromInlineJsonPOC(doc, originalUrl, productId) {
             shouldHidePdpShippingContent: target?.should_hide_pdp_shipping_content || rt?.should_hide_pdp_shipping_content || false,
             shippingProfile: target?.shipping_profile || rt?.shipping_profile || null,
             inventoryCount: target?.inventory_count || rt?.inventory_count || null,
-            paymentTimePeriod: target?.payment_time_period || rt?.payment_time_period || null,
-            isPending: target?.is_pending || rt?.is_pending || false,
+            paymentTimePeriod: target?.payment_time_period || null,
+                        isPending: target?.is_pending || rt?.is_pending || false,
             isDraft: target?.is_draft || rt?.is_draft || false,
             isCheckoutEnabled: target?.is_checkout_enabled || rt?.is_checkout_enabled || false,
             canSellerEdit: target?.can_seller_edit || rt?.can_seller_edit || false,
@@ -366,16 +366,16 @@ function extractFromInlineJsonPOC(doc, originalUrl, productId) {
             viewerInDMA: page?.viewer?.marketplace_actor_with_integrity_status?.marketplace_user_in_dma || false,
             viewerLoanPaymentOptions: page?.viewer?.marketplace_settings?.loan_payment_options || null,
 
-            additionalFeesDescription: target?.additional_fees_description?.text || rt?.additional_fees_description?.text || '',
-            unitAreaInfo: target?.unit_area_info || rt?.unit_area_info || null,
-            unitRoomInfo: target?.unit_room_info || rt?.unit_room_info || null, // POC had this
-            bikeScoreInfo: target?.bike_score_info || rt?.bike_score_info || null,
-            transitScoreInfo: target?.transit_score_info || rt?.transit_score_info || null,
-            walkScoreInfo: target?.walk_score_info || rt?.walk_score_info || null,
-            nearbySchools: target?.nearby_schools || rt?.nearby_schools || [],
-            nearbyTransits: target?.nearby_transits || rt?.nearby_transits || [],
+            additionalFeesDescription: target?.additional_fees_description?.text || rt?.additional_fees_description?.text || '',   
+            unitAreaInfo: target?.unit_area_info || null,
+            unitRoomInfo: target?.unit_room_info || null,
+            walkScoreInfo: target?.walk_score_info || null,
+            transitScoreInfo: target?.transit_score_info || null,
+            bikeScoreInfo: target?.bike_score_info || null,
+            nearbySchools: target?.nearby_schools || [],
+            nearbyTransits: target?.nearby_transits || [],
+
         };
-        // console.log('[ProductExtractorPOC] Extraction completed from inline JSON.');
         return filterRelevantFields(productDetails);
     } catch (error) {
         console.error('[ProductExtractorPOC] Error processing combined JSON data:', error, error.stack);
@@ -408,15 +408,10 @@ function fetchProductWithGM(productId, url) {
       timeout: 15000,
       onload: function (response) {
         if (response.status >= 200 && response.status < 300) {
-          // console.info('[ProductExtractorPOC] HTML obtained successfully. Status:', response.status);
-          // console.log('[ProductExtractorPOC] Full responseText (first 2000 chars):', response.responseText.substring(0,2000));
           
           try { // Open in new tab for inspection (from POC)
             const blob = new Blob([response.responseText], { type: 'text/html' });
             const blobUrl = URL.createObjectURL(blob);
-            // window.open(blobUrl, '_blank'); // Commented out for less intrusive behavior
-            // console.info('[ProductExtractorPOC] Opened responseText in a new tab for inspection (link logged). URL:', blobUrl);
-            // setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
           } catch (e) { /* console.warn('[ProductExtractorPOC] Could not open responseText in a new tab:', e); */ }
 
           const doc = new DOMParser().parseFromString(response.responseText, 'text/html');
@@ -473,10 +468,6 @@ async function getProductDetails(productId, url = null) {
     const productDetails = await fetchProductWithGM(productId, url);
     productDetails.id = productId; // Ensure id is productId for caching consistency
     productCache[productId] = productDetails;
-    // console.log(`[ProductExtractorPOC] Product ${productId} processed and cached.`);
-    // console.log("--- EXTRACTED PRODUCT DATA (getProductDetails POC Style) ---");
-    // console.log(JSON.stringify(productDetails, null, 2));
-    // console.log("--- END PRODUCT DATA ---");
     return productDetails;
   } catch (error) {
     console.error(`[ProductExtractorPOC] Error in getProductDetails for ${productId}:`, error);
@@ -567,34 +558,34 @@ function getRelevantProductSummary(productDetails) {
     (pd.categoryName && pd.categoryName.toLowerCase().includes('rental'))
   ) {
     const lines = [];
-    if (pd.title) lines.push(`Title: ${pd.title}`);
-    if (pd.price) lines.push(`Price: ${pd.price}`);
-    if (pd.categoryName) lines.push(`Category: ${pd.categoryName}`);
-    if (pd.condition) lines.push(`Condition: ${pd.condition}`);
-    if (pd.creationTime) lines.push(`Published: ${new Date(pd.creationTime * 1000).toLocaleDateString()}`);
-    if (pd.locationText) lines.push(`Area: ${pd.locationText}`);
-    if (pd.city || pd.state) lines.push(`Location: ${pd.city || ''}${pd.city && pd.state ? ', ' : ''}${pd.state || ''}`);
-    if (pd.unitRoomInfo) lines.push(`Unit Details: ${pd.unitRoomInfo}`);
-    if (pd.description) lines.push(`Description: ${pd.description}`);
-    if (pd.storyText)    lines.push(`Details: ${pd.storyText}`);
+    if (pd.title)                 lines.push(`Title: ${pd.title}`);
+    if (pd.price)                 lines.push(`Price: ${pd.price}`);
+    if (pd.categoryName)          lines.push(`Category: ${pd.categoryName}`);
+    else if (pd.productDetailsType === 'REAL_ESTATE') lines.push(`Category: Rentals`);
+    if (pd.creationTime)          lines.push(`Published: ${new Date(pd.creationTime * 1000).toLocaleDateString()}`);
+    if (pd.locationText)          lines.push(`Location: ${pd.locationText}`);
+    if (pd.city || pd.state)      lines.push(`Location: ${pd.city || ''}${pd.city&&pd.state?', ':''}${pd.state||''}`);
+    if (pd.unitRoomInfo)          lines.push(`Unit Details: ${pd.unitRoomInfo}`);
+    if (pd.unitAreaInfo)          lines.push(`Area Info: ${pd.unitAreaInfo}`);
+    if (pd.paymentTimePeriod)     lines.push(`Payment Period: ${pd.paymentTimePeriod}`);
+    if (pd.description)           lines.push(`Description: ${pd.description}`);
+    if (pd.storyText)             lines.push(`Details: ${pd.storyText}`);
     if (pd.translatedDescription) lines.push(`Translated Description: ${pd.translatedDescription}`);
-    if (pd.walkScoreInfo) lines.push(`Walk Score: ${pd.walkScoreInfo?.score || ''} (${pd.walkScoreInfo?.description || ''})`);
-    if (pd.transitScoreInfo) lines.push(`Transit Score: ${pd.transitScoreInfo?.score || ''} (${pd.transitScoreInfo?.description || ''})`);
-    if (pd.bikeScoreInfo) lines.push(`Bike Score: ${pd.bikeScoreInfo?.score || ''} (${pd.bikeScoreInfo?.description || ''})`);
-    if (Array.isArray(pd.nearbySchools) && pd.nearbySchools.length > 0) {
+    if (pd.walkScoreInfo)         lines.push(`Walk Score: ${pd.walkScoreInfo?.score || ''} (${pd.walkScoreInfo?.description || ''})`);
+    if (pd.transitScoreInfo)      lines.push(`Transit Score: ${pd.transitScoreInfo?.score || ''} (${pd.transitScoreInfo?.description || ''})`);
+    if (pd.bikeScoreInfo)         lines.push(`Bike Score: ${pd.bikeScoreInfo?.score || ''} (${pd.bikeScoreInfo?.description || ''})`);
+    if (Array.isArray(pd.nearbySchools) && pd.nearbySchools.length>0) {
       lines.push('Nearby Schools:');
       pd.nearbySchools.forEach(school => {
-        if (school && school.name) {
-          lines.push(`  - ${school.name}${school.rating ? ` (${school.rating}/10)` : ''}${school.distance ? `, ${school.distance} away` : ''}`);
-        }
+        if (school.name) lines.push(`  - ${school.name}${school.rating?` (${school.rating}/10)`:''}${school.distance?`, ${school.distance}`:''}`);
       });
     }
-    if (pd.sellerName) lines.push(`Seller: ${pd.sellerName}`);
-    if (pd.sellerFiveStarAvg !== null) lines.push(`Average Rating: ${pd.sellerFiveStarAvg}`);
-    if (pd.sellerFiveStarCount !== null) lines.push(`Total 5-Star Ratings: ${pd.sellerFiveStarCount}`);
-    if (pd.sellerVerifiedBadge) lines.push(`Verified Seller: Yes`);
-    if (pd.sellerJoinTimestamp) lines.push(`On Facebook Since: ${new Date(pd.sellerJoinTimestamp * 1000).getFullYear()}`);
-    if (pd.url) lines.push(`URL: ${pd.url}`);
+    if (pd.sellerName)            lines.push(`Seller: ${pd.sellerName}`);
+    if (pd.sellerFiveStarAvg!=null)   lines.push(`Average Rating: ${pd.sellerFiveStarAvg}`);
+    if (pd.sellerFiveStarCount!=null) lines.push(`Total 5-Star Ratings: ${pd.sellerFiveStarCount}`);
+    if (pd.sellerVerifiedBadge)   lines.push(`Verified Seller: Yes`);
+    if (pd.sellerJoinTimestamp)   lines.push(`On Facebook Since: ${new Date(pd.sellerJoinTimestamp*1000).getFullYear()}`);
+    if (pd.url)                   lines.push(`URL: ${pd.url}`);
     return lines.join('\n');
   }
 
@@ -631,8 +622,8 @@ function getRelevantProductSummary(productDetails) {
     if (pd.cleanTitle !== undefined) lines.push(`Clean Title: ${pd.cleanTitle ? 'Yes' : 'No'}`);
     if (pd.hasDamage !== undefined) lines.push(`Significant Damage: ${pd.hasDamage ? 'Yes' : 'No'}`);
     if (pd.sellerName) lines.push(`Seller: ${pd.sellerName}`);
-    if (pd.sellerFiveStarAvg !== null) lines.push(`Average Rating: ${pd.sellerFiveStarAvg}`);
-    if (pd.sellerFiveStarCount !== null) lines.push(`Total 5-Star Ratings: ${pd.sellerFiveStarCount}`);
+    if (pd.sellerFiveStarAvg != null) lines.push(`Average Rating: ${pd.sellerFiveStarAvg}`);
+    if (pd.sellerFiveStarCount != null) lines.push(`Total 5-Star Ratings: ${pd.sellerFiveStarCount}`);
     if (pd.sellerVerifiedBadge) lines.push(`Verified Seller: Yes`);
     if (pd.sellerJoinTimestamp) lines.push(`On Facebook Since: ${new Date(pd.sellerJoinTimestamp * 1000).getFullYear()}`);
     if (pd.url) lines.push(`URL: ${pd.url}`);
@@ -659,10 +650,10 @@ function getRelevantProductSummary(productDetails) {
   if (pd.description) genericLines.push(`Description: ${pd.description}`);
   if (pd.translatedDescription) genericLines.push(`Translated Description: ${pd.translatedDescription}`);
   if (pd.sellerName) genericLines.push(`Seller: ${pd.sellerName}`);
-  if (pd.sellerFiveStarAvg !== null) genericLines.push(`Average Rating: ${pd.sellerFiveStarAvg}`);
-  if (pd.sellerFiveStarCount !== null) genericLines.push(`Total 5-Star Ratings: ${pd.sellerFiveStarCount}`);
-  if (pd.sellerVerifiedBadge) lines.push(`Verified Seller: Yes`);
-  if (pd.sellerJoinTimestamp) lines.push(`On Facebook Since: ${new Date(pd.sellerJoinTimestamp * 1000).getFullYear()}`);
+  if (pd.sellerFiveStarAvg != null) genericLines.push(`Average Rating: ${pd.sellerFiveStarAvg}`);
+  if (pd.sellerFiveStarCount != null) genericLines.push(`Total 5-Star Ratings: ${pd.sellerFiveStarCount}`);
+  if (pd.sellerVerifiedBadge) genericLines.push(`Verified Seller: Yes`);
+  if (pd.sellerJoinTimestamp) genericLines.push(`On Facebook Since: ${new Date(pd.sellerJoinTimestamp * 1000).getFullYear()}`);
   if (pd.url) genericLines.push(`URL: ${pd.url}`);
   return genericLines.join('\n');
 }
@@ -673,8 +664,7 @@ window.productExtractor = {
   extractProductIdFromUrl,
   extractProductIdFromCurrentChat,
   inspectProduct,
-  // getProductImagesFromChat, // Uncomment if re-implemented
-  filterRelevantFields, // Expose for utility
+  filterRelevantFields,
   getRelevantProductSummary,
 };
 
