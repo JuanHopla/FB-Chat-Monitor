@@ -8,19 +8,10 @@ class ThreadManager {
   constructor(apiClient) {
     this.apiClient = apiClient;
     this.activeThreads = new Map(); // Store active threads by chatId
-    this.threadTTL = 2 * 60 * 60 * 1000; // 2 hours of TTL
-
-    // Key for storing extended thread information
-    this.threadInfoStorageKey = 'OPENAI_THREAD_INFO';
-
-    // Cache for extended thread information
-    this.threadInfoCache = new Map();
+    this.threadTTL = 30 * 60 * 1000; // 30 minutes of TTL
 
     // Load saved threads
     this.loadSavedThreads();
-    
-    // Load extended thread information
-    this.loadThreadInfo();
 
     // Schedule periodic cleanup
     setInterval(() => this.cleanupOldThreads(), 15 * 60 * 1000); // Every 15 minutes
@@ -72,60 +63,11 @@ class ThreadManager {
   }
 
   /**
-   * Loads extended thread information from storage
-   * @private
-   */
-  loadThreadInfo() {
-    try {
-      const savedInfo = storageUtils.get(this.threadInfoStorageKey, {});
-      
-      // Convert from object to Map
-      Object.entries(savedInfo).forEach(([chatId, info]) => {
-        if (info) {
-          this.threadInfoCache.set(chatId, info);
-        }
-      });
-      
-      logger.debug(`Loaded extended info for ${this.threadInfoCache.size} threads`);
-    } catch (error) {
-      logger.error('Error loading thread extended info:', error);
-    }
-  }
-
-  /**
-   * Saves extended thread information to storage
-   * @private
-   */
-  persistThreadInfo() {
-    try {
-      const infoToSave = {};
-      this.threadInfoCache.forEach((info, chatId) => {
-        infoToSave[chatId] = info;
-      });
-      storageUtils.set(this.threadInfoStorageKey, infoToSave);
-      logger.debug(`Saved extended info for ${this.threadInfoCache.size} threads`);
-    } catch (error) {
-      logger.error('Error saving thread extended info:', error);
-    }
-  }
-
-  /**
    * Get or create a thread for a chat
    * @param {string} chatId - Chat ID
    * @returns {Promise<Object>} Thread data
    */
   async getOrCreateThread(chatId) {
-    // 1) Force-new if lastProcessedDate > ignoreOlderThan
-    const cfg = CONFIG.existingThreads || {};
-    const info = this.threadInfoCache.get(chatId);
-    if (info && info.lastProcessedDate && Date.now() - info.lastProcessedDate > cfg.ignoreOlderThan) {
-      logger.debug(`Thread ${chatId} older than ignoreOlderThan, resetting`);
-      this.threadInfoCache.delete(chatId);
-      this.persistThreadInfo();
-      this.activeThreads.delete(chatId);
-      this.saveThreads();
-    }
-
     // Check if we already have a thread for this chat
     const existingThread = this.activeThreads.get(chatId);
     if (existingThread && (Date.now() - existingThread.lastUsed < this.threadTTL)) {
@@ -139,64 +81,6 @@ class ThreadManager {
       return { id: existingThread.id, isNew: false };
     }
 
-    // Check if the thread exists locally
-    const threadInfo = this.getThreadInfoFromStorage(chatId);
-    const existingThreadInfo = this.activeThreads.get(chatId);
-    
-    // If threadInfo exists and is active, then it is an existing thread
-    if (threadInfo && existingThreadInfo && 
-        (Date.now() - existingThreadInfo.lastUsed < this.threadTTL)) {
-      // It is an existing active thread
-      logger.debug(`Using existing thread ${existingThreadInfo.id} for chat ${chatId}`);
-      
-      // Update last used timestamp
-      existingThreadInfo.lastUsed = Date.now();
-      this.saveThreads();
-      
-      return {
-        isNew: false,
-        threadId: existingThreadInfo.id,
-        lastPosition: {
-          messageId: threadInfo.lastProcessedMessageId,
-          timestamp: threadInfo.lastProcessedTimestamp,
-          date: threadInfo.lastProcessedDate,
-          content: threadInfo.lastMessageContent
-        }
-      };
-    } 
-    // If threadInfo exists but is not active, try to reactivate
-    else if (threadInfo && threadInfo.threadId) {
-      // Verify if the thread still exists in OpenAI
-      try {
-        // Attempt to get messages to verify if the thread is still valid
-        await this.apiClient.listMessages(threadInfo.threadId, { limit: 1 });
-        
-        // If we reach here, the thread is still valid, reactivate it
-        logger.debug(`Reactivating thread ${threadInfo.threadId} for chat ${chatId}`);
-        
-        this.activeThreads.set(chatId, {
-          id: threadInfo.threadId,
-          lastUsed: Date.now()
-        });
-        this.saveThreads();
-        
-        return {
-          isNew: false,
-          threadId: threadInfo.threadId,
-          lastPosition: {
-            messageId: threadInfo.lastProcessedMessageId,
-            timestamp: threadInfo.lastProcessedTimestamp,
-            date: threadInfo.lastProcessedDate,
-            content: threadInfo.lastMessageContent
-          }
-        };
-      } catch (error) {
-        logger.warn(`Thread ${threadInfo.threadId} for chat ${chatId} is no longer valid. Creating a new one.`);
-        // Continue with creation of new thread
-      }
-    }
-    
-    // It is a new thread or we need to create a new one
     try {
       // Create a new thread
       const response = await this.apiClient.createThread();
@@ -211,115 +95,13 @@ class ThreadManager {
         id: threadId,
         lastUsed: Date.now()
       });
-      this.saveThreads();
-      
-      // Save extended information
-      this.saveThreadInfo(chatId, threadId, {
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      });
-      
-      return { 
-        isNew: true, 
-        threadId, 
-        lastPosition: null 
-      };
+
+      this.saveThreads(); // Save for persistence
+      return { id: threadId, isNew: true };
     } catch (error) {
       logger.error(`Error creating thread: ${error.message}`);
       throw error;
     }
-  }
-
-  /**
-   * Processes a chat and determines if it is a new or existing thread
-   * Compatible alias for getOrCreateThread
-   * @param {string} chatId - Chat ID
-   * @returns {Promise<Object>} Processed thread information
-   */
-  async processChat(chatId) {
-    // This method is an alias for getOrCreateThread, to maintain
-    // compatibility with the code that calls it in openai-manager.js
-    logger.debug(`processChat called for chat ${chatId} (alias for getOrCreateThread)`);
-    return await this.getOrCreateThread(chatId);
-  }
-
-  /**
-   * Gets extended thread information from storage
-   * @param {string} chatId - Chat ID
-   * @returns {Object|null} - Thread information or null if it does not exist
-   */
-  getThreadInfoFromStorage(chatId) {
-    return this.threadInfoCache.get(chatId) || null;
-  }
-
-  /**
-   * Saves extended thread information
-   * @param {string} chatId - Chat ID
-   * @param {string} threadId - Thread ID (optional if it already exists)
-   * @param {Object} infoData - Additional data to save
-   */
-  saveThreadInfo(chatId, threadId = null, infoData = {}) {
-    // Get existing info or create a new object
-    const existingInfo = this.threadInfoCache.get(chatId) || {
-      chatId,
-      createdAt: Date.now()
-    };
-    
-    // If a threadId is provided, update it
-    if (threadId) {
-      existingInfo.threadId = threadId;
-    }
-    
-    // Combine existing info with new data
-    const updatedInfo = {
-      ...existingInfo,
-      ...infoData,
-      updatedAt: Date.now()
-    };
-    
-    // Save to cache
-    this.threadInfoCache.set(chatId, updatedInfo);
-    // Call the renamed private method to persist
-    this.persistThreadInfo();
-    
-    return updatedInfo;
-  }
-
-  /**
-   * Updates information about the last processed message
-   * @param {string} chatId - Chat ID
-   * @param {Object} messageData - Message data
-   */
-  updateLastProcessedMessage(chatId, messageData) {
-    // Get existing info or create new
-    const threadInfo = this.getThreadInfoFromStorage(chatId) || {
-      chatId,
-      threadId: (this.activeThreads.get(chatId) || {}).id,
-      createdAt: Date.now()
-    };
-    
-    // Update with the new message data
-    const updatedInfo = {
-      ...threadInfo,
-      lastProcessedMessageId: messageData.id,
-      lastProcessedTimestamp: messageData.timestamp || null,
-      lastProcessedDate: Date.now(),
-      lastMessageContent: messageData.content?.text || 
-                        (typeof messageData.content === 'string' ? messageData.content : ''),
-      updatedAt: Date.now()
-    };
-    
-    // Save the updated information
-    this.saveThreadInfo(chatId, updatedInfo.threadId, updatedInfo);
-    
-    // Also update the last used date in activeThreads
-    const activeThread = this.activeThreads.get(chatId);
-    if (activeThread) {
-      activeThread.lastUsed = Date.now();
-      this.saveThreads();
-    }
-    
-    logger.debug(`Updated last processed message for chat ${chatId}: ${messageData.id}`);
   }
 
   /**
@@ -368,26 +150,6 @@ class ThreadManager {
     if (count > 0) {
       logger.debug(`Cleaned up ${count} expired threads`);
       this.saveThreads(); // Save changes after cleaning
-      
-      // Also clean up extended information for expired threads
-      let infoCleanupCount = 0;
-      for (const chatId of this.threadInfoCache.keys()) {
-        if (!this.activeThreads.has(chatId)) {
-          const info = this.threadInfoCache.get(chatId);
-          
-          // Only delete if it is an old thread (more than 30 days)
-          if (Date.now() - (info.updatedAt || info.createdAt) > 30 * 24 * 60 * 60 * 1000) {
-            this.threadInfoCache.delete(chatId);
-            infoCleanupCount++;
-          }
-        }
-      }
-      
-      if (infoCleanupCount > 0) {
-        logger.debug(`Cleaned up extended info for ${infoCleanupCount} old threads`);
-        // Invoke persistThreadInfo instead of saveThreadInfo()
-        this.persistThreadInfo();
-      }
     } else {
       const finalCount = this.activeThreads.size; // Ensure finalCount is defined
       console.log(`🧵 No expired threads found for deletion (${finalCount} active)`);
@@ -436,31 +198,9 @@ class ThreadManager {
    */
   async addMessageToThread(threadId, context, skipImages = false) {
     try {
-      // NUEVO: Pre-procesar los detalles del producto para filtrar imágenes
-      if (context.productDetails && window.ImageFilterUtils) {
-        context.productDetails = window.ImageFilterUtils.preprocessProductDetails(context.productDetails);
-      }
-
-      let messageContent;
-
-      // If messages are already prepared, use them
-      if (context.preparedMessages) {
-        messageContent = context.preparedMessages;
-      } 
-      // If we have ThreadMessageHandler, use it with thread info
-      else if (window.ThreadMessageHandler && context.threadInfo) {
-        messageContent = await window.ThreadMessageHandler.prepareMessagesBasedOnThreadType(context, context.threadInfo);
-        logger.debug('Using ThreadMessageHandler with thread type information');
-      } 
-      // Normal preparation using MessageUtils
-      else {
-        messageContent = await window.MessageUtils.prepareMessageContent(context);
-      }
-
-      // NUEVO: Aplicar filtro centralizado a todos los mensajes
-      if (window.ImageFilterUtils) {
-        messageContent = window.ImageFilterUtils.filterImagesInOpenAIMessages(messageContent);
-      }
+      // Always wait for message preparation (includes images)
+      const messageContent = context.preparedMessages ||
+        await window.MessageUtils.prepareMessageContent(context);
 
       // Ensure a valid threadId
       if (!threadId) {
@@ -501,43 +241,8 @@ class ThreadManager {
 
         if (shouldProcessImage && msg.content[0].type === 'image_url' &&
           msg.content[0].image_url && msg.content[0].image_url.url) {
-          
-          const url = msg.content[0].image_url.url;
-          
-          // MEJORADO: Filtrado adicional para URLs de imágenes problemáticas
-          if (url.includes('fbcdn.net') || url.includes('facebook.com') || url.includes('fbsbx.com')) {
-            // Detectar patrones problemáticos específicos
-            const isProfileOrThumbnail = /\/s\d+x\d+\/|\/p\d+x\d+\/|\/profile\/|profile[-_]pic|\/avatar\/|_t\.|_s\.|_xs|_xxs/.test(url);
-            
-            if (isProfileOrThumbnail) {
-              logger.warn(`Skipping problematic Facebook image URL: ${url}`);
-              
-              // Si es la única imagen en el mensaje y no hay texto, agregar un texto explicativo
-              if (msg.content.length === 1) {
-                await this.apiClient.addMessage(threadId, {
-                  role: msg.role,
-                  content: [{ 
-                    type: "text", 
-                    text: "Se intentó compartir una imagen, pero no se pudo procesar correctamente." 
-                  }]
-                });
-                logger.debug(`Added explanatory text for skipped image in message #${i + 1}`);
-                continue;
-              }
-              // Si hay otros contenidos además de la imagen, simplemente omitir la imagen
-              else {
-                // Filtrar la primera imagen problemática y enviar el resto del contenido
-                await this.apiClient.addMessage(threadId, {
-                  role: msg.role,
-                  content: msg.content.slice(1)
-                });
-                logger.debug(`Filtered out problematic image from message #${i + 1} and sent remaining content`);
-                continue;
-              }
-            }
-          }
-          
           try {
+            const url = msg.content[0].image_url.url;
             logger.debug(`Attempting to upload image: ${url}`);
             const fileId = await this.apiClient.uploadFile(url, 'image.jpg');
             await this.apiClient.addMessage(threadId, {

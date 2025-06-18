@@ -15,65 +15,131 @@ class MessageUtils {
         }
 
         try {
-            // NEW: Pre-process product details to filter images
-            if (context.productDetails && window.ImageFilterUtils) {
-                context.productDetails = window.ImageFilterUtils.preprocessProductDetails(context.productDetails);
-            }
-            
-            // First, ensure that all messages have the correct structure
-            context.messages = context.messages.map(msg => {
-                // Ensure that the message has a content object
-                if (!msg.content) {
-                    msg.content = { text: '', media: { images: [] } };
-                } else if (typeof msg.content === 'string') {
-                    // If content is a string, convert it to an object
-                    const text = msg.content;
-                    msg.content = { text, media: { images: [] } };
-                } else if (!msg.content.media) {
-                    // If content exists but media does not, initialize it
-                    msg.content.media = { images: [] };
-                } else if (!msg.content.media.images) {
-                    // If media exists but images does not, initialize it
-                    msg.content.media.images = [];
-                }
-                return msg;
-            });
-
             // Organizes messages chronologically and assigns correct roles
             const formattedMessages = this.organizeMessagesByRole(context.messages);
             let preparedMessages = [];
 
             // Adds product details as the first message (or messages if content exceeds 10 items)
             if (context.productDetails) {
+                // Create content array for multimodal format
                 const productContent = [];
                 
-                // Use extractor summary
-                const summary = window.productExtractor.getRelevantProductSummary(context.productDetails);
-                productContent.push({ type: "text", text: "PRODUCT DETAILS:\n" + summary });
+                // Build a plain text with all relevant properties
+                let productDetailsText = "PRODUCT DETAILS:\n";
                 
+                // Exclude images and properties that we don't want in the text
+                const excludeFromText = [
+                    'images', 'imageUrls', 'allImages', 'sellerProfilePic'
+                ];
+                
+                // Generate text with the basic fields first if they exist
+                const basicFields = ['categoryName', 'title', 'price', 'condition', 'description', 'url'];
+                
+                for (const field of basicFields) {
+                    if (context.productDetails[field]) {
+                        // Capitalize the first letter of the field
+                        const fieldName = field.charAt(0).toUpperCase() + field.slice(1);
+                        productDetailsText += `${fieldName}: ${context.productDetails[field]}\n`;
+                    }
+                }
+                
+                // Add any other field that is not in the basic or excluded fields
+                for (const [key, value] of Object.entries(context.productDetails)) {
+                    if (!basicFields.includes(key) && !excludeFromText.includes(key) && value !== undefined && value !== null) {
+                        // Capitalize the first letter of the field
+                        const fieldName = key.charAt(0).toUpperCase() + key.slice(1);
+                        productDetailsText += `${fieldName}: ${value}\n`;
+                    }
+                }
+
+                // Add to product content - IMPROVED: Verify that the text is not empty
+                const trimmedText = productDetailsText.trim();
+                if (trimmedText) {
+                    productContent.push({ type: "text", text: trimmedText });
+                } else {
+                    // If there are no product details, add a default text
+                    productContent.push({ type: "text", text: "Product without available description." });
+                }
+
                 // Add product images (only from allImages, not the seller's profile)
+                // IMPROVED: Verify and filter empty or invalid images
                 if (Array.isArray(context.productDetails.allImages) && context.productDetails.allImages.length > 0) {
-                    let imagesToProcess = context.productDetails.allImages;
-                    if (window.ImageFilterUtils) {
-                        imagesToProcess = window.ImageFilterUtils.filterImageUrls(imagesToProcess);
+                    // Validate images before including them
+                    const validItems = [];
+                    for (const imgUrl of context.productDetails.allImages.slice(0, 6)) { // Limit to 6 images
+                        // IMPROVED: Verify that the URL is not empty
+                        if (!imgUrl || typeof imgUrl !== 'string' || imgUrl.trim() === '') {
+                            continue; // Skip empty URLs
+                        }
+                        
+                        try {
+                            const resp = await fetch(imgUrl, { method: 'HEAD' });
+                            if (resp.ok) {
+                                validItems.push({ 
+                                    type: "image_url", 
+                                    image_url: { url: imgUrl } 
+                                });
+                            }
+                        } catch { /* omit errors */ }
                     }
                     
-                    const validItems = [];
-                    for (const imgUrl of imagesToProcess.slice(0, 6)) {
-                        if (!imgUrl || typeof imgUrl !== 'string' || imgUrl.trim() === '') continue;
-                        if (window.ImageFilterUtils && window.ImageFilterUtils.isProblematicFacebookImage(imgUrl)) continue;
-                        validItems.push({ type: "image_url", image_url: { url: imgUrl } });
-                    }
+                    // Add validated images to content
                     if (validItems.length > 0) {
                         productContent.push(...validItems);
                     }
                 }
-                
-                // Push as a single user message
-                preparedMessages.push({
-                    role: "user",
-                    content: productContent
-                });
+
+                // IMPROVED: Ensure that productContent is not empty and has at least one text
+                if (productContent.length === 0) {
+                    productContent.push({ 
+                        type: "text", 
+                        text: "Product information not available." 
+                    });
+                } else if (!productContent.some(item => item.type === 'text')) {
+                    // If there are only images without text, add an informative text element
+                    productContent.unshift({
+                        type: "text",
+                        text: "Product images:"
+                    });
+                }
+
+                // NEW: Divide the product content into blocks of 10 if necessary
+                if (productContent.length > 10) {
+                    logger.debug(`Product details content exceeds 10 items (${productContent.length}), splitting into chunks`);
+                    
+                    for (let i = 0; i < productContent.length; i += 10) {
+                        const chunk = productContent.slice(i, Math.min(i + 10, productContent.length));
+                        const isFirstChunk = i === 0;
+                        
+                        // IMPROVED: Verify if the chunk has at least one text element
+                        const hasText = chunk.some(item => item.type === 'text');
+                        
+                        // If it is a fragment after the first or if it does not have text, add context
+                        if ((!isFirstChunk || !hasText) && chunk[0].type !== 'text') {
+                            chunk.unshift({
+                                type: "text",
+                                text: isFirstChunk ? 
+                                    "Product details:" : 
+                                    "[Continuation of product details]"
+                            });
+                            // If this makes the chunk have 11 elements, remove the last one
+                            if (chunk.length > 10) {
+                                chunk.pop();
+                            }
+                        }
+                        
+                        preparedMessages.push({
+                            role: "user",
+                            content: chunk
+                        });
+                    }
+                } else {
+                    // If it does not exceed 10 elements, add as a single message
+                    preparedMessages.push({
+                        role: "user",
+                        content: productContent
+                    });
+                }
             }
 
             // Ignore trivial messages that do not add value to the conversation
@@ -202,11 +268,6 @@ class MessageUtils {
             logger.debug(`Message chunks summary:\n${chunkSummary.join('\n')}`);
             
             console.log('OPENAI_PAYLOAD →', preparedMessages);
-            
-            // NEW: Filter problematic images in all messages just before returning
-            if (window.ImageFilterUtils) {
-                preparedMessages = window.ImageFilterUtils.filterImagesInOpenAIMessages(preparedMessages);
-            }
             
             return preparedMessages;
         } catch (error) {
@@ -449,41 +510,36 @@ class MessageUtils {
             return [...messages]; // Return a copy of the original messages without changes
         }
     }
+
     /**
-        * Filters problematic image URLs (small, thumbnails, etc.)
-        * @param {Array<string>} urls - Array of image URLs
-        * @returns {Array<string>} Filtered URLs
-        */
-        static filterProblemImageUrls(urls) {
-           // Use the centralized filter if available
-           if (window.ImageFilterUtils) {
-              return window.ImageFilterUtils.filterImageUrls(urls);
-           }
-           
-           // Use original implementation as fallback
-           if (!Array.isArray(urls)) return [];
-           
-           return urls.filter(url => {
-              if (!url || typeof url !== 'string') return false;
-              
-              // Check if it is a Facebook URL
-              const isFacebookUrl = url.includes('fbcdn.net') || url.includes('facebook.com') || url.includes('fbsbx.com');
-              
-              if (isFacebookUrl) {
-                 // Filter thumbnails and other small images
-                 const isSmallImage = url.includes('s50x50') || url.includes('_t.') || 
-                                 url.includes('_s.') || url.includes('p50x50') ||
-                                 url.includes('_xs') || url.includes('_xxs');
-                                           
-                 // Filter avatar/profile images
-                 const isProfileImage = url.includes('/profile/') || url.includes('profile-pic') || 
-                                  url.includes('profile_pic') || url.includes('/avatar/');
-                                  
-                 return !(isSmallImage || isProfileImage);
-              }
-              
-              return true;
-           });
+     * Filters problematic image URLs (small, thumbnails, etc.)
+     * @param {Array<string>} urls - Array of image URLs
+     * @returns {Array<string>} Filtered URLs
+     */
+    static filterProblemImageUrls(urls) {
+        if (!Array.isArray(urls)) return [];
+        
+        return urls.filter(url => {
+            if (!url || typeof url !== 'string') return false;
+            
+            // Check if it is a Facebook URL
+            const isFacebookUrl = url.includes('fbcdn.net') || url.includes('facebook.com') || url.includes('fbsbx.com');
+            
+            if (isFacebookUrl) {
+                // Filter thumbnails and other small images
+                const isSmallImage = url.includes('s50x50') || url.includes('_t.') || 
+                                                        url.includes('_s.') || url.includes('p50x50') ||
+                                                        url.includes('_xs') || url.includes('_xxs');
+                                                        
+                // Filter avatar/profile images
+                const isProfileImage = url.includes('/profile/') || url.includes('profile-pic') || 
+                                                         url.includes('profile_pic') || url.includes('/avatar/');
+                                                         
+                return !(isSmallImage || isProfileImage);
+            }
+            
+            return true;
+        });
     }
 }
 
