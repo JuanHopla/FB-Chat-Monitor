@@ -225,23 +225,23 @@
               callback({ success: false, error: 'Unknown operation mode' });
             }
         }
-      } catch (error) {
+            } catch (error) {
         logger.debug(`Error handling response: ${error.message}`);
         await stopTypingIndicator();
 
         if (typeof callback === 'function') {
           callback({ success: false, error: error.message });
         }
-      }
-    }
+            }
+          }
 
-    // ─── add these free functions ─────────────────────────────────────────────────
+          // ─── add these free functions ─────────────────────────────────────────────────
 
-    /**
-     * Delegate to ChatManager.auto mode
-     */
-    async function handleAutoMode(messages, context, callback) {
-      try {
+          /**
+           * Delegate to ChatManager.auto mode
+           */
+          async function handleAutoMode(messages, context, callback) {
+            try {
         logger.debug('Processing auto mode response');
 
         // Add human-like delay before responding
@@ -256,9 +256,8 @@
         try {
           responseText = await openAIManager.generateResponse(context);
           logger.debug(`AI response generated: "${responseText.substring(0, 30)}..."`);
-        } catch (error) {
-          logger.error(`Error generating AI response: ${error.message}`);
-          responseText = getDefaultResponse(messages[messages.length - 1]?.content || '');
+        } catch {
+          responseText = getDefaultResponse(messages.at(-1)?.content || '');
         }
 
         // Calculate typing time
@@ -269,17 +268,10 @@
         // Stop typing indicator
         await stopTypingIndicator();
 
-        // Get input field
-        const inputField = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageInput);
-        if (!inputField) {
-          throw new Error("Message input field not found");
-        }
+        // Call chatManager to insert, send, and mark as read
+        await window.chatManager.handleResponse(context);
 
-        // Insert text and send
-        domUtils.insertTextIntoField(inputField, responseText);
-        await sendViaEnter(inputField);
-
-        logger.log('Auto response sent successfully');
+        logger.log('Auto response processing completed');
 
         // Save to history
         const history = getConversationHistory();
@@ -303,19 +295,19 @@
         if (callback) callback(responseText);
 
         return responseText;
-      } catch (err) {
+            } catch (err) {
         logger.error(`Auto mode error: ${err.message}`);
         await stopTypingIndicator();
         if (callback) callback(null);
         throw err;
-      }
-    }
+            }
+          }
 
-    /**
-     * Delegate to ChatManager.manual mode
-     */
-    async function handleManualMode(messages, context, callback) {
-      try {
+          /**
+           * Delegate to ChatManager.manual mode
+           */
+          async function handleManualMode(messages, context, callback) {
+            try {
         logger.debug('Processing manual mode response');
 
         // Start typing indicator to show we're thinking
@@ -326,27 +318,17 @@
         try {
           responseText = await openAIManager.generateResponse(context);
           logger.debug(`AI response generated in manual mode: "${responseText.substring(0, 30)}..."`);
-        } catch (error) {
-          logger.error(`Error generating AI response: ${error.message}`);
-          responseText = getDefaultResponse(messages[messages.length - 1]?.content || '');
+        } catch {
+          responseText = getDefaultResponse(messages.at(-1)?.content || '');
         }
 
         // Stop typing indicator
         await stopTypingIndicator();
 
-        // Get input field but don't send
-        const inputField = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageInput);
-        if (!inputField) {
-          throw new Error("Message input field not found");
-        }
+        // Only insert, do not send
+        await window.chatManager.handleResponse(context);
 
-        // Insert text but don't send
-        domUtils.insertTextIntoField(inputField, responseText);
-
-        // Show notification
-        showSimpleAlert('Response generated and inserted in the chat input field. Review and press Enter to send.', 'info');
-
-        logger.log('Manual response generated and inserted');
+        logger.log('Manual response processed and inserted');
 
         // Save to history
         const history = getConversationHistory();

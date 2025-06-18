@@ -26,6 +26,7 @@ class ChatManager {
     this.isProcessingChat = false; // Anti-concurrency flag
     this.respondedChats = new Set(); // Avoids duplicate responses in auto mode
     this.isResponding = false; // New anti-reentrancy flag
+    this.isProcessingChatFlow = false;  // New flag to prevent concurrent scans
 
     // State to simulate human typing
     this.typingState = {
@@ -38,6 +39,10 @@ class ChatManager {
     this._setupUrlChangeDetection();
   }
 
+  /**
+   * Requires an external scheduler (e.g., setInterval) to call scanForUnreadChats()
+   * periodically to start monitoring in auto mode.
+   */
   //===================================================================
   // INITIALIZATION AND CONFIGURATION
   //===================================================================
@@ -51,12 +56,12 @@ class ChatManager {
     this._lastUrl = window.location.href;
 
     // Periodically check URL changes that indicate manual chat changes
-    setInterval(() => {
+    setInterval(async () => {
       const currentUrl = window.location.href;
 
       if (this._lastUrl !== currentUrl) {
         this._lastUrl = currentUrl;
-        this._handleUrlChange(currentUrl);
+        await this._handleUrlChange(currentUrl);
       }
     }, 1000); // Check every second
   }
@@ -66,7 +71,7 @@ class ChatManager {
    * @private
    * @param {string} url - The new URL
    */
-  _handleUrlChange(url) {
+  async _handleUrlChange(url) {
     try {
       // Extract chat ID from messenger URL in marketplace
       // Format: https://www.messenger.com/marketplace/t/1234567890/
@@ -77,10 +82,13 @@ class ChatManager {
 
         // Update only if different from current
         if (chatId !== this.currentChatId) {
-          logger.debug(`Manual chat change detected to ID: ${chatId}`);
           this.currentChatId = chatId;
-
-          logger.debug('Chat ID updated. The chat will be processed when Generate Response is clicked.');
+          logger.debug(`Manual chat change detected to ID: ${chatId}`);
+          // auto-process if in auto mode
+          if (window.CONFIG?.operationMode === 'auto') {
+            logger.debug('Auto-processing manually opened chat');
+            await this.processCurrentChat(true);
+          }
         }
       }
     } catch (error) {
@@ -99,67 +107,82 @@ class ChatManager {
   async scanForUnreadChats() {
     logger.log('Scanning for unread chats...');
 
+    // Do NOT scan if we are in temporary suppression
+    if (Date.now() < this.suppressScanUntil) {
+      logger.debug(`Scan suppressed until ${new Date(this.suppressScanUntil).toLocaleTimeString()}`);
+      return this.pendingChats.length;
+    }
+    // Do NOT rescan if we are already processing chats
+    if (this.isProcessingChatFlow) {
+      logger.debug('Still processing a chat, skipping scan');
+      return this.pendingChats.length;
+    }
+
     try {
-      // Get chat list container
       const chatContainer = domUtils.findElement(CONFIG.selectors.chatList.container);
       if (!chatContainer) {
         logger.error('Chat list container not found');
         return 0;
       }
 
-      // Get all chat elements
       const chatItems = domUtils.findAllElements(CONFIG.selectors.chatList.chatItem, chatContainer);
       logger.log(`Found ${chatItems.length} chat elements`);
 
-      // Clear the pending chat queue
-      this.pendingChats = [];
-
-      // Process each element to identify unread chats
+      // 1) Build the original queue without altering this.pendingChats yet
+      const originalQueue = [];
       for (const chatItem of chatItems) {
-        // Check if it's actually an unread chat with strict validation
         if (this.isUnreadChat(chatItem)) {
-          // Extract relevant information
           const chatId = this.extractChatId(chatItem);
+          // <<< only enqueue if we have not responded yet
+          if (this.respondedChats.has(chatId)) {
+            logger.debug(`Skipping already responded chat: ${chatId}`);
+            continue;
+          }
           const userName = this.extractChatUsername(chatItem);
-          const messageTime = this.extractMessageTime(chatItem);
-
-          // Validation: Use only chats with valid numeric IDs
+          const minutesAgo = this.convertTimeToMinutes(this.extractMessageTime(chatItem));
           if (chatId && /^\d+$/.test(chatId)) {
-            const minutesAgo = this.convertTimeToMinutes(messageTime);
-
-            // Store reference to element for direct click
-            this.pendingChats.push({
-              chatId,
-              userName,
-              messageTime: minutesAgo,
-              formattedTime: messageTime,
-              element: chatItem
-            });
-
-            logger.debug(`Chat added to queue: ${userName} (${chatId}), time: ${messageTime}`);
-          } else {
-            logger.debug(`Chat ignored with non-numeric ID: ${chatId}`);
+            originalQueue.push({ chatId, userName, messageTime: minutesAgo, element: chatItem });
+            logger.debug(`Chat queued: ${userName} (${chatId})`);
           }
         }
       }
 
-      // Sort queue by time (oldest first)
-      this.pendingChats.sort((a, b) => b.messageTime - a.messageTime);
+      // 2) Sort and inform
+      originalQueue.sort((a, b) => b.messageTime - a.messageTime);
+      logger.log(`Total valid unread chats: ${originalQueue.length}`);
 
-      logger.log(`Total valid unread chats: ${this.pendingChats.length}`);
-
-      // Show notification with results
-      if (this.pendingChats.length > 0) {
-        logger.notify(`${this.pendingChats.length} unread chats found`, 'success');
+      if (originalQueue.length > 0) {
+        logger.notify(`${originalQueue.length} unread chats found`, 'success');
+        // 3) Assign queue and process in block
+        this.pendingChats = originalQueue;
+        await this.processPendingChats();
       } else {
         logger.notify('No unread chats found', 'info');
       }
 
-      return this.pendingChats.length;
+      return originalQueue.length;
     } catch (error) {
       logger.error(`Error scanning chats: ${error.message}`);
       return 0;
     }
+  }
+
+  /**
+   * Processes all pending chats sequentially,
+   * waiting for each one before opening the next.
+   * @private
+   */
+  async processPendingChats() {
+    if (this.isProcessingChatFlow) return;
+    this.isProcessingChatFlow = true;
+
+    while (this.pendingChats.length > 0) {
+      await this.openNextPendingChat();
+      // optional small pause between chats
+      await new Promise(r => setTimeout(r, 500));
+    }
+
+    this.isProcessingChatFlow = false;
   }
 
   /**
@@ -355,61 +378,35 @@ class ChatManager {
     const nextChat = this.pendingChats.shift();
     logger.log(`Opening chat with ${nextChat.userName} (${nextChat.chatId})`);
 
-    try {
-      // OPTION 1: Direct click on element if available
-      if (nextChat.element && typeof nextChat.element.click === 'function') {
-        logger.log('Using direct click method to open chat');
+    // OPTION 1: Direct click on element if available
+    if (nextChat.element && typeof nextChat.element.click === 'function') {
+      logger.log('Using direct click method to open chat');
 
-        // Scroll to element to ensure it's visible
-        nextChat.element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Scroll to element to ensure it's visible
+      nextChat.element.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-        // Notify user
-        logger.notify(`Opening chat: ${nextChat.userName}`, 'info');
+      // Notify user
+      logger.notify(`Opening chat: ${nextChat.userName}`, 'info');
 
-        // Wait a moment and click
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      // Wait a moment and click
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
-        nextChat.element.click();
-
-        this.currentChatId = nextChat.chatId;
-
-        // Wait for chat to load
-        await new Promise(resolve => setTimeout(resolve, 4000));
-
-        // Explicitly check operation mode
-        const isAutoMode = (window.CONFIG?.operationMode === 'auto');
-        logger.debug(`Processing chat in ${isAutoMode ? 'AUTO' : 'MANUAL'} mode (operationMode: ${window.CONFIG?.operationMode})`);
-
-        // Pass isAutoMode value for auto-response
-        await this.processCurrentChat(isAutoMode);
-
-        await this.markChatAsRead();
-
-        return true;
-      }
-      // OPTION 2: Navigate directly by URL if we have a numeric ID
-      else if (/^\d+$/.test(nextChat.chatId)) {
-        logger.log('Using direct URL navigation to open chat');
-
-        const url = `https://www.messenger.com/marketplace/t/${nextChat.chatId}/`;
-        logger.notify(`Navigating to: ${nextChat.userName}`, 'info');
-
-        // Change current location - this will reload the page
-        window.location.href = url;
-        await this.markChatAsRead();
-        return true;
-      }
-
-      logger.error('Could not open chat - neither by click nor by URL');
-      return false;
-    } catch (error) {
-      logger.error(`Error opening chat: ${error.message}`);
-      return false;
+      nextChat.element.click();
+      this.currentChatId = nextChat.chatId;
+      // dynamic wait for chat load instead of fixed timeout
+      await domUtils.waitForElement(CONFIG.selectors.activeChat.container);
+      const isAutoMode = window.CONFIG?.operationMode === 'auto';
+      // ...existing debug...
+      await this.processCurrentChat(isAutoMode);
+      return true;
     }
+
+    logger.error('Could not open chat - neither by click nor by URL');
+    return false;
   }
 
   //===================================================================
-  // CHAT DATA EXTRACTION AND ANALYSIS
+  // RESPONSE HANDLING
   //===================================================================
 
   /**
@@ -522,37 +519,37 @@ class ChatManager {
       // Return extracted data along with success status
       return { success: true, chatData };
 
-    } catch (error) {
+        } catch (error) {
       logger.error(`Error extracting chat data: ${error.message}`);
       return { success: false, error };
-    }
-  }
+        }
+      }
 
-  /**
-   * Processes the current chat: Extracts data and optionally generates response.
-   * @param {boolean} autoRespond - Whether to automatically generate response
-   * @returns {Promise<boolean>} - True if processing was successful
-   */
-  async processCurrentChat(autoRespond = false) {
-    // FIX: Explicitly check operation mode if not provided
-    if (autoRespond === undefined || autoRespond === null) {
+      /**
+       * Processes the current chat: Extracts data and optionally generates response.
+       * @param {boolean} autoRespond - Whether to automatically generate response
+       * @returns {Promise<boolean>} - True if processing was successful
+       */
+      async processCurrentChat(autoRespond = false) {
+        // FIX: Explicitly check operation mode if not provided
+        if (autoRespond === undefined || autoRespond === null) {
       autoRespond = window.CONFIG?.operationMode === 'auto';
       logger.debug(`Auto-respond not specified, using global setting: ${autoRespond ? 'AUTO' : 'MANUAL'}`);
-    }
+        }
 
-    // NEW PROTECTION: If we are in AUTO mode, preventively clear the input field
-    // before any processing to avoid sending pre-existing text
-    if (autoRespond) {
+        // NEW PROTECTION: If we are in AUTO mode, preventively clear the input field
+        // before any processing to avoid sending pre-existing text
+        if (autoRespond) {
       try {
         logger.debug(`AUTO mode detected - Preventively clearing input field`);
         const inputField = document.querySelector(CONFIG.selectors.activeChat.messageInput);
         if (inputField) {
           const isContentEditable = inputField.getAttribute('contenteditable') === 'true';
           if (isContentEditable) {
-            inputField.innerHTML = '';
-            inputField.textContent = '';
+        inputField.innerHTML = '';
+        inputField.textContent = '';
           } else {
-            inputField.value = '';
+        inputField.value = '';
           }
           // Trigger input event to ensure Facebook detects the change
           const event = new Event('input', { bubbles: true });
@@ -562,31 +559,31 @@ class ChatManager {
         logger.error(`Error in preventive cleaning: ${e.message}`);
         // Continue despite error
       }
-    }
+        }
 
-      // If we already responded to this chat in auto mode, skip to avoid duplicates
-      if (autoRespond && this.respondedChats.has(this.currentChatId)) {
-        logger.debug(`Auto-response already sent for chat ${this.currentChatId}, skipping.`);
-        return true;
-      }
+        // If we already responded to this chat in auto mode, skip to avoid duplicates
+        if (autoRespond && this.respondedChats.has(this.currentChatId)) {
+      logger.debug(`Auto-response already sent for chat ${this.currentChatId}, skipping.`);
+      return true;
+        }
 
-    // Anti-reentrancy
-    if (autoRespond && this.isResponding) {
+        // Anti-reentrancy
+        if (autoRespond && this.isResponding) {
       logger.debug(`Already processing response for chat ${this.currentChatId}, skipping new call.`);
       return true;
-    }
-    this.isResponding = autoRespond;
+        }
+        this.isResponding = autoRespond;
 
-    // Step 1: Extract data
-    const extractionResult = await this.extractCurrentChatData();
+        // Step 1: Extract data
+        const extractionResult = await this.extractCurrentChatData();
 
-    if (!extractionResult.success) {
+        if (!extractionResult.success) {
       logger.error('Failed to extract chat data during processCurrentChat.');
       return false; // Indicate failure
-    }
+        }
 
-    // Step 2: Optionally generate response if autoRespond is true
-    if (autoRespond) {
+        // Step 2: Optionally generate response if autoRespond is true
+        if (autoRespond) {
       logger.debug(`Automatic response enabled for chat ${this.currentChatId} (operationMode: ${window.CONFIG?.operationMode})`);
       const chatData = extractionResult.chatData;
 
@@ -617,84 +614,84 @@ class ChatManager {
         logger.error(`Error during automatic response generation: ${responseError.message}`);
         return false;
       }
-    } else {
+        } else {
       logger.debug(`Automatic response disabled for chat ${this.currentChatId}. Only data was extracted.`);
-    }
+        }
 
-    this.isResponding = false;
-    return true; // Indicate successful processing (at least extraction)
-  }
+        this.isResponding = false;  // reset in manual case
+        return true; // Indicate successful processing (at least extraction)
+      }
 
-  /**
-   * Extracts the product link
-   * @param {HTMLElement} chatContainer - Active chat container
-   * @returns {string|null} Product URL or null
-   */
-  extractProductLink(chatContainer) {
-    const productLinkElement = domUtils.findElement(CONFIG.selectors.activeChat.productLink, chatContainer);
-    return productLinkElement?.href || null;
-  }
+      /**
+       * Extracts the product link
+       * @param {HTMLElement} chatContainer - Active chat container
+       * @returns {string|null} Product URL or null
+       */
+      extractProductLink(chatContainer) {
+        const productLinkElement = domUtils.findElement(CONFIG.selectors.activeChat.productLink, chatContainer);
+        return productLinkElement?.href || null;
+      }
 
-  //===================================================================
-  // MESSAGE CONTENT DETECTION AND EXTRACTION
-  //===================================================================
+      //===================================================================
+      // MESSAGE CONTENT DETECTION AND EXTRACTION
+      //===================================================================
 
-  /**
-   * Gets audio transcription if available
-   * @param {string} audioUrl - Audio URL or marker
-   * @returns {string|null} Transcription or null if not available
-   */
-  getAudioTranscription(audioUrl) {
-    // If there's no audio URL or transcription is disabled
-    if (!audioUrl || !CONFIG.audioTranscription.enabled) return null;
+      /**
+       * Gets audio transcription if available
+       * @param {string} audioUrl - Audio URL or marker
+       * @returns {string|null} Transcription or null if not available
+       */
+      getAudioTranscription(audioUrl) {
+        // If there's no audio URL or transcription is disabled
+        if (!audioUrl || !CONFIG.audioTranscription.enabled) return null;
 
-    // If it's a marker (real URL not detected yet)
-    if (audioUrl === "[Audio URL will be detected by Performance API]") {
+        // If it's a marker (real URL not detected yet)
+        if (audioUrl === "[Audio URL will be detected by Performance API]") {
       return null;
-    }
+        }
 
-    // Check if we have audioTranscriber available
-    if (!window.audioTranscriber) {
+        // Check if we have audioTranscriber available
+        if (!window.audioTranscriber) {
       logger.debug(`Audio transcriber not available for URL: ${audioUrl}`);
       return null;
-    }
+        }
 
-    // Request transcription from audioTranscriber
-    try {
+        // Request transcription from audioTranscriber
+        try {
       const transcription = window.audioTranscriber.getTranscription(audioUrl);
       if (transcription) {
         logger.debug(`Transcription found for audio: ${audioUrl.substring(0, 50)}...`);
         return transcription;
       }
-    } catch (error) {
+        } catch (error) {
       logger.warn(`Error accessing audio transcription: ${error.message}`);
-    }
+        }
 
-    return null;
-  }
+        return null;
+      }
 
-  /**
-   * Extracts the full chat history - PHASE 2: Improved timestamp validation and message structure
-   * @param {HTMLElement} messagesWrapper - Message container
-   * @returns {Promise<Array>} Array of extracted messages
-   */
-  async extractChatHistory(messagesWrapper) {
-    if (this.isProcessingChat) {
+      /**
+       * Extracts the full chat history - PHASE 2: Improved timestamp validation and message structure
+       * @param {HTMLElement} messagesWrapper - Message container
+       * @returns {Promise<Array>} Array of extracted messages
+       */
+      async extractChatHistory(messagesWrapper) {
+        if (this.isProcessingChat) {
       logger.warn('Chat history extraction already in progress. Skipping.');
       return [];
-    }
-    if (!messagesWrapper) {
+        }
+        if (!messagesWrapper) {
       logger.error('messagesWrapper element not provided to extractChatHistory.');
       return [];
-    }
+        }
 
-    this.isProcessingChat = true;
-    logger.debug('Starting chat history extraction (simplified)…');
+        this.isProcessingChat = true;
+        logger.debug('Starting chat history extraction (simplified)…');
 
-    const messages = [];
-    let messageElements = [];
+        const messages = [];
+        let messageElements = [];
 
-    try {
+        try {
       // 1) Get selectors from CONFIG or use fallback
       const selectors = window.CONFIG?.selectors?.activeChat || {
         messageWrapper: 'div.x4k7w5x > div > div > div, div[role="main"] > div > div > div:last-child > div',
@@ -717,7 +714,7 @@ class ChatManager {
         const nodes = Array.from(el.querySelectorAll('span[dir="auto"], div[dir="auto"]'));
         const texts = [...new Set(
           nodes.map(n => n.textContent.trim())
-            .filter(t => t && t.toLowerCase() !== 'enter')
+        .filter(t => t && t.toLowerCase() !== 'enter')
         )];
         const text = texts.join(' ').trim();
 
@@ -741,13 +738,13 @@ class ChatManager {
         // SKIP if it is a divider or system message
         if (!isDiv && !isSys) {
           messages.push({
-            id: `msg_${this.currentChatId}_${idx}`,
-            sentByUs,
-            content: { 
-              text, 
-              type, 
-              media: {}
-            }
+        id: `msg_${this.currentChatId}_${idx}`,
+        sentByUs,
+        content: {
+          text,
+          type,
+          media: {}
+        }
           });
           logger.debug(`#${idx + 1}: ${type} – ${text.substring(0, 30)}${text.length > 30 ? '…' : ''}`);
         } else {
@@ -758,41 +755,41 @@ class ChatManager {
       this.lastProcessedMessageCount = messages.length;
       logger.log(`Extraction completed: ${messages.length} messages found`);
 
-    } catch (error) {
+        } catch (error) {
       logger.error('Error during chat history extraction:', {}, error);
-    } finally {
+        } finally {
       this.isProcessingChat = false;
-    }
+        }
 
-    return messages;
-  }
+        return messages;
+      }
 
-  /**
-   * PHASE 2: New function to validate timestamps
-   * @param {string} text - Text to validate as timestamp
-   * @returns {boolean} True if it appears to be a valid timestamp
-   */
-  isValidTimestamp(text) {
-    if (!text || typeof text !== 'string') return false;
+      /**
+       * PHASE 2: New function to validate timestamps
+       * @param {string} text - Text to validate as timestamp
+       * @returns {boolean} True if it appears to be a valid timestamp
+       */
+      isValidTimestamp(text) {
+        if (!text || typeof text !== 'string') return false;
 
-    const trimmedText = text.trim();
+        const trimmedText = text.trim();
 
-    // Patterns indicating it is NOT a timestamp (names, simple durations, actions)
-    const invalidPatterns = [
+        // Patterns indicating it is NOT a timestamp (names, simple durations, actions)
+        const invalidPatterns = [
       /^\d{1,2}:\d{2}$/, // Only MM:SS (probably audio duration)
       /^[a-záéíóúüñ\s]+$/i, // Only letters and spaces (probably name or action)
       /^(Play|Reproducir|Pause|Pausar)$/i, // Button labels
       /^Message replied to:/i, // Reply indicator
       /^Message:/i // Generic indicator
-    ];
+        ];
 
-    // If it matches any invalid pattern, return false
-    if (invalidPatterns.some(pattern => pattern.test(trimmedText))) {
+        // If it matches any invalid pattern, return false
+        if (invalidPatterns.some(pattern => pattern.test(trimmedText))) {
       return false;
-    }
+        }
 
-    // Patterns indicating a valid timestamp
-    const validPatterns = [
+        // Patterns indicating a valid timestamp
+        const validPatterns = [
       /\d{1,2}:\d{2}\s*(AM|PM)/i, // HH:MM AM/PM
       /\d{1,2}\/\d{1,2}\/\d{2,4}/, // DD/MM/YY(YY)
       /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Sep|Oct|Nov|Dic)/i, // Month name
@@ -800,23 +797,23 @@ class ChatManager {
       /minutes? ago|hours? ago|minutes?|hours?/i, // Relative (X minutes ago)
       /sent at \d{1,2}:\d{2}\s*(AM|PM)?/i, // "sent at HH:MM"
       /sent at \d{1,2}:\d{2}/i // "sent at HH:MM"
-    ];
+        ];
 
-    // If it matches any valid pattern, return true
-    return validPatterns.some(pattern => pattern.test(trimmedText));
-  }
+        // If it matches any valid pattern, return true
+        return validPatterns.some(pattern => pattern.test(trimmedText));
+      }
 
-  /**
-   * PHASE 2: New functions to detect and add content types
-   */
+      /**
+       * PHASE 2: New functions to detect and add content types
+       */
 
-  /**
-   * Improved image detection
-   * @param {HTMLElement} container - Message container
-   * @param {Object} messageData - Message data to update
-   */
-  detectAndAddImageContent(container, messageData) {
-    try {
+      /**
+       * Improved image detection
+       * @param {HTMLElement} container - Message container
+       * @param {Object} messageData - Message data to update
+       */
+      detectAndAddImageContent(container, messageData) {
+        try {
       const imageSelectors = Array.isArray(CONFIG.selectors.activeChat.messageImageElement) ?
         CONFIG.selectors.activeChat.messageImageElement.join(', ') :
         CONFIG.selectors.activeChat.messageImageElement;
@@ -828,11 +825,11 @@ class ChatManager {
           const src = img.src || '';
           // Filter small icons/base64/emojis/avatars
           return src &&
-            !src.startsWith('data:') &&
-            (img.width > 30 || !img.width) &&
-            (img.height > 30 || !img.height) &&
-            !src.includes('/emoji.') &&
-            !src.includes('/avatar/');
+        !src.startsWith('data:') &&
+        (img.width > 30 || !img.width) &&
+        (img.height > 30 || !img.height) &&
+        !src.includes('/emoji.') &&
+        !src.includes('/avatar/');
         });
 
         if (validImages.length > 0) {
@@ -841,14 +838,14 @@ class ChatManager {
 
           // New improved structure
           messageData.content.media.images = validImages.map(img => ({
-            url: img.src,
-            alt: img.alt || '',
-            width: img.width || 0,
-            height: img.height || 0
+        url: img.src,
+        alt: img.alt || '',
+        width: img.width || 0,
+        height: img.height || 0
           }));
 
           if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'image';
+        messageData.content.type = 'image';
           }
         }
       }
@@ -861,38 +858,38 @@ class ChatManager {
           const urlMatch = style.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
 
           if (urlMatch && urlMatch[1] && !urlMatch[1].startsWith('data:')) {
-            const imageUrl = urlMatch[1];
+        const imageUrl = urlMatch[1];
 
-            // Add only if not already in the list
-            if (!messageData.content.imageUrls.includes(imageUrl)) {
-              messageData.content.imageUrls.push(imageUrl);
+        // Add only if not already in the list
+        if (!messageData.content.imageUrls.includes(imageUrl)) {
+          messageData.content.imageUrls.push(imageUrl);
 
-              messageData.content.media.images.push({
-                url: imageUrl,
-                alt: "Background Image",
-                width: div.clientWidth || 0,
-                height: div.clientHeight || 0
-              });
+          messageData.content.media.images.push({
+            url: imageUrl,
+            alt: "Background Image",
+            width: div.clientWidth || 0,
+            height: div.clientHeight || 0
+          });
 
-              if (messageData.content.type === 'unknown') {
-                messageData.content.type = 'image';
-              }
-            }
+          if (messageData.content.type === 'unknown') {
+            messageData.content.type = 'image';
+          }
+        }
           }
         }
       }
-    } catch (error) {
+        } catch (error) {
       logger.error(`Error detecting images: ${error.message}`, {}, error);
-    }
-  }
+        }
+      }
 
-  /**
-   * Improved audio detection
-   * @param {HTMLElement} container - Message container
-   * @param {Object} messageData - Message data to update
-   */
-  detectAndAddAudioContent(container, messageData) {
-    try {
+      /**
+       * Improved audio detection
+       * @param {HTMLElement} container - Message container
+       * @param {Object} messageData - Message data to update
+       */
+      detectAndAddAudioContent(container, messageData) {
+        try {
       // Look for audio buttons
       const audioSelectors = Array.isArray(CONFIG.selectors.activeChat.messageAudioPlayButton) ?
         CONFIG.selectors.activeChat.messageAudioPlayButton.join(', ') :
@@ -932,9 +929,9 @@ class ChatManager {
         if (audioUrl && typeof this.getAudioTranscription === 'function') {
           const transcription = this.getAudioTranscription(audioUrl);
           if (transcription) {
-            messageData.content.transcribedAudio = transcription;
+        messageData.content.transcribedAudio = transcription;
           } else {
-            messageData.content.transcribedAudio = "[Audio Transcription Pending]";
+        messageData.content.transcribedAudio = "[Audio Transcription Pending]";
           }
         }
       } else {
@@ -949,39 +946,39 @@ class ChatManager {
 
           // New improved structure
           messageData.content.media.audio = {
-            exists: true,
-            url: audioUrl,
-            duration: audioElement.duration ? `${Math.round(audioElement.duration)}s` : '',
-            label: 'Audio message'
+        exists: true,
+        url: audioUrl,
+        duration: audioElement.duration ? `${Math.round(audioElement.duration)}s` : '',
+        label: 'Audio message'
           };
 
           if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'audio';
+        messageData.content.type = 'audio';
           }
 
           // Try to get transcription
           if (typeof this.getAudioTranscription === 'function') {
-            const transcription = this.getAudioTranscription(audioUrl);
-            if (transcription) {
-              messageData.content.transcribedAudio = transcription;
-            } else {
-              messageData.content.transcribedAudio = "[Audio Transcription Pending]";
-            }
+        const transcription = this.getAudioTranscription(audioUrl);
+        if (transcription) {
+          messageData.content.transcribedAudio = transcription;
+        } else {
+          messageData.content.transcribedAudio = "[Audio Transcription Pending]";
+        }
           }
         }
       }
-    } catch (error) {
+        } catch (error) {
       logger.error(`Error detecting audio: ${error.message}`, {}, error);
-    }
-  }
+        }
+      }
 
-  /**
-   * Extracts audio duration if available
-   * @param {HTMLElement} container - Message container
-   * @returns {string|null} Audio duration (format "M:SS") or null
-   */
-  extractAudioDuration(container) {
-    try {
+      /**
+       * Extracts audio duration if available
+       * @param {HTMLElement} container - Message container
+       * @returns {string|null} Audio duration (format "M:SS") or null
+       */
+      extractAudioDuration(container) {
+        try {
       const durationSelectors = [
         'span[style*="color: rgba"]',
         'span.x193iq5w',
@@ -994,25 +991,25 @@ class ChatManager {
           const text = el.textContent.trim();
           // Check format MM:SS or M:SS
           if (/^\d{1,2}:\d{2}$/.test(text)) {
-            return text;
+        return text;
           }
         }
       }
 
       return null;
-    } catch (error) {
+        } catch (error) {
       logger.debug(`Error extracting audio duration: ${error.message}`);
       return null;
-    }
-  }
+        }
+      }
 
-  /**
-   * Tries to extract the audio URL
-   * @param {HTMLElement} container - Message container
-   * @returns {string|null} Audio URL or null
-   */
-  extractAudioUrl(container) {
-    try {
+      /**
+       * Tries to extract the audio URL
+       * @param {HTMLElement} container - Message container
+       * @returns {string|null} Audio URL or null
+       */
+      extractAudioUrl(container) {
+        try {
       const audioElement = container.querySelector('audio[src]');
       if (audioElement && audioElement.src) {
         return audioElement.src;
@@ -1025,536 +1022,535 @@ class ChatManager {
       }
 
       return null;
-    } catch (error) {
+        } catch (error) {
       logger.debug(`Error extracting audio URL: ${error.message}`);
       return null;
-    }
-  }
-
-  /**
-   * Detects video content
-   * @param {HTMLElement} container - Message container
-   * @param {Object} messageData - Message data to update
-   */
-  detectAndAddVideoContent(container, messageData) {
-    try {
-      // Detect explicit video (<video> or links)
-      const videoElement = container.querySelector('video, a[href*="video_redirect"]');
-
-      if (videoElement) {
-        if (videoElement.tagName === 'VIDEO') {
-          const videoInfo = {
-            exists: true,
-            url: videoElement.src || null,
-            type: 'video',
-            thumbnail: this.extractVideoThumbnail(videoElement) || null,
-            duration: videoElement.duration ? `${Math.round(videoElement.duration)}s` : null
-          };
-
-          messageData.content.media.video = videoInfo;
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'video';
-          }
-        } else if (videoElement.tagName === 'A' && videoElement.href) {
-          const videoInfo = {
-            exists: true,
-            url: videoElement.href,
-            type: 'video_link',
-            thumbnail: null,
-            duration: null
-          };
-
-          messageData.content.media.video = videoInfo;
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'video';
-          }
-        }
-      } else {
-        // Look for video containers
-        const videoSelectors = Array.isArray(CONFIG.selectors.activeChat.messageVideoElement) ?
-          CONFIG.selectors.activeChat.messageVideoElement.join(', ') :
-          CONFIG.selectors.activeChat.messageVideoElement;
-
-        const potentialVideoContainer = container.querySelector(videoSelectors);
-
-        if (potentialVideoContainer) {
-          const label = potentialVideoContainer.getAttribute('aria-label') || 'Video Player';
-          const isThumbnail = potentialVideoContainer.style.backgroundImage ||
-            potentialVideoContainer.querySelector('div[style*="background-image"]');
-
-          const videoInfo = {
-            exists: true,
-            url: null,
-            type: isThumbnail ? 'video_thumbnail' : 'video_player',
-            thumbnail: this.extractBackgroundImage(potentialVideoContainer),
-            label: label
-          };
-
-          messageData.content.media.video = videoInfo;
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'video';
-          }
         }
       }
-    } catch (error) {
-      logger.error(`Error detecting video: ${error.message}`, {}, error);
-    }
-  }
+      /**
+       * Detects video content
+       * @param {HTMLElement} container - Message container
+       * @param {Object} messageData - Message data to update
+       */
+      detectAndAddVideoContent(container, messageData) {
+        try {
+          // Detect explicit video (<video> or links)
+          const videoElement = container.querySelector('video, a[href*="video_redirect"]');
 
-  /**
-   * Extracts background image for video
-   * @param {HTMLElement} element - Element with possible background image
-   * @returns {string|null} URL of background image or null
-   */
-  extractBackgroundImage(element) {
-    try {
-      const style = element.getAttribute('style') || '';
-      const urlMatch = style.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
-      if (urlMatch && urlMatch[1]) {
-        return urlMatch[1];
-      }
+          if (videoElement) {
+            if (videoElement.tagName === 'VIDEO') {
+              const videoInfo = {
+                exists: true,
+                url: videoElement.src || null,
+                type: 'video',
+                thumbnail: this.extractVideoThumbnail(videoElement) || null,
+                duration: videoElement.duration ? `${Math.round(videoElement.duration)}s` : null
+              };
 
-      const childWithBg = element.querySelector('div[style*="background-image"]');
-      if (childWithBg) {
-        const childStyle = childWithBg.getAttribute('style') || '';
-        const childUrlMatch = childStyle.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
-        if (childUrlMatch && childUrlMatch[1]) {
-          return childUrlMatch[1];
+              messageData.content.media.video = videoInfo;
+              if (messageData.content.type === 'unknown') {
+                messageData.content.type = 'video';
+              }
+            } else if (videoElement.tagName === 'A' && videoElement.href) {
+              const videoInfo = {
+                exists: true,
+                url: videoElement.href,
+                type: 'video_link',
+                thumbnail: null,
+                duration: null
+              };
+
+              messageData.content.media.video = videoInfo;
+              if (messageData.content.type === 'unknown') {
+                messageData.content.type = 'video';
+              }
+            }
+          } else {
+            // Look for video containers
+            const videoSelectors = Array.isArray(CONFIG.selectors.activeChat.messageVideoElement) ?
+              CONFIG.selectors.activeChat.messageVideoElement.join(', ') :
+              CONFIG.selectors.activeChat.messageVideoElement;
+
+            const potentialVideoContainer = container.querySelector(videoSelectors);
+
+            if (potentialVideoContainer) {
+              const label = potentialVideoContainer.getAttribute('aria-label') || 'Video Player';
+              const isThumbnail = potentialVideoContainer.style.backgroundImage ||
+                potentialVideoContainer.querySelector('div[style*="background-image"]');
+
+              const videoInfo = {
+                exists: true,
+                url: null,
+                type: isThumbnail ? 'video_thumbnail' : 'video_player',
+                thumbnail: this.extractBackgroundImage(potentialVideoContainer),
+                label: label
+              };
+
+              messageData.content.media.video = videoInfo;
+              if (messageData.content.type === 'unknown') {
+                messageData.content.type = 'video';
+              }
+            }
+          }
+        } catch (error) {
+          logger.error(`Error detecting video: ${error.message}`, {}, error);
         }
       }
 
-      return null;
-    } catch (error) {
-      logger.debug(`Error extracting background image: ${error.message}`);
-      return null;
-    }
-  }
+      /**
+       * Extracts background image for video
+       * @param {HTMLElement} element - Element with possible background image
+       * @returns {string|null} URL of background image or null
+       */
+      extractBackgroundImage(element) {
+        try {
+          const style = element.getAttribute('style') || '';
+          const urlMatch = style.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
+          if (urlMatch && urlMatch[1]) {
+            return urlMatch[1];
+          }
 
-  /**
-   * Extracts video thumbnail
-   * @param {HTMLVideoElement} videoElement - Video element
-   * @returns {string|null} URL of thumbnail or null
-   */
-  extractVideoThumbnail(videoElement) {
-    try {
-      if (videoElement.poster) {
-        return videoElement.poster;
+          const childWithBg = element.querySelector('div[style*="background-image"]');
+          if (childWithBg) {
+            const childStyle = childWithBg.getAttribute('style') || '';
+            const childUrlMatch = childStyle.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
+            if (childUrlMatch && childUrlMatch[1]) {
+              return childUrlMatch[1];
+            }
+          }
+
+          return null;
+        } catch (error) {
+          logger.debug(`Error extracting background image: ${error.message}`);
+          return null;
+        }
       }
 
-      const source = videoElement.querySelector('source[type^="video/"]');
-      if (source && source.src) {
-        return source.src.replace(/\.mp4$/, '.jpg'); // Common approximation
+      /**
+       * Extracts video thumbnail
+       * @param {HTMLVideoElement} videoElement - Video element
+       * @returns {string|null} URL of thumbnail or null
+       */
+      extractVideoThumbnail(videoElement) {
+        try {
+          if (videoElement.poster) {
+            return videoElement.poster;
+          }
+
+          const source = videoElement.querySelector('source[type^="video/"]');
+          if (source && source.src) {
+            return source.src.replace(/\.mp4$/, '.jpg'); // Common approximation
+          }
+
+          return null;
+        } catch (error) {
+          logger.debug(`Error extracting video thumbnail: ${error.message}`);
+          return null;
+        }
       }
 
-      return null;
-    } catch (error) {
-      logger.debug(`Error extracting video thumbnail: ${error.message}`);
-      return null;
-    }
-  }
+      /**
+       * Detects file attachments
+       * @param {HTMLElement} container - Message container
+       * @param {Object} messageData - Message data to update
+       */
+      detectAndAddFileContent(container, messageData) {
+        try {
+          const fileSelectors = Array.isArray(CONFIG.selectors.activeChat.messageFileElement) ?
+            CONFIG.selectors.activeChat.messageFileElement.join(', ') :
+            CONFIG.selectors.activeChat.messageFileElement;
 
-  /**
-   * Detects file attachments
-   * @param {HTMLElement} container - Message container
-   * @param {Object} messageData - Message data to update
-   */
-  detectAndAddFileContent(container, messageData) {
-    try {
-      const fileSelectors = Array.isArray(CONFIG.selectors.activeChat.messageFileElement) ?
-        CONFIG.selectors.activeChat.messageFileElement.join(', ') :
-        CONFIG.selectors.activeChat.messageFileElement;
+          const fileElements = Array.from(container.querySelectorAll(fileSelectors));
 
-      const fileElements = Array.from(container.querySelectorAll(fileSelectors));
+          if (fileElements.length > 0) {
+            const files = [];
 
-      if (fileElements.length > 0) {
-        const files = [];
+            fileElements.forEach(fileElement => {
+              const url = fileElement.href || null;
+              const fileName = this.extractFileName(fileElement);
+              const fileType = this.detectFileType(fileElement, fileName);
 
-        fileElements.forEach(fileElement => {
-          const url = fileElement.href || null;
-          const fileName = this.extractFileName(fileElement);
-          const fileType = this.detectFileType(fileElement, fileName);
-
-          if (url || fileName) {
-            files.push({
-              url: url,
-              name: fileName,
-              type: fileType
+              if (url || fileName) {
+                files.push({
+                  url: url,
+                  name: fileName,
+                  type: fileType
+                });
+              }
             });
+
+            if (files.length > 0) {
+              messageData.content.media.files = files;
+              if (messageData.content.type === 'unknown') {
+                messageData.content.type = 'file';
+              }
+            }
           }
-        });
+        } catch (error) {
+          logger.error(`Error detecting files: ${error.message}`, {}, error);
+        }
+      }
 
-        if (files.length > 0) {
-          messageData.content.media.files = files;
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'file';
+      /**
+       * Extracts file name
+       * @param {HTMLElement} fileElement - File element
+       * @returns {string} File name or "Unnamed file"
+       */
+      extractFileName(fileElement) {
+        try {
+          if (fileElement.hasAttribute('download')) {
+            return fileElement.getAttribute('download') || this.extractFileNameFromPath(fileElement.href);
           }
-        }
-      }
-    } catch (error) {
-      logger.error(`Error detecting files: ${error.message}`, {}, error);
-    }
-  }
 
-  /**
-   * Extracts file name
-   * @param {HTMLElement} fileElement - File element
-   * @returns {string} File name or "Unnamed file"
-   */
-  extractFileName(fileElement) {
-    try {
-      if (fileElement.hasAttribute('download')) {
-        return fileElement.getAttribute('download') || this.extractFileNameFromPath(fileElement.href);
-      }
-
-      const textContent = fileElement.textContent?.trim();
-      if (textContent && textContent.includes('.')) {
-        const fileNameMatch = textContent.match(/[\w\s\-]+\.\w+/);
-        if (fileNameMatch) return fileNameMatch[0];
-      }
-
-      if (fileElement.hasAttribute('title')) return fileElement.getAttribute('title');
-      if (fileElement.hasAttribute('aria-label')) {
-        const label = fileElement.getAttribute('aria-label');
-        if (label.includes('file') || label.includes('archivo')) {
-          const parts = label.split(':');
-          if (parts.length > 1) return parts[1].trim();
-        }
-        return label;
-      }
-
-      if (fileElement.href) {
-        return this.extractFileNameFromPath(fileElement.href);
-      }
-
-      return 'Unnamed file';
-    } catch (error) {
-      logger.debug(`Error extracting file name: ${error.message}`);
-      return 'Unnamed file';
-    }
-  }
-
-  /**
-   * Extracts file name from a URL path
-   * @param {string} path - URL path
-   * @returns {string} Extracted file name or "Unnamed file"
-   */
-  extractFileNameFromPath(path) {
-    if (!path) return 'Unnamed file';
-    try {
-      const urlObj = new URL(path);
-      const pathSegments = urlObj.pathname.split('/');
-      const lastSegment = pathSegments[pathSegments.length - 1];
-
-      const fileName = lastSegment.split('?')[0];
-      return decodeURIComponent(fileName) || 'Unnamed file';
-    } catch (error) {
-      const match = path.match(/\/([^\/\?]+)(?:\?|$)/);
-      return match ? decodeURIComponent(match[1]) : 'Unnamed file';
-    }
-  }
-
-  /**
-   * Detects file type based on extension
-   * @param {HTMLElement} fileElement - File element
-   * @param {string} fileName - File name
-   * @returns {string} Detected file type
-   */
-  detectFileType(fileElement, fileName) {
-    try {
-      if (!fileName) return 'unknown';
-
-      const extension = fileName.split('.').pop().toLowerCase();
-
-      const extensionMap = {
-        'pdf': 'pdf',
-        'doc': 'document', 'docx': 'document', 'odt': 'document', 'rtf': 'document',
-        'xls': 'spreadsheet', 'xlsx': 'spreadsheet', 'ods': 'spreadsheet',
-        'ppt': 'presentation', 'pptx': 'presentation', 'odp': 'presentation',
-        'txt': 'text',
-        'zip': 'archive', 'rar': 'archive', '7z': 'archive',
-        'jpg': 'image', 'jpeg': 'image', 'png': 'image', 'gif': 'image', 'bmp': 'image',
-        'mp3': 'audio', 'wav': 'audio', 'ogg': 'audio', 'm4a': 'audio',
-        'mp4': 'video', 'avi': 'video', 'mov': 'video', 'wmv': 'video'
-      };
-
-      return extensionMap[extension] || 'unknown';
-    } catch (error) {
-      logger.debug(`Error detecting file type: ${error.message}`);
-      return 'unknown';
-    }
-  }
-
-  /**
-   * Detects location in the message
-   * @param {HTMLElement} container - Message container
-   * @param {Object} messageData - Message data to update
-   */
-  detectAndAddLocationContent(container, messageData) {
-    try {
-      const locationSelectors = Array.isArray(CONFIG.selectors.activeChat.messageLocationElement) ?
-        CONFIG.selectors.activeChat.messageLocationElement.join(', ') :
-        CONFIG.selectors.activeChat.messageLocationElement;
-
-      const locationElement = container.querySelector(locationSelectors);
-
-      if (locationElement) {
-        let locationInfo = null;
-
-        // It's a map link
-        if (locationElement.tagName === 'A' && locationElement.href) {
-          const label = this.extractLocationLabel(locationElement) || 'Shared location';
-          const coordinates = this.extractCoordinates(locationElement.href);
-
-          locationInfo = {
-            url: locationElement.href,
-            label: label,
-            coordinates: coordinates
-          };
-        } else { // It's a map container
-          const label = this.extractLocationLabel(locationElement) || 'Shared location';
-          const mapLink = locationElement.querySelector('a[href*="maps"]');
-          const url = mapLink ? mapLink.href : null;
-          const coordinates = url ? this.extractCoordinates(url) : null;
-
-          locationInfo = {
-            url: url,
-            label: label,
-            coordinates: coordinates
-          };
-        }
-
-        if (locationInfo) {
-          messageData.content.media.location = locationInfo;
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'location';
+          const textContent = fileElement.textContent?.trim();
+          if (textContent && textContent.includes('.')) {
+            const fileNameMatch = textContent.match(/[\w\s\-]+\.\w+/);
+            if (fileNameMatch) return fileNameMatch[0];
           }
-        }
-      }
-    } catch (error) {
-      logger.error(`Error detecting location: ${error.message}`, {}, error);
-    }
-  }
 
-  /**
-   * Extracts location label
-   * @param {HTMLElement} locationElement - Location element
-   * @returns {string|null} Location label or null
-   */
-  extractLocationLabel(locationElement) {
-    try {
-      if (locationElement.hasAttribute('aria-label')) {
-        return locationElement.getAttribute('aria-label')
-          .replace(/location|ubicación|shared/i, '')
-          .trim();
-      }
-
-      const innerText = locationElement.textContent?.trim();
-      if (innerText && !innerText.startsWith('http')) {
-        return innerText;
-      }
-
-      return null;
-    } catch (error) {
-      logger.debug(`Error extracting location label: ${error.message}`);
-      return null;
-    }
-  }
-
-  /**
-   * Extracts coordinates from map URL
-   * @param {string} url - Map URL
-   * @returns {object|null} Object with latitude/longitude or null
-   */
-  extractCoordinates(url) {
-    if (!url) return null;
-    try {
-      if (url.includes('maps')) {
-        // Formats: ?q=<lat>,<lng> or @<lat>,<lng>
-        let coordsMatch = url.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/i);
-        if (!coordsMatch) {
-          coordsMatch = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/i);
-        }
-
-        if (coordsMatch) {
-          return {
-            latitude: parseFloat(coordsMatch[1]),
-            longitude: parseFloat(coordsMatch[2])
-          };
-        }
-      }
-
-      return null;
-    } catch (error) {
-      logger.debug(`Error extracting coordinates: ${error.message}`);
-      return null;
-    }
-  }
-
-  /**
-   * Detects GIFs and stickers
-   * @param {HTMLElement} container - Message container
-   * @param {Object} messageData - Message data to update
-   */
-  detectAndAddGifContent(container, messageData) {
-    try {
-      const gifSelectors = Array.isArray(CONFIG.selectors.activeChat.messageGifElement) ?
-        CONFIG.selectors.activeChat.messageGifElement.join(', ') :
-        CONFIG.selectors.activeChat.messageGifElement;
-
-      const gifElement = container.querySelector(gifSelectors);
-
-      if (gifElement) {
-        let gifInfo = null;
-
-        // For image elements
-        if (gifElement.tagName === 'IMG') {
-          const url = gifElement.src;
-          const isGif = url && (url.includes('giphy.com') || url.includes('tenor.com') || url.endsWith('.gif'));
-          const isSticker = !!container.querySelector('[data-testid="sticker"]');
-
-          gifInfo = {
-            url: url,
-            type: isSticker ? 'sticker' : (isGif ? 'gif' : 'animated_content'),
-            alt: gifElement.alt || ''
-          };
-        } else { // For containers
-          const label = gifElement.getAttribute('aria-label') || 'GIF';
-          const imgElement = gifElement.querySelector('img');
-          const url = imgElement ? imgElement.src : null;
-
-          gifInfo = {
-            url: url,
-            type: label.toLowerCase().includes('sticker') ? 'sticker' : 'gif',
-            label: label
-          };
-        }
-
-        if (gifInfo) {
-          messageData.content.media.gif = gifInfo;
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'gif';
+          if (fileElement.hasAttribute('title')) return fileElement.getAttribute('title');
+          if (fileElement.hasAttribute('aria-label')) {
+            const label = fileElement.getAttribute('aria-label');
+            if (label.includes('file') || label.includes('archivo')) {
+              const parts = label.split(':');
+              if (parts.length > 1) return parts[1].trim();
+            }
+            return label;
           }
+
+          if (fileElement.href) {
+            return this.extractFileNameFromPath(fileElement.href);
+          }
+
+          return 'Unnamed file';
+        } catch (error) {
+          logger.debug(`Error extracting file name: ${error.message}`);
+          return 'Unnamed file';
         }
       }
-    } catch (error) {
-      logger.error(`Error detecting GIF/sticker: ${error.message}`, {}, error);
-    }
-  }
 
-  /**
-   * Determines if a message is a system message - IMPROVED VERSION
-   * @param {string} messageText - Message text to check
-   * @returns {boolean} True if the message is a system message
-   */
-  isSystemMessage(messageText) {
-    if (!messageText) return false;
+      /**
+       * Extracts file name from a URL path
+       * @param {string} path - URL path
+       * @returns {string} Extracted file name or "Unnamed file"
+       */
+      extractFileNameFromPath(path) {
+        if (!path) return 'Unnamed file';
+        try {
+          const urlObj = new URL(path);
+          const pathSegments = urlObj.pathname.split('/');
+          const lastSegment = pathSegments[pathSegments.length - 1];
 
-    // Common patterns for system messages - ADDITIONAL ADDITIONS
-    const systemPatterns = [
-      // ─── Conversation start ─────────────────────────────
-      /^(You|Tú|[A-Z][a-z]+) started this chat\.?( View (seller|buyer) profile)?$/i,
-      /^([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+) inició el chat\.?( Ver (perfil del vendedor|perfil del comprador))?$/i,
+          const fileName = lastSegment.split('?')[0];
+          return decodeURIComponent(fileName) || 'Unnamed file';
+        } catch (error) {
+          const match = path.match(/\/([^\/\?]+)(?:\?|$)/);
+          return match ? decodeURIComponent(match[1]) : 'Unnamed file';
+        }
+      }
 
-      // ─── Participants added or removed ────────────────
-      /^You added .* to the group\.$/i,
-      /^Agregaste a .* al grupo\.$/i,
-      /^You removed .* from the group\.$/i,
-      /^Eliminaste a .* del grupo\.$/i,
+      /**
+       * Detects file type based on extension
+       * @param {HTMLElement} fileElement - File element
+       * @param {string} fileName - File name
+       * @returns {string} Detected file type
+       */
+      detectFileType(fileElement, fileName) {
+        try {
+          if (!fileName) return 'unknown';
 
-      // ─── Users leaving the group ──────────────────────
-      /^.* (left|salió del) grupo\.$/i,
+          const extension = fileName.split('.').pop().toLowerCase();
 
-      // ─── Name or color changes ─────────────────────────
-      /^You named the group .*$/i,
-      /^Nombraste al grupo .*$/i,
-      /^You changed the chat colors\.$/i,
-      /^Cambiaste los colores del chat\.$/i,
-      /^You set the nickname for .* to .*$/i,
-      /^Definiste el apodo de .* como .*$/i,
+          const extensionMap = {
+            'pdf': 'pdf',
+            'doc': 'document', 'docx': 'document', 'odt': 'document', 'rtf': 'document',
+            'xls': 'spreadsheet', 'xlsx': 'spreadsheet', 'ods': 'spreadsheet',
+            'ppt': 'presentation', 'pptx': 'presentation', 'odp': 'presentation',
+            'txt': 'text',
+            'zip': 'archive', 'rar': 'archive', '7z': 'archive',
+            'jpg': 'image', 'jpeg': 'image', 'png': 'image', 'gif': 'image', 'bmp': 'image',
+            'mp3': 'audio', 'wav': 'audio', 'ogg': 'audio', 'm4a': 'audio',
+            'mp4': 'video', 'avi': 'video', 'mov': 'video', 'wmv': 'video'
+          };
 
-      // ─── Changes in group photo/name with dynamic name
-      /^Changed the group photo\.$/i,
-      /^Cambió la foto del grupo\.$/i,
-      /cambió la foto del grupo\.$/i,
-      /named the group .+\.$/i,
-      /nombró al grupo .+\.$/i,
-      /^[A-Z][a-z]+(?: [A-Z][a-z]+)? changed the group photo\.$/i,
-      /^[A-Z][a-z]+(?: [A-Z][a-z]+)? named the group .+\.$/i,
+          return extensionMap[extension] || 'unknown';
+        } catch (error) {
+          logger.debug(`Error detecting file type: ${error.message}`);
+          return 'unknown';
+        }
+      }
 
-      // ─── Media sent ───────────────────────────────────
-      /^You sent (a )?(GIF|photo|video|attachment)\.$/i,
-      /^Enviaste (un|una) (GIF|foto|video|adjunto)\.$/i,
-      /^You shared a location\.$/i,
-      /^Compartiste una ubicación\.$/i,
+      /**
+       * Detects location in the message
+       * @param {HTMLElement} container - Message container
+       * @param {Object} messageData - Message data to update
+       */
+      detectAndAddLocationContent(container, messageData) {
+        try {
+          const locationSelectors = Array.isArray(CONFIG.selectors.activeChat.messageLocationElement) ?
+            CONFIG.selectors.activeChat.messageLocationElement.join(', ') :
+            CONFIG.selectors.activeChat.messageLocationElement;
 
-      // ─── Calls ──────────────────────────────────────────
-      /^Missed call$/i,
-      /^You missed a call from .*$/i,
-      /^Llamada perdida$/i,
-      /^Llamada perdida de .*$/i,
+          const locationElement = container.querySelector(locationSelectors);
 
-      // ─── Listing statuses ───────────────────────────────
-      /^.* marked the listing as (Available|Pending)\.$/i,
-      /^Marcó este artículo como (vendido|pendiente|disponible)\.?$/i,
-      /^.* sold .+\.$/i,
-      /^Vendió .+\.$/i,
-      /^[A-Z][a-z]+ marked the listing as (Available|Pending)\.$/i,
-      /^[A-Z][a-z]+ sold .+\.$/i,
+          if (locationElement) {
+            let locationInfo = null;
 
-      // ─── System messages / UI ─────────────────────────
-      /^.* bumped their message:?$/i,
-      /^Mensaje enviado$/i,
-      /^Ver anuncios similares$/i,
-      /^See similar listings$/i,
-      /^Ver perfil del comprador$/i,
-      /^View buyer profile$/i,
-      /^Ver perfil del vendedor$/i,
-      /^View seller profile$/i,
-      /^Ver detalles del comprador$/i,
-      /^View buyer details$/i,
-      /detalles del comprador$/i,
-      /buyer details$/i,
+            // It's a map link
+            if (locationElement.tagName === 'A' && locationElement.href) {
+              const label = this.extractLocationLabel(locationElement) || 'Shared location';
+              const coordinates = this.extractCoordinates(locationElement.href);
 
-      // ─── Alerts / informative messages ───────────────────
-      /^Estás recibiendo muchos mensajes sobre este anuncio/i,
-      /^You're receiving a lot of messages about this listing/i,
-      /^Estás esperando tu respuesta sobre este anuncio\.\s*Ver anuncio$/i,
-      /^You're waiting for a response about this listing\.\s*View listing$/i,
-      /^Is getting a lot of messages about this listing/i,
-      /^Is waiting for your response about this listing\.\s*View listing$/i,
-      /^Beware of common scams using payment apps/i,
-      /^[A-Z][a-z]+ is getting a lot of messages about this listing\.? See similar listings$/i,
-      /^[A-Z][a-z]+ is waiting for your response about this listing\.? View listing$/i,
+              locationInfo = {
+                url: locationElement.href,
+                label: label,
+                coordinates: coordinates
+              };
+            } else { // It's a map container
+              const label = this.extractLocationLabel(locationElement) || 'Shared location';
+              const mapLink = locationElement.querySelector('a[href*="maps"]');
+              const url = mapLink ? mapLink.href : null;
+              const coordinates = url ? this.extractCoordinates(url) : null;
 
-      // ─── Ratings ────────────────────────────────────
-      /^You can now rate each other.*Rate [A-Z][a-z]+$/i,
-      /^Ahora pueden calificarse.*Califica a [A-ZÁÉÍÓÚÑ][a-záéíóúñ]+$/i,
+              locationInfo = {
+                url: url,
+                label: label,
+                coordinates: coordinates
+              };
+            }
 
-      // ─── Profile information ─────────────────────────────
-      /^Joined facebook in \d{4}$/i,
-      /^Se unió a Facebook en \d{4}$/i,
-      /se unió a Facebook en \d{4}/i,
+            if (locationInfo) {
+              messageData.content.media.location = locationInfo;
+              if (messageData.content.type === 'unknown') {
+                messageData.content.type = 'location';
+              }
+            }
+          }
+        } catch (error) {
+          logger.error(`Error detecting location: ${error.message}`, {}, error);
+        }
+      }
 
-      // ─── Dates / timestamps ───────────────────────────────
-      /^\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}(\u2009|\u202F)?\s*(AM|PM)?$/i,
-      /^[A-Za-z]{3,9}\s+\d{1,2},\s+\d{4}(,\s*\d{1,2}:\d{2}\s*(AM|PM)?)?$/i,
+      /**
+       * Extracts location label
+       * @param {HTMLElement} locationElement - Location element
+       * @returns {string|null} Location label or null
+       */
+      extractLocationLabel(locationElement) {
+        try {
+          if (locationElement.hasAttribute('aria-label')) {
+            return locationElement.getAttribute('aria-label')
+              .replace(/location|ubicación|shared/i, '')
+              .trim();
+          }
 
-      // ─── Others ─────────────────────────────────────────────
-      /·\s*.*\s*add name$/i
-    ];
+          const innerText = locationElement.textContent?.trim();
+          if (innerText && !innerText.startsWith('http')) {
+            return innerText;
+          }
 
-    const isSystem = systemPatterns.some(pattern => pattern.test(messageText));
-    if (isSystem) {
-      logger.debug(`[isSystemMessage] System message detected: "${messageText.substring(0, 30)}..."`);
-    }
-    return isSystem;
-  }
+          return null;
+        } catch (error) {
+          logger.debug(`Error extracting location label: ${error.message}`);
+          return null;
+        }
+      }
 
-  /**
-   * Determines if an element is a divider (date, separator, etc.) - IMPROVED VERSION
-   * @param {HTMLElement} element - Element to check
-   * @returns {boolean} True if the element is a divider
-   */
+      /**
+       * Extracts coordinates from map URL
+       * @param {string} url - Map URL
+       * @returns {object|null} Object with latitude/longitude or null
+       */
+      extractCoordinates(url) {
+        if (!url) return null;
+        try {
+          if (url.includes('maps')) {
+            // Formats: ?q=<lat>,<lng> or @<lat>,<lng>
+            let coordsMatch = url.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/i);
+            if (!coordsMatch) {
+              coordsMatch = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/i);
+            }
+
+            if (coordsMatch) {
+              return {
+                latitude: parseFloat(coordsMatch[1]),
+                longitude: parseFloat(coordsMatch[2])
+              };
+            }
+          }
+
+          return null;
+        } catch (error) {
+          logger.debug(`Error extracting coordinates: ${error.message}`);
+          return null;
+        }
+      }
+
+      /**
+       * Detects GIFs and stickers
+       * @param {HTMLElement} container - Message container
+       * @param {Object} messageData - Message data to update
+       */
+      detectAndAddGifContent(container, messageData) {
+        try {
+          const gifSelectors = Array.isArray(CONFIG.selectors.activeChat.messageGifElement) ?
+            CONFIG.selectors.activeChat.messageGifElement.join(', ') :
+            CONFIG.selectors.activeChat.messageGifElement;
+
+          const gifElement = container.querySelector(gifSelectors);
+
+          if (gifElement) {
+            let gifInfo = null;
+
+            // For image elements
+            if (gifElement.tagName === 'IMG') {
+              const url = gifElement.src;
+              const isGif = url && (url.includes('giphy.com') || url.includes('tenor.com') || url.endsWith('.gif'));
+              const isSticker = !!container.querySelector('[data-testid="sticker"]');
+
+              gifInfo = {
+                url: url,
+                type: isSticker ? 'sticker' : (isGif ? 'gif' : 'animated_content'),
+                alt: gifElement.alt || ''
+              };
+            } else { // For containers
+              const label = gifElement.getAttribute('aria-label') || 'GIF';
+              const imgElement = gifElement.querySelector('img');
+              const url = imgElement ? imgElement.src : null;
+
+              gifInfo = {
+                url: url,
+                type: label.toLowerCase().includes('sticker') ? 'sticker' : 'gif',
+                label: label
+              };
+            }
+
+            if (gifInfo) {
+              messageData.content.media.gif = gifInfo;
+              if (messageData.content.type === 'unknown') {
+                messageData.content.type = 'gif';
+              }
+            }
+          }
+        } catch (error) {
+          logger.error(`Error detecting GIF/sticker: ${error.message}`, {}, error);
+        }
+      }
+
+      /**
+       * Determines if a message is a system message - IMPROVED VERSION
+       * @param {string} messageText - Message text to check
+       * @returns {boolean} True if the message is a system message
+       */
+      isSystemMessage(messageText) {
+        if (!messageText) return false;
+
+        // Common patterns for system messages - ADDITIONAL ADDITIONS
+        const systemPatterns = [
+          // ─── Conversation start ─────────────────────────────
+          /^(You|Tú|[A-Z][a-z]+) started this chat\.?( View (seller|buyer) profile)?$/i,
+          /^([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+) inició el chat\.?( Ver (perfil del vendedor|perfil del comprador))?$/i,
+
+          // ─── Participants added or removed ────────────────
+          /^You added .* to the group\.$/i,
+          /^Agregaste a .* al grupo\.$/i,
+          /^You removed .* from the group\.$/i,
+          /^Eliminaste a .* del grupo\.$/i,
+
+          // ─── Users leaving the group ──────────────────────
+          /^.* (left|salió del) grupo\.$/i,
+
+          // ─── Name or color changes ─────────────────────────
+          /^You named the group .*$/i,
+          /^Nombraste al grupo .*$/i,
+          /^You changed the chat colors\.$/i,
+          /^Cambiaste los colores del chat\.$/i,
+          /^You set the nickname for .* to .*$/i,
+          /^Definiste el apodo de .* como .*$/i,
+
+          // ─── Changes in group photo/name with dynamic name
+          /^Changed the group photo\.$/i,
+          /^Cambió la foto del grupo\.$/i,
+          /cambió la foto del grupo\.$/i,
+          /named the group .+\.$/i,
+          /nombró al grupo .+\.$/i,
+          /^[A-Z][a-z]+(?: [A-Z][a-z]+)? changed the group photo\.$/i,
+          /^[A-Z][a-z]+(?: [A-Z][a-z]+)? named the group .+\.$/i,
+
+          // ─── Media sent ───────────────────────────────────
+          /^You sent (a )?(GIF|photo|video|attachment)\.$/i,
+          /^Enviaste (un|una) (GIF|foto|video|adjunto)\.$/i,
+          /^You shared a location\.$/i,
+          /^Compartiste una ubicación\.$/i,
+
+          // ─── Calls ──────────────────────────────────────────
+          /^Missed call$/i,
+          /^You missed a call from .*$/i,
+          /^Llamada perdida$/i,
+          /^Llamada perdida de .*$/i,
+
+          // ─── Listing statuses ───────────────────────────────
+          /^.* marked the listing as (Available|Pending)\.$/i,
+          /^Marcó este artículo como (vendido|pendiente|disponible)\.?$/i,
+          /^.* sold .+\.$/i,
+          /^Vendió .+\.$/i,
+          /^[A-Z][a-z]+ marked the listing as (Available|Pending)\.$/i,
+          /^[A-Z][a-z]+ sold .+\.$/i,
+
+          // ─── System messages / UI ─────────────────────────
+          /^.* bumped their message:?$/i,
+          /^Mensaje enviado$/i,
+          /^Ver anuncios similares$/i,
+          /^See similar listings$/i,
+          /^Ver perfil del comprador$/i,
+          /^View buyer profile$/i,
+          /^Ver perfil del vendedor$/i,
+          /^View seller profile$/i,
+          /^Ver detalles del comprador$/i,
+          /^View buyer details$/i,
+          /detalles del comprador$/i,
+          /buyer details$/i,
+
+          // ─── Alerts / informative messages ───────────────────
+          /^Estás recibiendo muchos mensajes sobre este anuncio/i,
+          /^You're receiving a lot of messages about this listing/i,
+          /^Estás esperando tu respuesta sobre este anuncio\.\s*Ver anuncio$/i,
+          /^You're waiting for a response about this listing\.\s*View listing$/i,
+          /^Is getting a lot of messages about this listing/i,
+          /^Is waiting for your response about this listing\.\s*View listing$/i,
+          /^Beware of common scams using payment apps/i,
+          /^[A-Z][a-z]+ is getting a lot of messages about this listing\.? See similar listings$/i,
+          /^[A-Z][a-z]+ is waiting for your response about this listing\.? View listing$/i,
+
+          // ─── Ratings ────────────────────────────────────
+          /^You can now rate each other.*Rate [A-Z][a-z]+$/i,
+          /^Ahora pueden calificarse.*Califica a [A-ZÁÉÍÓÚÑ][a-záéíóúñ]+$/i,
+
+          // ─── Profile information ─────────────────────────────
+          /^Joined facebook in \d{4}$/i,
+          /^Se unió a Facebook en \d{4}$/i,
+          /se unió a Facebook en \d{4}/i,
+
+          // ─── Dates / timestamps ───────────────────────────────
+          /^\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}(\u2009|\u202F)?\s*(AM|PM)?$/i,
+          /^[A-Za-z]{3,9}\s+\d{1,2},\s+\d{4}(,\s*\d{1,2}:\d{2}\s*(AM|PM)?)?$/i,
+
+          // ─── Others ─────────────────────────────────────────────
+          /·\s*.*\s*add name$/i
+        ];
+
+        const isSystem = systemPatterns.some(pattern => pattern.test(messageText));
+        if (isSystem) {
+          logger.debug(`[isSystemMessage] System message detected: "${messageText.substring(0, 30)}..."`);
+        }
+        return isSystem;
+      }
+
+      /**
+       * Determines if an element is a divider (date, separator, etc.) - IMPROVED VERSION
+       * @param {HTMLElement} element - Element to check
+       * @returns {boolean} True if the element is a divider
+       */
   isDividerElement(element) {
     try {
       const text = element.innerText || '';
@@ -2367,644 +2363,345 @@ class ChatManager {
     }
   }
 
-  /**
-   * Handles the generation and potentially sending of a response based on the chat context
-   * @param {Object} context - Chat context that includes messages, product information, etc.
-   * @returns {Promise<Object>} - Promise that resolves with the generated response
-   */
-  async handleResponse(context) {
-    try {
-      logger.log('[ChatManager] Initiating handleResponse...');
+    /** Completely clears the input field, with cloning fallback */
+    clearMessageInputField() {
+      const input = document.querySelector(CONFIG.selectors.activeChat.messageInput);
+      if (!input) { logger.error('Message input field not found'); return false; }
+      input.focus();
 
-      if (!context || !context.messages || context.messages.length === 0) {
-        logger.error('[ChatManager] Invalid chat context or no messages.');
-        throw new Error('Invalid chat context or no messages');
+      // Direct cleaning attempt
+      input.innerHTML = '';
+      input.textContent = '';
+      if ('value' in input) {
+        input.value = '';
+        input.setAttribute('value', '');
       }
+      ['input', 'change', 'keyup', 'keydown'].forEach(ev =>
+        input.dispatchEvent(new Event(ev, { bubbles: true }))
+      );
 
-      const roleText = context.role === 'seller' ? 'seller' : 'buyer';
-      logger.log(`[ChatManager] Role: ${roleText}, Total messages for context: ${context.messages.length}`);
+      // Verify if there is still content
+      const isCE = input.getAttribute('contenteditable') === 'true';
+      const remaining = isCE
+        ? (input.textContent || '').trim()
+        : (input.value || '').trim();
 
-      const operationMode = window.CONFIG?.operationMode || 'manual';
-      logger.log(`[ChatManager] Configured operation mode (for sending): ${operationMode}`);
-
-      // Assume window.openaiManager is the primary (and likely only) AI service provider,
-      // and it implements the OpenAI Assistants API.
-      const assistantService = window.openaiManager;
-
-      let assistantServiceAvailable = false;
-      if (typeof assistantService === 'object' &&
-        typeof assistantService.generateResponse === 'function' &&
-        typeof assistantService.isReady === 'function') {
-        assistantServiceAvailable = assistantService.isReady();
+      if (remaining) {
+        // Fallback: replace the node to reset internal state
+        const clone = input.cloneNode(true);
+        input.parentNode.replaceChild(clone, input);
+        ['input', 'change'].forEach(ev =>
+          clone.dispatchEvent(new Event(ev, { bubbles: true }))
+        );
+        clone.focus();
+        logger.debug('Fallback: input field replaced with clone for cleanup');
       }
-
-      logger.debug(`[ChatManager] OpenAI Assistant Service (via window.openaiManager) Available: ${assistantServiceAvailable}`);
-      if (assistantService && typeof assistantService.isReady === 'function') {
-        // Log current state of openaiManager, isReady() call will auto-correct isInitialized if needed.
-        logger.debug(`[ChatManager] window.openaiManager details: apiKey=${!!assistantService.apiKey}, isInitialized=${assistantService.isInitialized}, isReady=${assistantService.isReady()}`);
-      } else if (assistantService) {
-        logger.debug(`[ChatManager] window.openaiManager details: apiKey=${!!assistantService.apiKey}, isInitialized=${assistantService.isInitialized}, isReady method not found.`);
-      }
-
-
-      if (assistantServiceAvailable) {
-        logger.log('[ChatManager] Using OpenAI Assistant...');
-        console.log('[ChatManager] Payload to assistant →', context);
-        showSimpleAlert('Consulting the OpenAI Assistant...', 'info');
-
-        // Get response as plain text
-        const responseText = await assistantService.generateResponse(context);
-
-        // Always treat as simple plain text
-        const replyText = typeof responseText === 'string'
-          ? responseText
-          : (responseText.toString() || "No response received");
-
-        this.insertResponseInInputField(replyText);
-        showSimpleAlert('Response inserted. Review and send.', 'info');
-        await this.markChatAsRead();
-        return { text: replyText };
-      }
-      // NO AI SERVICE AVAILABLE
-      else {
-        logger.warn('[ChatManager] No AI services available (window.openaiManager not configured or not ready).');
-        const productInfo = context.productDetails ? `${context.productDetails.title} (${context.productDetails.price})` : 'No product information';
-        const helpText = `You are in a conversation as ${roleText}.\nProduct: ${productInfo}\nNo AI services configured. Please check options.`;
-        showSimpleAlert(helpText, 'info');
-        if (assistantService) {
-          logger.debug(helpText + `\n[ChatManager] Debug: window.openaiManager ready state: ${assistantService.isReady ? assistantService.isReady() : 'isReady method missing'}, isInitialized: ${assistantService.isInitialized}`);
-        } else {
-          logger.debug(helpText + `\n[ChatManager] Debug: window.openaiManager is not an object.`);
-        }
-        return { text: helpText, error: true, refusalReason: "No AI service configured" };
-      }
-    } catch (error) {
-      logger.error(`[ChatManager] Critical error in handleResponse: ${error.message}`, {}, error);
-      // Avoid duplicate alerts if a more specific one was already shown
-      if (!error.message.includes("API Error:") &&
-        !error.message.includes("parsing issue") &&
-        !error.message.includes("unsafe") &&
-        !error.message.includes("Could not generate a valid structured response")) {
-        showSimpleAlert(`Error generating response: ${error.message}`, 'error');
-      }
-      throw error;
+      return true;
     }
-  }
 
-  /**
-   * Inserts the generated response directly into the chat input field and sends it if configured
-   * @param {string} text - Text of the response to insert
-   * @returns {boolean} - True if it was inserted correctly
-   */
-  insertResponseInInputField(text) {
-    try {
-      const inputField = document.querySelector(CONFIG.selectors.activeChat.messageInput);
-      if (!inputField) {
-        logger.error('Message input field not found');
+    /** Inserts text into the field (without cleaning) */
+    insertMessageInInput(text) {
+      const input = document.querySelector(CONFIG.selectors.activeChat.messageInput);
+      if (!input) { logger.error('Message input field not found'); return false; }
+      domUtils.insertTextIntoField(input, text);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    }
+
+    /**
+     * Clears, inserts, and optionally sends
+     * @param {string} text
+     * @param {boolean} autoSend
+     */
+    insertMessageAndSend(text, autoSend = false) {
+      this.clearMessageInputField();
+      this.insertMessageInInput(text);
+      if (autoSend && CONFIG.autoSendMessages) {
+        const input = document.querySelector(CONFIG.selectors.activeChat.messageInput);
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+      }
+      return true;
+    }
+
+    /**
+     * Sends the message by clicking on the send button or simulating Enter key.
+     * @param {boolean} isAfterInsert - If retry after insert
+     * @returns {boolean}
+     */
+    async sendMessage(isAfterInsert = false) {
+      try {
+        logger.debug(`Initiating message sending attempt (${isAfterInsert ? 'after insert' : 'direct'})`);
+
+        // Strategy 1: send button
+        const selectors = [
+          ...CONFIG.selectors.activeChat.sendButton
+        ];
+        let btn = domUtils.findElement(selectors);
+        // Discard buttons that are not for sending
+        if (btn && !(/send|enviar/i).test(btn.getAttribute('aria-label') || '')) {
+          btn = null;
+        }
+        if (btn) {
+          const rect = btn.getBoundingClientRect();
+          const style = window.getComputedStyle(btn);
+          const visible = rect.width > 0 && rect.height > 0 &&
+            style.visibility !== 'hidden' &&
+            style.display !== 'none' &&
+            style.opacity !== '0';
+          if (visible) {
+            logger.debug(`Button visible (${rect.width}×${rect.height}), clicking...`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            setTimeout(() => {
+              try {
+                btn.click();
+                logger.log('Message sent by click');
+              } catch (e) {
+                btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+              }
+            }, 100);
+            return true;
+          } else {
+            logger.warn('Send button found but not visible');
+          }
+        }
+
+        // Strategy 2: Enter key without simulateKeyPress
+        logger.debug('Falling back to Enter key...');
+        const input = document.querySelector(CONFIG.selectors.activeChat.messageInput);
+        if (input) {
+          input.focus();
+          const ev = new KeyboardEvent('keydown', {
+            key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
+            bubbles: true, cancelable: true
+          });
+          if (input.dispatchEvent(ev)) {
+            logger.log('Message sent via KeyboardEvent');
+            return true;
+          }
+          try {
+            document.execCommand('insertText', false, '\n');
+            logger.log('Message sent via execCommand');
+            return true;
+          } catch { }
+          // retry once
+          if (!isAfterInsert) {
+            logger.debug('Scheduling retry after 1s...');
+            setTimeout(() => this.sendMessage(true), 1000);
+            return true;
+          }
+        }
+
+        logger.error('All send strategies failed');
+        return false;
+      } catch (error) {
+        logger.error(`Error in sendMessage: ${error.message}`, {}, error);
+        return false;
+      }
+    }
+
+    /**
+     * Marks the current chat as read to avoid duplicate responses
+     * @param {string} chatId - Chat ID to mark as read (optional, uses current if not provided)
+     * @returns {Promise<boolean>} - True if it could be marked as read
+     */
+    async markChatAsRead(chatId = null) {
+      const targetChatId = chatId || this.currentChatId;
+
+      if (!targetChatId) {
+        logger.error('No chat ID to mark as read');
         return false;
       }
 
-      // Verify if we are in AUTO mode to apply greater protection
-      const isAutoMode = window.CONFIG?.operationMode === 'auto';
-      logger.debug(`Operation mode when inserting response: ${isAutoMode ? 'AUTO' : 'MANUAL'}`);
+      logger.log(`Attempting to mark chat as read: ${targetChatId}`);
 
-      // PHASE 1: Previous cleaning with delay to ensure Facebook is ready
-      setTimeout(() => {
-        // First try to clean with openaiManager - more aggressive if we are in AUTO
-        if (window.openaiManager && typeof window.openaiManager.clearInputField === 'function') {
-          window.openaiManager.clearInputField();
-          logger.debug('First cleaning phase completed with openaiManager');
-        }
-
-        // PHASE 2: Additional direct cleaning, more intense in AUTO
-        this.forceCleanInputField(inputField);
-        logger.debug('Second direct cleaning phase completed');
-
-        // PHASE 3: Verify the cleaning status before inserting
-        const isContentEditable = inputField.getAttribute('contenteditable') === 'true';
-        const currentContent = isContentEditable ? 
-          (inputField.textContent || '').trim() : 
-          (inputField.value || '').trim();
-
-        if (currentContent) {
-          logger.warn(`Field is NOT empty after two cleaning attempts. Current content: "${currentContent.substring(0, 20)}..."`);
-          // PHASE 4: Emergency cleaning as a last resort
-          this.emergencyCleanField(inputField);
-
-          // In AUTO mode, wait a little longer to ensure complete cleaning
-          if (isAutoMode) {
-            logger.debug('AUTO mode detected, applying additional pause to ensure complete cleaning');
-            setTimeout(() => {
-              this.insertTextAndPotentiallySend(inputField, text, isAutoMode);
-            }, 500);
-            return true;
-          }
-        }
-
-        // PHASE 5: Insert the text after a small delay so that the cleaning takes effect
-        setTimeout(() => {
-          this.insertTextAndPotentiallySend(inputField, text, isAutoMode);
-        }, 100);
-      }, isAutoMode ? 300 : 0); // Greater delay in AUTO mode
-
-      return true;
-    } catch (error) {
-      logger.error(`Error inserting response in input field: ${error.message}`);
-      return false;
-    }
-  }
-
-  /**
-   * Separate method to insert text and potentially send it
-   * @param {HTMLElement} inputField - Input field
-   * @param {string} text - Text to insert
-   * @param {boolean} isAutoMode - If we are in automatic mode
-   */
-  insertTextAndPotentiallySend(inputField, text, isAutoMode) {
-    try {
-      logger.debug('Inserting text in input field');
-      domUtils.insertTextIntoField(inputField, text);
-
-      // Send the message automatically only if both conditions
-      if (CONFIG.autoSendMessages && isAutoMode) {
-        logger.debug('Automatic sending activated in AUTO mode, sending message...');
-
-        // MODIFIED: Longer waiting time before verifying the text and sending
-        // The previous value was too short, now we use a larger configurable delay
-        const sendDelay = CONFIG.sendMessageDelay || 2000; // Minimum 2 seconds by default
-        logger.debug(`Waiting ${sendDelay}ms before sending so that Facebook processes the text...`);
-
-        setTimeout(() => {
-          // Verify once more that the inserted text is what we want to send
-          const finalText = inputField.getAttribute('contenteditable') === 'true' ?
-            (inputField.textContent || '') :
-            (inputField.value || '');
-
-          if (finalText.trim() === text.trim()) {
-            logger.debug('Text verified, sending message...');
-            this.sendMessage(true); // Pass true to indicate that it is a sending attempt after inserting text
-          } else {
-            logger.warn(`The final text (${finalText.length} chars) does not match the expected one (${text.length} chars), aborting automatic sending`);
-          }
-        }, sendDelay);
-      } else {
-        if (!CONFIG.autoSendMessages) {
-          logger.debug('Automatic sending deactivated (autoSendMessages: false)');
-        } else if (!isAutoMode) {
-          logger.debug(`MANUAL mode detected (operationMode: ${window.CONFIG?.operationMode})`);
-        }
-      }
-    } catch (error) {
-      logger.error(`Error in insertTextAndPotentiallySend: ${error.message}`);
-    }
-  }
-
-  /**
-   * Sends the message by clicking on the send button or simulating the Enter key
-   * @param {boolean} isAfterInsert - Indicates if it is an attempt after inserting text
-   * @returns {boolean} - True if the message could be sent
-   */
-  sendMessage(isAfterInsert = false) {
-    try {
-      // NEW: Detailed log about the sending attempt
-      logger.debug(`Initiating message sending attempt (${isAfterInsert ? 'after inserting text' : 'direct'})`);
-
-      // Strategy 1: Click on the send button with improved selectors
-      // IMPROVEMENT: Use more specific selectors and verify visibility/enablement
-      const sendButtonSelectors = [
-        ...CONFIG.selectors.activeChat.sendButton, // Use the configured ones
-        'div[aria-label="Press enter to send"]', // Common button in new version
-        'div[aria-label="Pulsa Intro para enviar"]', // Spanish version
-        'div[role="button"][tabindex="0"][style*="transform: translateY(0px)"]', // Transformed visible button
-        'div.xjbqb8w:not([style*="opacity: 0"])', // Button with visible opacity
-        'div.x1i10hfl[role="button"]:not(.x1hc1fzr)' // Generic non-hidden button
-      ];
-
-      // Log for debugging
-      logger.debug(`Searching for send button with ${sendButtonSelectors.length} selectors...`);
-
-      // Search for the button with any of the selectors
-      const sendButton = domUtils.findElement(sendButtonSelectors);
-
-      if (sendButton) {
-        // NEW: Verify that the button is visible and enabled before clicking
-        const rect = sendButton.getBoundingClientRect();
-        const styles = window.getComputedStyle(sendButton);
-        const isVisible = rect.width > 0 && rect.height > 0 &&
-          styles.visibility !== 'hidden' &&
-          styles.display !== 'none' &&
-          styles.opacity !== '0';
-
-        if (isVisible) {
-          logger.debug(`Send button found and visible (${rect.width}x${rect.height}), clicking...`);
-
-          // IMPROVEMENT: Add small delay before the click to give Facebook time
-          setTimeout(() => {
-            try {
-              // Try a normal click
-              sendButton.click();
-              logger.log('Message sent by clicking on the button');
-              this.markChatAsRead();
-              return true;
-            } catch (clickError) {
-              // If the normal click fails, try simulating a click event
-              logger.warn(`Error when doing normal click: ${clickError.message}, trying simulated event...`);
-              try {
-                sendButton.dispatchEvent(new MouseEvent('click', {
-                  bubbles: true,
-                  cancelable: true,
-                  view: window
-                }));
-                logger.log('Message sent using simulated click event');
-                this.markChatAsRead();
-                return true;
-              } catch (eventError) {
-                logger.error(`Error simulating click event: ${eventError.message}`);
-              }
-            }
-          }, 100); // Small delay before the click
-        } else {
-          logger.warn(`Send button found but NOT visible/enabled. Using alternative method.`);
-        }
-      } else {
-        logger.debug('Send button not found, trying with Enter key...');
-      }
-
-      // Strategy 2: Simulate Enter key in the input field
-      const inputField = document.querySelector(CONFIG.selectors.activeChat.messageInput);
-      if (inputField) {
-        logger.debug('Simulating Enter key in the input field...');
-
-        // Use the simulateKeyPress method from domUtils
-        if (domUtils.simulateKeyPress(inputField, 'Enter', 13)) {
-          logger.log('Message sent simulating Enter key with domUtils.simulateKeyPress');
-          this.markChatAsRead();
-          return true;
-        }
-
-        // Alternative strategy if the previous one fails
-        inputField.focus();
-        const enterEvent = new KeyboardEvent('keydown', {
-          key: 'Enter',
-          code: 'Enter',
-          keyCode: 13,
-          which: 13,
-          bubbles: true,
-          cancelable: true
-        });
-
-        const sent = inputField.dispatchEvent(enterEvent);
-
-        if (sent) {
-          logger.log('Message sent simulating Enter key with KeyboardEvent');
-          this.markChatAsRead();
-          return true;
-        } else {
-          logger.warn('The event was not sent correctly');
-        }
-
-        // Strategy 3: Use execCommand (alternative method)
-        try {
-          if (document.execCommand('insertText', false, '\n')) {
-            logger.log('Message sent using execCommand insertText');
-            this.markChatAsRead();
-            return true;
-          }
-        } catch (execError) {
-          logger.error(`Error using execCommand: ${execError.message}`);
-        }
-
-        // NEW: Strategy 4 - Try resending after a while if it is the first attempt
-        if (!isAfterInsert) {
-          logger.debug('First attempt failed, scheduling retry after 1 second...');
-          setTimeout(() => this.sendMessage(true), 1000);
-          return true; // Indicate that the retry has been scheduled
-        }
-      }
-
-      logger.error('Could not send the message after all attempts');
-      return false;
-    } catch (error) {
-      logger.error(`Error sending message: ${error.message}`, {}, error);
-      return false;
-    }
-  }
-
-  /**
-   * Additional method to force cleaning of the input field directly
-   * @param {HTMLElement} inputField - Input field to clean
-   */
-  forceCleanInputField(inputField) {
-    try {
-      if (!inputField) return;
-
-      const isContentEditable = inputField.getAttribute('contenteditable') === 'true';
-
-      if (isContentEditable) {
-        // Clean HTML and text content
-        inputField.innerHTML = '';
-        inputField.textContent = '';
-
-        // Use selection and delete command
-        try {
-          const selection = window.getSelection();
-          const range = document.createRange();
-          range.selectNodeContents(inputField);
-          selection.removeAllRanges();
-          selection.addRange(range);
-          document.execCommand('delete', false, null);
-        } catch (e) {
-          logger.debug(`Error using selection to clean: ${e.message}`);
-        }
-      } else {
-        inputField.value = '';
-      }
-
-      // Trigger events
-      ['input', 'change', 'keyup'].forEach(eventType => {
-        const event = new Event(eventType, { bubbles: true });
-        inputField.dispatchEvent(event);
-      });
-    } catch (error) {
-      logger.debug(`Error in forced cleaning: ${error.message}`);
-    }
-  }
-
-  /**
-   * Emergency method to clean a field that does not respond to normal methods
-   * @param {HTMLElement} inputField - Input field to clean
-   */
-  emergencyCleanField(inputField) {
-    try {
-      // 1. Try replacing the node completely
-      if (inputField.parentNode) {
-        const newField = inputField.cloneNode(false); // Clone without content
-        inputField.parentNode.replaceChild(newField, inputField);
-
-        // 2. Simulate keyboard events to delete content
-        const keyEvents = [
-          new KeyboardEvent('keydown', { key: 'Control', keyCode: 17, bubbles: true }),
-          new KeyboardEvent('keydown', { key: 'a', keyCode: 65, bubbles: true }),
-          new KeyboardEvent('keyup', { key: 'a', keyCode: 65, bubbles: true }),
-          new KeyboardEvent('keyup', { key: 'Control', keyCode: 17, bubbles: true }),
-          new KeyboardEvent('keydown', { key: 'Delete', keyCode: 46, bubbles: true }),
-          new KeyboardEvent('keyup', { key: 'Delete', keyCode: 46, bubbles: true })
+      try {
+        // Method 1: Find and click the unread message indicator
+        // These selectors may need adjustments depending on Facebook's current structure
+        const unreadIndicatorSelectors = [
+          // Specific "mark as read" buttons/indicators
+          'div[aria-label="Marcar como leído"]',
+          'div[aria-label="Mark as read"]',
+          'div[aria-label*="read"][role="button"]',
+          // General elements that indicate unread messages
+          'div.xuk3077[role="row"] div[aria-label*="unread"]',
+          'div.x78zum5[role="row"] div.xzg4506:not(:empty)',
+          'div[role="grid"] div[role="row"] div.xzg4506:not(:empty)' // Generic unread indicator
         ];
 
-        keyEvents.forEach(event => newField.dispatchEvent(event));
-        logger.debug('Emergency cleaning applied (node replacement)');
-      } else {
-        logger.warn('Could not apply emergency cleaning: the field has no parent node');
-      }
-    } catch (error) {
-      logger.debug(`Error in emergency cleaning: ${error.message}`);
-    }
-  }
+        // Try to find any unread indicator in this chat
+        let unreadElement = null;
 
-  /**
-   * Sends the message by clicking on the send button or simulating the Enter key
-   * @returns {boolean} - True if the message could be sent
-   */
-  sendMessage() {
-    try {
-      // Strategy 1: Click on the send button
-      const sendButton = domUtils.findElement(CONFIG.selectors.activeChat.sendButton);
+        // If we are in the active chat, search directly in the DOM
+        if (document.querySelector(`[data-thread-id="${targetChatId}"]`) ||
+          document.querySelector(`[href*="${targetChatId}"]`)) {
 
-      if (sendButton) {
-        logger.debug('Send button found, clicking...');
-        sendButton.click();
-        logger.log('Message sent by clicking on the button');
-        return true;
-      }
-
-      // Strategy 2: Simulate Enter key in the input field
-      const inputField = document.querySelector(CONFIG.selectors.activeChat.messageInput);
-      if (inputField) {
-        logger.debug('Simulating Enter key in the input field...');
-
-        // Use the new simulateKeyPress method from domUtils
-        if (domUtils.simulateKeyPress(inputField, 'Enter', 13)) {
-          logger.log('Message sent simulating Enter key with simulateKeyPress');
-          return true;
-        }
-
-        // Alternative strategy if the previous one fails
-        inputField.focus();
-        const enterEvent = new KeyboardEvent('keydown', {
-          key: 'Enter',
-          code: 'Enter',
-          keyCode: 13,
-          which: 13,
-          bubbles: true,
-          cancelable: true
-        });
-
-        const sent = inputField.dispatchEvent(enterEvent);
-
-        if (sent) {
-          logger.log('Message sent simulating Enter key');
-          return true;
-        } else {
-          logger.warn('The keydown event was not processed by the input field');
-        }
-
-        // Strategy 3: Use execCommand (alternative method)
-        try {
-          document.execCommand('insertText', false, '\n');
-          logger.log('Message sent using execCommand');
-          return true;
-        } catch (execError) {
-          logger.debug(`execCommand failed: ${execError.message}`);
-        }
-      }
-
-      logger.error('Could not send the message - send button or input field not found');
-      return false;
-    } catch (error) {
-      logger.error(`Error sending message: ${error.message}`, {}, error);
-      return false;
-    }
-  }
-
-  /**
-   * Processes a chat and decides whether to generate an automatic response
-   * @param {string} chatId 
-   */
-  async processChatAndAutoRespond(chatId) {
-    try {
-      logger.log(`Extracting data from chat ${chatId}`);
-
-      // FIX: Correctly verify the operation mode
-      const autoMode = window.CONFIG?.operationMode === 'auto';
-
-      // Verify FIRST if automatic mode is enabled
-      // This avoids extracting data unnecessarily when we are in manual mode
-      if (!autoMode) {
-        logger.debug(`Auto-response deactivated for chat ${chatId}. The current mode is: ${window.CONFIG?.operationMode}`);
-        return false;
-      }
-
-      // FIX: Additional log for diagnosis
-      logger.log(`Automatic mode activated (operationMode: ${window.CONFIG?.operationMode}), processing automatic response...`);
-
-      const chatData = await this.extractChatData(chatId);
-
-      if (!chatData.success) {
-        logger.error(`Error extracting chat data for automatic response: ${chatData.error || 'Unknown error'}`);
-        return false;
-      }
-
-      // We already know that we are in automatic mode, we proceed with the response
-      logger.debug(`AUTO mode activated (${window.CONFIG?.operationMode}), processing automatic response`);
-
-      // Verify that responseManager exists for automatic response
-      if (!window.responseManager) {
-        logger.error('responseManager not found to process automatic response');
-        return false;
-      }
-
-      // Verify availability of OpenAI Manager for automatic mode
-      if (!window.openaiManager) {
-        logger.error('openaiManager not found to process automatic response');
-        return false;
-      }
-
-      // Verify if OpenAI Manager is ready
-      const openaiReady = typeof window.openaiManager.isReady === 'function' ?
-        window.openaiManager.isReady() :
-        (window.openaiManager.apiKey && window.openaiManager.isInitialized);
-
-      if (!openaiReady) {
-        logger.error('OpenAI Manager is not ready to process automatic response');
-        return false;
-      }
-
-      // Call processAutoResponse directly
-      const result = await window.responseManager.processAutoResponse(chatId, chatData.chatData);
-
-      // FIX: Additional log for diagnosis
-      logger.log(`Result of processAutoResponse: ${result ? 'success' : 'failed'}`);
-      return result;
-
-    } catch (error) {
-      logger.error(`Error processing chat for automatic response: ${error.message}`, {}, error);
-      showSimpleAlert(`Error processing automatic response: ${error.message}`, 'error');
-      return false;
-    }
-  }
-
-  /**
-   * Marks the current chat as read to avoid duplicate responses
-   * @param {string} chatId - Chat ID to mark as read (optional, uses current if not provided)
-   * @returns {Promise<boolean>} - True if it could be marked as read
-   */
-  async markChatAsRead(chatId = null) {
-    const targetChatId = chatId || this.currentChatId;
-
-    if (!targetChatId) {
-      logger.error('No chat ID to mark as read');
-      return false;
-    }
-
-    logger.log(`Attempting to mark chat as read: ${targetChatId}`);
-
-    try {
-      // Method 1: Find and click the unread message indicator
-      // These selectors may need adjustments depending on Facebook's current structure
-      const unreadIndicatorSelectors = [
-        // Specific "mark as read" buttons/indicators
-        'div[aria-label="Marcar como leído"]',
-        'div[aria-label="Mark as read"]',
-        'div[aria-label*="read"][role="button"]',
-        // General elements that indicate unread messages
-        'div.xuk3077[role="row"] div[aria-label*="unread"]',
-        'div.x78zum5[role="row"] div.xzg4506:not(:empty)',
-        'div[role="grid"] div[role="row"] div.xzg4506:not(:empty)' // Generic unread indicator
-      ];
-
-      // Try to find any unread indicator in this chat
-      let unreadElement = null;
-
-      // If we are in the active chat, search directly in the DOM
-      if (document.querySelector(`[data-thread-id="${targetChatId}"]`) ||
-        document.querySelector(`[href*="${targetChatId}"]`)) {
-
-        for (const selector of unreadIndicatorSelectors) {
-          unreadElement = document.querySelector(selector);
-          if (unreadElement) {
-            logger.debug(`Found unread message indicator with selector: ${selector}`);
-            break;
-          }
-        }
-      }
-
-      // If we found an element, simulate click
-      if (unreadElement) {
-        logger.debug('Simulating click on "mark as read" indicator');
-        this.simulateCompatibleMouseEvents(unreadElement);
-
-        // Verify that the indicator disappeared
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        if (!document.querySelector(unreadIndicatorSelectors.join(', '))) {
-          logger.log('Chat marked as read successfully (indicator disappeared)');
-          return true;
-        }
-      }
-
-      // Method 2: Update an internal Facebook attribute (more advanced)
-      // This approach is more technical and may require adjustments when Facebook changes its implementation
-      try {
-        // Try to find the React data model where Facebook stores read state
-        const chatElements = document.querySelectorAll(`[data-thread-id="${targetChatId}"], [href*="${targetChatId}"]`);
-
-        for (const element of chatElements) {
-          // Access React instance properties
-          const reactKey = Object.keys(element).find(key => key.startsWith('__reactFiber$'));
-          if (reactKey) {
-            const internalInstance = element[reactKey];
-            if (internalInstance) {
-              // Navigate through internal structure to find state
-              const stateNode = internalInstance.return?.stateNode;
-              if (stateNode && typeof stateNode.markRead === 'function') {
-                logger.debug('Found Facebook internal markRead function, attempting to use');
-                stateNode.markRead();
-                logger.log('Chat marked as read using Facebook internal API');
-                return true;
-              }
+          for (const selector of unreadIndicatorSelectors) {
+            unreadElement = document.querySelector(selector);
+            if (unreadElement) {
+              logger.debug(`Found unread message indicator with selector: ${selector}`);
+              break;
             }
           }
         }
-      } catch (internalError) {
-        logger.debug(`Error attempting to use internal API: ${internalError.message}`);
-        // Continue with other methods if this fails
-      }
 
-      // Method 3: Simulate complete viewing of chat (usually marks as read)
-      if (this.currentChatId === targetChatId) {
-        // Find messages container
-        const messagesContainer = domUtils.findElement(CONFIG.selectors.activeChat.container);
-        if (messagesContainer) {
-          // Scroll completely to bottom
-          messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        // If we found an element, simulate click
+        if (unreadElement) {
+          logger.debug('Simulating click on "mark as read" indicator');
+          this.simulateCompatibleMouseEvents(unreadElement);
 
-          // Wait a moment for Facebook to process the action
-          await new Promise(resolve => setTimeout(resolve, 1500));
-          logger.debug('Chat marked as read by scrolling to most recent messages');
-          return true;
+          // Verify that the indicator disappeared
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          if (!document.querySelector(unreadIndicatorSelectors.join(', '))) {
+            logger.log('Chat marked as read successfully (indicator disappeared)');
+            return true;
+          }
         }
+
+        // Method 2: Update an internal Facebook attribute (more advanced)
+        // This approach is more technical and may require adjustments when Facebook changes its implementation
+        try {
+          // Try to find the React data model where Facebook stores read state
+          const chatElements = document.querySelectorAll(`[data-thread-id="${targetChatId}"], [href*="${targetChatId}"]`);
+
+          for (const element of chatElements) {
+            // Access React instance properties
+            const reactKey = Object.keys(element).find(key => key.startsWith('__reactFiber$'));
+            if (reactKey) {
+              const internalInstance = element[reactKey];
+              if (internalInstance) {
+                // Navigate through internal structure to find state
+                const stateNode = internalInstance.return?.stateNode;
+                if (stateNode && typeof stateNode.markRead === 'function') {
+                  logger.debug('Found Facebook internal markRead function, attempting to use');
+                  stateNode.markRead();
+                  logger.log('Chat marked as read using Facebook internal API');
+                  return true;
+                }
+              }
+            }
+          }
+        } catch (internalError) {
+          logger.debug(`Error attempting to use internal API: ${internalError.message}`);
+          // Continue with other methods if this fails
+        }
+
+        // Method 3: Simulate complete viewing of chat (usually marks as read)
+        if (this.currentChatId === targetChatId) {
+          // Find messages container
+          const messagesContainer = domUtils.findElement(CONFIG.selectors.activeChat.container);
+          if (messagesContainer) {
+            // Scroll completely to bottom
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+            // Wait a moment for Facebook to process the action
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            logger.debug('Chat marked as read by scrolling to most recent messages');
+            return true;
+          }
+        }
+
+        // If we get here, we couldn't explicitly mark as read
+        logger.warn(`Could not explicitly mark chat ${targetChatId} as read, but sending response may have done it automatically`);
+
+        // Return true since FB may have marked it automatically when sending message
+        return true;
+      } catch (error) {
+        logger.error(`Error marking chat as read: ${error.message}`);
+        return false;
       }
+    }
 
-      // If we get here, we couldn't explicitly mark as read
-      logger.warn(`Could not explicitly mark chat ${targetChatId} as read, but sending response may have done it automatically`);
+    /** Handles the generated response and inserts/sends according to mode */
+    async handleResponse(context) {
+      try {
+        logger.log('[ChatManager] Initiating handleResponse...');
 
-      // Return true since FB may have marked it automatically when sending message
-      return true;
-    } catch (error) {
-      logger.error(`Error marking chat as read: ${error.message}`);
-      return false;
+        if (!context || !context.messages || context.messages.length === 0) {
+          logger.error('[ChatManager] Invalid chat context or no messages.');
+          throw new Error('Invalid chat context or no messages');
+        }
+
+        const roleText = context.role === 'seller' ? 'seller' : 'buyer';
+        logger.log(`[ChatManager] Role: ${roleText}, Total messages for context: ${context.messages.length}`);
+
+        const operationMode = window.CONFIG?.operationMode || 'manual';
+        logger.log(`[ChatManager] Configured operation mode (for sending): ${operationMode}`);
+
+        // Assume window.openaiManager is the primary (and likely only) AI service provider,
+        // and it implements the OpenAI Assistants API.
+        const assistantService = window.openaiManager;
+
+        let assistantServiceAvailable = false;
+        if (typeof assistantService === 'object' &&
+          typeof assistantService.generateResponse === 'function' &&
+          typeof assistantService.isReady === 'function') {
+          assistantServiceAvailable = assistantService.isReady();
+        }
+
+        logger.debug(`[ChatManager] OpenAI Assistant Service (via window.openaiManager) Available: ${assistantServiceAvailable}`);
+        if (assistantService && typeof assistantService.isReady === 'function') {
+          // Log current state of openaiManager, isReady() call will auto-correct isInitialized if needed.
+          logger.debug(`[ChatManager] window.openaiManager details: apiKey=${!!assistantService.apiKey}, isInitialized=${assistantService.isInitialized}, isReady=${assistantService.isReady()}`);
+        } else if (assistantService) {
+          logger.debug(`[ChatManager] window.openaiManager details: apiKey=${!!assistantService.apiKey}, isInitialized=${assistantService.isInitialized}, isReady method not found.`);
+        }
+
+
+        if (assistantServiceAvailable) {
+          logger.log('[ChatManager] Using OpenAI Assistant...');
+          console.log('[ChatManager] Payload to assistant →', context);
+          showSimpleAlert('Consulting the OpenAI Assistant...', 'info');
+
+          // Get response as plain text
+          const responseText = await assistantService.generateResponse(context);
+
+          // Always treat as simple plain text
+          const replyText = typeof responseText === 'string'
+            ? responseText
+            : responseText.toString();
+          const isAuto = window.CONFIG?.operationMode === 'auto';
+
+          // Cleaning and insertion
+          this.clearMessageInputField();
+          this.insertMessageInInput(replyText);
+
+          if (isAuto) {
+            await new Promise(r => setTimeout(r, 1000));  // keep small delay
+            await this.sendMessage();                     // ← now await
+            await this.markChatAsRead();
+            this.isResponding = false;                    // reset flag
+            logger.log('Auto response sent and chat marked as read');
+          } else {
+            showSimpleAlert('Response inserted. Review and press Enter to send.', 'info');
+          }
+          return { text: replyText };
+        }
+        // NO AI SERVICE AVAILABLE
+        else {
+          logger.warn('[ChatManager] No AI services available (window.openaiManager not configured or not ready).');
+          const productInfo = context.productDetails ? `${context.productDetails.title} (${context.productDetails.price})` : 'No product information';
+          const helpText = `You are in a conversation as ${roleText}.\nProduct: ${productInfo}\nNo AI services configured. Please check options.`;
+          showSimpleAlert(helpText, 'info');
+          if (assistantService) {
+            logger.debug(helpText + `\n[ChatManager] Debug: window.openaiManager ready state: ${assistantService.isReady ? assistantService.isReady() : 'isReady method missing'}, isInitialized: ${assistantService.isInitialized}`);
+          } else {
+            logger.debug(helpText + `\n[ChatManager] Debug: window.openaiManager is not an object.`);
+          }
+          return { text: helpText, error: true, refusalReason: "No AI service configured" };
+        }
+      } catch (error) {
+        logger.error(`[ChatManager] Critical error in handleResponse: ${error.message}`, {}, error);
+        // Avoid duplicate alerts if a more specific one was already shown
+        if (!error.message.includes("API Error:") &&
+          !error.message.includes("parsing issue") &&
+          !error.message.includes("unsafe") &&
+          !error.message.includes("Could not generate a valid structured response")) {
+          showSimpleAlert(`Error generating response: ${error.message}`, 'error');
+        }
+        throw error;
+      }
     }
   }
-}
 
 // Create an instance and expose it globally
 const chatManager = new ChatManager();
