@@ -35,7 +35,7 @@ Object.assign(CONFIG, {
   // AI section to centralize artificial intelligence configuration
   AI: {
     apiKey: null,       // API key for OpenAI
-    model: 'gpt-4.1-mini', // Default model
+    model: 'gpt-4o', // Default model
     maxTokens: 2048,    // Maximum tokens per response
     temperature: 0.7,   // Temperature for generation
     useAssistantAPI: true, // Use Assistants API instead of completions
@@ -56,7 +56,7 @@ Object.assign(CONFIG, {
     },
 
     // Function to synchronize with old configuration
-    syncWithLegacyConfig: function() {
+    syncWithLegacyConfig: function () {
       // Synchronize apiKey between the two locations for compatibility
       if (CONFIG.apiKey && !this.apiKey) {
         this.apiKey = CONFIG.apiKey;
@@ -72,17 +72,17 @@ Object.assign(CONFIG, {
       // Synchronize assistants with old configuration
       if (CONFIG.assistants) {
         if (CONFIG.assistants.seller) {
-          this.assistants.seller = {...this.assistants.seller, ...CONFIG.assistants.seller};
+          this.assistants.seller = { ...this.assistants.seller, ...CONFIG.assistants.seller };
         }
         if (CONFIG.assistants.buyer) {
-          this.assistants.buyer = {...this.assistants.buyer, ...CONFIG.assistants.buyer};
+          this.assistants.buyer = { ...this.assistants.buyer, ...CONFIG.assistants.buyer };
         }
       }
     }
   },
 
   // Model to use (default)
-  model: 'gpt-4.1-mini',
+  model: 'gpt-4o',
 
   // Minimum time between automatic responses (ms)
   autoResponseDelay: 5000,
@@ -149,7 +149,7 @@ Object.assign(CONFIG, {
             const isTimestamp = /^\s*\d+[smhdwy]\s*$/i.test(text);
             // Exclude Marketplace notifications
             const isMarketplaceNotification = text.includes("Marketplace ·");
-            // Treat as message if it contains ":" or is longer than 8 chars
+            // Treat as message if it contains ":" or text.length > 8
             const isMessage = text.includes(":") || text.length > 8;
             return !isTimestamp && !isMarketplaceNotification && isMessage;
           });
@@ -197,7 +197,7 @@ Object.assign(CONFIG, {
         'div[role="button"][aria-label="Play"]',
         'div[aria-label="Play"][role="button"]',
         'div[role="button"][aria-label*="audio"]',
-        'div[aria-label*="reproducir"][role="button"]', 
+        'div[aria-label*="reproducir"][role="button"]',
         'div[aria-label*="Audio message"]',
         'div.xzg4506 > div.x1qjc9v5 > div[role="button"]',
         'div[aria-label*="Play" i][role="button"]'
@@ -223,7 +223,7 @@ Object.assign(CONFIG, {
         'a[href*="cdn.fbsbx.com"][download]',
         'div[data-testid="attachment"]',
         'div[role="button"][aria-label*="file"]',
-        'div[aria-label*="archivo adjunto"]' 
+        'div[aria-label*="archivo adjunto"]'
       ],
 
       // Selectors for location (new)
@@ -232,7 +232,7 @@ Object.assign(CONFIG, {
         'a[href*="l.facebook.com/l.php"][href*="maps"]',
         'a[href*="google.com/maps"]',
         'div[aria-label*="location"]',
-        'div[aria-label*="ubicación"]' 
+        'div[aria-label*="ubicación"]'
       ],
 
       // Selectors for GIFs and stickers (new)
@@ -243,39 +243,44 @@ Object.assign(CONFIG, {
         'div[aria-label*="GIF"]'
       ],
 
-      // Rest of existing selectors
       sellerIndicators: [
-        'div[aria-label="Mark as pending"]',
-        'span:contains("Mark as pending")',
-        'div[aria-label="Create plan"]',
-        'div[aria-label="Mark as available"]',
-        'div[aria-label="Mark as sold"]'
+        'div[aria-label="Mark as sold"], div[aria-label="Marcar como vendido"]',
+        'div[aria-label="Mark as pending"], div[aria-label="Marcar como pendiente"]',
+        'div[aria-label="Mark as available"], div[aria-label="Marcar como disponible"]',
+        'a[aria-label="View buyer"], a[aria-label="Ver comprador"]',
+        'div[aria-label="View buyer"], div[aria-label="Ver comprador"]'
       ],
       buyerIndicators: [
         'a[aria-label="See details"]',
-        'span:contains("See details")'
+        'div[aria-label="View listing"], div[aria-label="Ver artículo"]',
+        'div[aria-label="Create plan"]',
+        'a[aria-label="View listing"], a[aria-label="Ver artículo"]',
+        'a[aria-label="View seller profile"], a[aria-label="Ver perfil del vendedor"]'
       ],
       productLink: 'a[href*="/marketplace/item/"]',
       productInfo: 'div[class*="x1sliqq"], div[role="main"] > div > div > div:first-child',
       messageInput: 'div[contenteditable="true"][role="textbox"], div[aria-label="Message"], p.xat24cr.xdj266r',
       sendButton: [
-        'div[aria-label="Press enter to send"]', // Standard button in English
-        'div[aria-label="Pulsa Intro para enviar"]', // Standard button in Spanish (kept for specific cases, or translate)
-        'div[role="button"][aria-label*="send"]', // Any button with "send" in aria-label
-        'div[role="button"][aria-label*="enviar"]', // Spanish version (kept for specific cases, or translate)
-        'div.x1i10hfl[role="button"].xjbqb8w', // Specific class selector
-        'div.x78zum5[role="button"].xjbqb8w', // Alternative selector
-        'div.x1i10hfl[role="button"]:not([aria-hidden="true"])', // Not hidden
-        'div[role="button"][tabindex="0"]:not([style*="visibility: hidden"])' // With tabindex and visible
+        'div[aria-label="Press enter to send"]',
+        'div[aria-label="Pulsa Intro para enviar"]',
+        'div[role="button"][aria-label*="send"]',
+        'div[role="button"][aria-label*="enviar"]',
+        'div.x1i10hfl[role="button"].xjbqb8w',
+        'div.x78zum5[role="button"].xjbqb8w',
+        'div.x1i10hfl[role="button"]:not([aria-hidden="true"])',
+        'div[role="button"][tabindex="0"]:not([style*="visibility: hidden"])',
+        'div[aria-label="Press enter to send"][role="button"]',
       ],
       scrollbar: [
-        '.x1uipg7g > div:nth-child(1) > div:nth-child(1)',
+        // Selector found by diagnostics (contains the real scroll)
+        'div.x78zum5.xdt5ytf.x1iyjqo2 > div[role="none"]',
         'div[style*="overflow-y: auto"][style*="height"]',
         'div[style*="overflow: auto"][style*="height"]',
+        // Existing selectors as backup
+        '.x1uipg7g > div:nth-child(1) > div:nth-child(1)',
         'div.x4k7w5x > div[style*="height"]',
         'div[role="main"] div.x1n2onr6[style*="height"]'
       ],
-      // New: chat beginning indicators for full scroll detection
       chatBeginningIndicators: [
         'div[role="img"][aria-label]',
         'h4.xdj266r.x11i5rnm.xat24cr.x1mh8g0r',
@@ -402,15 +407,15 @@ Object.assign(CONFIG, {
           if (assistantsData && typeof assistantsData === 'object') {
             // Update only existing properties in both structures
             if (assistantsData.seller) {
-              this.assistants.seller = {...this.assistants.seller, ...assistantsData.seller};
+              this.assistants.seller = { ...this.assistants.seller, ...assistantsData.seller };
               if (this.AI && this.AI.assistants) {
-                this.AI.assistants.seller = {...this.AI.assistants.seller, ...assistantsData.seller};
+                this.AI.assistants.seller = { ...this.AI.assistants.seller, ...assistantsData.seller };
               }
             }
             if (assistantsData.buyer) {
-              this.assistants.buyer = {...this.assistants.buyer, ...assistantsData.buyer};
+              this.assistants.buyer = { ...this.assistants.buyer, ...assistantsData.buyer };
               if (this.AI && this.AI.assistants) {
-                this.AI.assistants.buyer = {...this.AI.assistants.buyer, ...assistantsData.buyer};
+                this.AI.assistants.buyer = { ...this.AI.assistants.buyer, ...assistantsData.buyer };
               }
             }
           }
@@ -542,15 +547,15 @@ Object.assign(CONFIG, {
 
     // Update only if there is valid data for each role
     if (assistants.seller) {
-      this.assistants.seller = {...this.assistants.seller, ...assistants.seller};
+      this.assistants.seller = { ...this.assistants.seller, ...assistants.seller };
       if (this.AI && this.AI.assistants) {
-        this.AI.assistants.seller = {...this.AI.assistants.seller, ...assistants.seller};
+        this.AI.assistants.seller = { ...this.AI.assistants.seller, ...assistants.seller };
       }
     }
     if (assistants.buyer) {
-      this.assistants.buyer = {...this.assistants.buyer, ...assistants.buyer};
+      this.assistants.buyer = { ...this.assistants.buyer, ...assistants.buyer };
       if (this.AI && this.AI.assistants) {
-        this.AI.assistants.buyer = {...this.AI.assistants.buyer, ...assistants.buyer};
+        this.AI.assistants.buyer = { ...this.AI.assistants.buyer, ...assistants.buyer };
       }
     }
 
@@ -668,14 +673,37 @@ Object.assign(CONFIG, {
       operationMode: this.operationMode,
       hasAssistants,
     };
-  }
+  },
+
+  // Thread management system configurations
+  threadSystem: {
+    // Configurations for new threads
+    newThreads: {
+      maxMessages: 50,          // Limit the number of messages in new threads
+      maxProductImages: 5,      // Maximum number of product images to include
+      imageDetail: "high",      // Image quality: "high" or "low"
+    },
+    
+    // Configurations for existing threads
+    existingThreads: {
+      ignoreOlderThan: 24 * 60 * 60 * 1000, // 24h in milliseconds
+      onlyNewConversations: false,          // If true, ignore old chats
+    },
+    
+    // General configurations for the thread system
+    general: {
+      threadTTL: 2 * 60 * 60 * 1000,       // Thread lifetime: 2 hours
+      threadCleanupInterval: 15 * 60 * 1000, // Cleanup interval: 15 minutes
+      threadInfoMaxAge: 30 * 24 * 60 * 60 * 1000 // Maximum age for thread information: 30 days
+    }
+  },
 });
 
 // Export the configuration
 window.CONFIG = CONFIG;
 
 // FIX: Add function for diagnosis that can be called from the console
-window.diagnoseModeConfig = function() {
+window.diagnoseModeConfig = function () {
   const gmMode = typeof GM_getValue === 'function' ? GM_getValue('FB_CHAT_MODE') : 'N/A';
   const gmOpMode = typeof GM_getValue === 'function' ? GM_getValue('FB_CHAT_OPERATION_MODE') : 'N/A';
   const lsMode = localStorage.getItem('FB_CHAT_MODE');

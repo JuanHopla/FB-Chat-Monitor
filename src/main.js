@@ -570,6 +570,14 @@ function init() {
   // Load configuration
   loadConfig();
 
+  // Initialize Product Extractor with storageUtils
+  if (window.productExtractor && typeof window.productExtractor.initialize === 'function' && window.storageUtils) {
+    window.productExtractor.initialize({ storageUtils: window.storageUtils });
+    logger.debug('Product Extractor initialized');
+  } else {
+    logger.warn('Product Extractor or storageUtils not available for initialization.');
+  }
+
   // Initialize OpenAI Manager
   if (CONFIG.AI && CONFIG.AI.apiKey) {
     logger.log('API key loaded from localStorage in init');

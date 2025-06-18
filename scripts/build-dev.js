@@ -3,7 +3,7 @@ const path = require('path');
 const dotenv = require('dotenv');
 
 // File paths
-const headerPath = path.join(__dirname, '..', 'tampermonkey-header.js');
+const headerPath = path.join(__dirname, '..', 'templates', 'header.js');
 // Corrected and extended source file paths to match extract-source.js and build.js
 const srcConfigPath = path.join(__dirname, '..', 'src', 'config.js');
 const srcUtilsPath = path.join(__dirname, '..', 'src', 'utils.js');
@@ -86,6 +86,7 @@ async function buildDevScript() {
   try {
     // Read files
     const header = fs.readFileSync(headerPath, 'utf8');
+    console.log(`Using development header from: ${headerPath}`);
 
     // Read and clean modules
     // This list should mirror the one in extract-source.js for consistency, plus new files
