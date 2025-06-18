@@ -236,6 +236,12 @@ class OpenAIApiClient {
    * @returns {Promise<boolean>} - true if the image is accessible
    */
   async isImageAccessible(url) {
+    // Use the centralized filter
+    if (window.ImageFilterUtils) {
+      return await window.ImageFilterUtils.isImageAccessible(url);
+    }
+
+    // Original code as fallback
     try {
       // Some Facebook URLs may have access restrictions
       const isFacebookUrl = url.includes('fbcdn.net') ||
@@ -281,16 +287,18 @@ class OpenAIApiClient {
     // If it's a URL, try to download it first
     if (typeof imageInput === 'string') {
       try {
-        // Check if it's a Facebook URL
-        const isFacebookUrl = imageInput.includes('fbcdn.net') ||
-                             imageInput.includes('facebook.com') ||
-                             imageInput.includes('fbsbx.com');
-
-        // If it's a Facebook URL, check accessibility first
-        if (isFacebookUrl) {
+        // Use centralized filter if available
+        if (window.ImageFilterUtils && window.ImageFilterUtils.isProblematicFacebookImage(imageInput)) {
+          throw new Error(`Image rejected by the centralized filter: ${imageInput}`);
+        }
+        
+        // If not, use normal verification
+        // Check if it's a Facebook URL with size patterns
+        if (imageInput.includes('fbcdn.net') || imageInput.includes('facebook.com')) {
+          // Verify it's accessible before even trying
           const isAccessible = await this.isImageAccessible(imageInput);
           if (!isAccessible) {
-            throw new Error(`Facebook image URL not accessible: ${imageInput}`);
+            throw new Error(`Facebook image URL not accessible or filtered: ${imageInput}`);
           }
         }
 

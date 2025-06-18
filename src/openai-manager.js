@@ -31,6 +31,8 @@ class OpenAIManager {
     // Initialize module components (will be set in initialize())
     this.apiClient = null;
     this.threadManager = null;
+    this.threadMessageHandler = null; // New reference to the message handler by thread type
+    this.timestampUtils = null; // New reference to timestamp utilities
   }
 
   /**
@@ -60,6 +62,17 @@ class OpenAIManager {
         // Initialize module components with the API key
         this.apiClient = new window.OpenAIApiClient(this.apiKey);
         this.threadManager = new window.ThreadManager(this.apiClient);
+        
+        // Initialize references to new components
+        if (window.ThreadMessageHandler) {
+          this.threadMessageHandler = window.ThreadMessageHandler;
+          logger.debug('ThreadMessageHandler utility detected and connected');
+        }
+        
+        if (window.TimestampUtils) {
+          this.timestampUtils = window.TimestampUtils;
+          logger.debug('TimestampUtils utility detected and connected');
+        }
         
         // Verify if MessageChunker is available and use its shared instance if needed
         if (window.MessageChunker) {
@@ -270,6 +283,28 @@ class OpenAIManager {
   }
 
   /**
+   * Prepares messages according to the thread type (new or existing)
+   * @param {Object} context - Chat context
+   * @param {Object} threadInfo - Thread information
+   * @returns {Promise<Array>} Prepared messages
+   */
+  async prepareMessagesByThreadType(context, threadInfo) {
+    try {
+      // Verify if we have the specialized handler
+      if (this.threadMessageHandler) {
+        return await this.threadMessageHandler.prepareMessagesBasedOnThreadType(context, threadInfo);
+      }
+      
+      // If the specialized handler is not available, use the standard method
+      return await this.prepareMessageContent(context);
+    } catch (error) {
+      logger.error(`Error preparing messages by thread type: ${error.message}`);
+      // In case of error, use the standard method
+      return await this.prepareMessageContent(context);
+    }
+  }
+
+  /**
    * Generate a response using OpenAI API
    * @param {Object} context - Context data including role, messages, and product details
    * @returns {Promise<Object>} Generated structured response object or an error object
@@ -286,17 +321,102 @@ class OpenAIManager {
         if (!success) throw new Error('Could not initialize OpenAI API');
       }
 
-      // Prepare messages ONLY once
-      context.preparedMessages = await window.MessageUtils.prepareMessageContent(context);
+      // NEW: Apply deep filtering of problematic images throughout the context
+      if (window.ImageFilterUtils) {
+        logger.debug('Applying deep image filtering to the context before sending');
+        
+        // 1. Filtering images in product details
+        if (context.productDetails) {
+          context.productDetails = window.ImageFilterUtils.preprocessProductDetails(context.productDetails);
+          logger.debug('Product details filtered');
+        }
+        
+        // 2. Deep filtering of images in messages
+        if (Array.isArray(context.messages)) {
+          // Filter image URLs in each message
+          context.messages = context.messages.map(msg => {
+            // If the message has content.media.images, filter them
+            if (msg.content && msg.content.media && Array.isArray(msg.content.media.images)) {
+              // Filter only valid (non-problematic) images
+              msg.content.media.images = msg.content.media.images.filter(img => {
+                if (!img || !img.url) return false;
+                const isValid = !window.ImageFilterUtils.isProblematicFacebookImage(img.url);
+                if (!isValid) {
+                  logger.debug(`Filtered problematic image URL in message: ${img.url}`);
+                }
+                return isValid;
+              });
+            }
+            
+            // For compatibility: also filter imageUrls if they exist
+            if (msg.content && Array.isArray(msg.content.imageUrls)) {
+              msg.content.imageUrls = window.ImageFilterUtils.filterImageUrls(msg.content.imageUrls);
+            }
+            
+            return msg;
+          });
+          
+          logger.debug(`${context.messages.length} messages processed with image filtering`);
+        }
+        
+        // 3. Recursive filtering to catch URLs in nested or unknown properties
+        context = window.ImageFilterUtils.deepFilterImages(context, (url, filtered) => {
+          if (filtered) {
+            logger.debug(`Filtered problematic URL in deep filtering: ${url}`);
+          }
+        });
+        
+        logger.debug('Deep image filtering completed');
+      } else {
+        logger.warn('ImageFilterUtils not available. Deep image filtering will not be applied.');
+      }
+
+      // Verify that the thread manager has the necessary method
+      if (!this.threadManager || typeof this.threadManager.processChat !== 'function') {
+        // Attempt to solve the problem using getOrCreateThread as an alternative
+        if (this.threadManager && typeof this.threadManager.getOrCreateThread === 'function') {
+          logger.warn('ThreadManager missing processChat method, adding alias for getOrCreateThread');
+          this.threadManager.processChat = this.threadManager.getOrCreateThread;
+        } else {
+          throw new Error('ThreadManager missing required methods');
+        }
+      }
 
       // Thread and message sending
       const assistantId = this.getAssistantIdForRole(role);
       const chatId = context.chatId || 'default_chat';
-      const thread = await this.threadManager.getOrCreateThread(chatId);
-
-      await this.threadManager.addMessageToThread(thread.id, context);
-      return await this.threadManager.runAssistant(thread.id, assistantId);
-
+      
+      // Get thread with information about whether it's new or existing
+      const threadResult = await this.threadManager.processChat(chatId);
+      const threadId = threadResult.threadId || threadResult.id;
+      
+      // Add thread info to context so the message handler can use it
+      context.threadInfo = threadResult;
+      logger.debug(`Thread info: isNew=${threadResult.isNew}, has lastPosition: ${!!threadResult.lastPosition}`);
+      
+      // Use the new method of preparing messages by thread type if available
+      if (this.threadMessageHandler && context.threadInfo) {
+        context.preparedMessages = await this.prepareMessagesByThreadType(context, context.threadInfo);
+        logger.debug('Messages prepared using thread type optimization');
+      }
+      
+      // NEW: Apply final filtering to prepared messages just before sending them
+      if (window.ImageFilterUtils && context.preparedMessages) {
+        context.preparedMessages = window.ImageFilterUtils.filterImagesInOpenAIMessages(context.preparedMessages);
+        logger.debug('Applied final filtering to prepared messages');
+      }
+      
+      // Send the messages to the thread
+      await this.threadManager.addMessageToThread(threadId, context);
+      
+      // After successful processing, update the last processed message if we have one
+      if (context.messages && context.messages.length > 0) {
+        const lastMsg = context.messages[context.messages.length - 1];
+        this.threadManager.updateLastProcessedMessage(chatId, lastMsg);
+      }
+      
+      // Run the assistant and return the response
+      return await this.threadManager.runAssistant(threadId, assistantId);
     } catch (error) {
       logger.error(`Error generating response: ${error.message}`);
       throw error;
