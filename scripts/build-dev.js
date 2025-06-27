@@ -4,30 +4,23 @@ const dotenv = require('dotenv');
 
 // File paths
 const headerPath = path.join(__dirname, '..', 'templates', 'header.js');
-// Corrected and extended source file paths to match extract-source.js and build.js
 const srcConfigPath = path.join(__dirname, '..', 'src', 'config.js');
 const srcUtilsPath = path.join(__dirname, '..', 'src', 'utils.js');
 const srcResponseManagerPath = path.join(__dirname, '..', 'src', 'responseManager.js');
-const srcHumanSimulatorPath = path.join(__dirname, '..', 'src', 'human-simulator.js');
+const srcAudioAssociationPath = path.join(__dirname, '..', 'src', 'audio-association.js');
+const srcChatManagerPath = path.join(__dirname, '..', 'src', 'chatManager.js');
 const srcProductExtractorPath = path.join(__dirname, '..', 'src', 'product-extractor.js');
+const srcImageFilterUtilsPath = path.join(__dirname, '..', 'src', 'core', 'openai', 'image-filter-utils.js');
+const srcTimestampUtilsPath = path.join(__dirname, '..', 'src', 'core', 'openai', 'timestamp-utils.js');
+const srcApiClientPath = path.join(__dirname, '..', 'src', 'core', 'openai', 'ApiClient.js');
+const srcThreadStorePath = path.join(__dirname, '..', 'src', 'core', 'openai', 'ThreadStore.js');
+const srcMessageUtilsPath = path.join(__dirname, '..', 'src', 'core', 'openai', 'MessageUtils.js');
+const srcMessagePreprocessorPath = path.join(__dirname, '..', 'src', 'core', 'openai', 'MessagePreprocessor.js');
+const srcAssistantHandlerPath = path.join(__dirname, '..', 'src', 'core', 'openai', 'AssistantHandler.js');
 const srcOpenAIManagerPath = path.join(__dirname, '..', 'src', 'openai-manager.js');
-const srcAssistantManagerUiPath = path.join(__dirname, '..', 'src', 'assistant-manager-ui.js');
-const srcChatManagerPath = path.join(__dirname, '..', 'src', 'ChatManager.js'); // Corrected capitalization
-const srcMarketplacePath = path.join(__dirname, '..', 'src', 'marketplace.js');
 const srcUiPath = path.join(__dirname, '..', 'src', 'ui.js');
-const srcMainPath = path.join(__dirname, '..', 'src', 'main.js'); // Replaces srcIndexPath
+const srcMainPath = path.join(__dirname, '..', 'src', 'main.js');
 const srcInitPath = path.join(__dirname, '..', 'src', 'init.js');
-const srcEntryPath = path.join(__dirname, '..', 'src', 'entry.js');
-const srcExtensionsPath = path.join(__dirname, '..', 'src', 'extensions.js');
-const srcDiagnosticsPath = path.join(__dirname, '..', 'src', 'diagnostics.js');
-const srcAudioTranscriberPath = path.join(__dirname, '..', 'src', 'audio-transcriber.js');
-// const srcEnvLoaderPath = path.join(__dirname, '..', 'src', 'envLoader.js'); // Removed
-
-// Comment regarding file inclusion:
-// - audio-transcriber.js is now included in the build flow.
-// - aiService.js remains excluded as its functionality should be integrated elsewhere if needed.
-// - envLoader.js has been removed from the dev build as it's not actively used;
-//   config.js is modified to use a globally defined ENV object for development.
 
 const envPath = path.join(__dirname, '..', '.env');
 const outputPath = path.join(__dirname, '..', 'dist', 'dev.user.js');
@@ -123,12 +116,6 @@ async function buildDevScript() {
       { path: path.join(__dirname, '..', 'src', 'openai-manager/threadManager.js'), sectionName: 'OPENAI MANAGER - THREAD MANAGER', varName: 'openAIthreadManagerCode' },
       { path: path.join(__dirname, '..', 'src', 'openai-manager/messageHandler.js'), sectionName: 'OPENAI MANAGER - MESSAGE HANDLER', varName: 'openAImessageHandlerCode' },
       { path: srcOpenAIManagerPath, sectionName: 'OPENAI INTEGRATION', varName: 'openAICode' },
-      { path: path.join(__dirname, '..', 'src', 'AudioTranscriber', 'audioCache.js'), sectionName: 'AUDIO TRANSCRIBER - AUDIO CACHE', varName: 'audioCacheCode' },
-      { path: path.join(__dirname, '..', 'src', 'AudioTranscriber', 'audioDetector.js'), sectionName: 'AUDIO TRANSCRIBER - AUDIO DETECTOR', varName: 'audioDetectorCode' },
-      { path: path.join(__dirname, '..', 'src', 'AudioTranscriber', 'audioNotifier.js'), sectionName: 'AUDIO TRANSCRIBER - AUDIO NOTIFIER', varName: 'audioNotifierCode' },
-      { path: path.join(__dirname, '..', 'src', 'AudioTranscriber', 'audioObserver.js'), sectionName: 'AUDIO TRANSCRIBER - AUDIO OBSERVER', varName: 'audioObserverCode' },
-      { path: path.join(__dirname, '..', 'src', 'AudioTranscriber', 'audioTranscriptionService.js'), sectionName: 'AUDIO TRANSCRIBER - AUDIO TRANSCRIPTION SERVICE', varName: 'audioTranscriptionServiceCode' },
-      { path: srcAudioTranscriberPath, sectionName: 'AUDIO TRANSCRIBER CORE', varName: 'audioTranscriberCode' },
       // AssistantManagerUI new modules
       { path: path.join(__dirname, '..', 'src', 'AssistantManagerUI', 'createStyles.js'), sectionName: 'ASSISTANT MANAGER UI - CREATE STYLES', varName: 'assistantManagerUiCreateStylesCode' },
       { path: path.join(__dirname, '..', 'src', 'AssistantManagerUI', 'createPanel.js'), sectionName: 'ASSISTANT MANAGER UI - CREATE PANEL', varName: 'assistantManagerUiCreatePanelCode' },

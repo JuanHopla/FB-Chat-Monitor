@@ -20,24 +20,23 @@ if (!fs.existsSync(DIST_DIR)) {
   fs.mkdirSync(DIST_DIR, { recursive: true });
 }
 
-// List of files to combine in order (make sure ChatManager.js is included)
+// List of files to combine in order
 const sourceFiles = [
   // Header will be handled separately now, not in this list
   'config.js',
   'utils.js',
   'responseManager.js',
-  'human-simulator.js',
-  'ChatManager.js', // Make sure this line exists and matches the exact file name
+  'audio-association.js', 
+  'chatManager.js',
   'product-extractor.js',
-  'openai/api-client.js',
-  'openai/message-utils.js',
-  'openai/timestamp-utils.js',
-  'openai/message-chunker.js',
-  'openai/thread-message-handler.js',
-  'openai/thread-manager.js',
-  'openai/chat-thread-system.js',
+  'core/openai/image-filter-utils.js',
+  'core/openai/timestamp-utils.js',
+  'core/openai/ApiClient.js',
+  'core/openai/ThreadStore.js',
+  'core/openai/MessageUtils.js',
+  'core/openai/MessagePreprocessor.js',
+  'core/openai/AssistantHandler.js',
   'openai-manager.js',
-  'assistant-manager-ui.js',
   'ui.js',
   'main.js',
   'init.js',
