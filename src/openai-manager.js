@@ -182,6 +182,24 @@ class OpenAIManager {
     }
     return assistantId;
   }
+
+  setAssistantForRole(role, assistantId) {
+    if (!['seller', 'buyer'].includes(role)) return false;
+    if (!this.config) this.config = {};
+    if (!this.config.assistants) this.config.assistants = {};
+    this.config.assistants[role] = this.config.assistants[role] || {};
+    this.config.assistants[role].id = assistantId;
+    // También actualizar en CONFIG global si es necesario
+    if (window.CONFIG && window.CONFIG.AI && window.CONFIG.AI.assistants) {
+      window.CONFIG.AI.assistants[role].id = assistantId;
+    }
+    // Opcional: guardar en storage
+    if (window.storageUtils) {
+      const assistants = window.CONFIG?.AI?.assistants || this.config.assistants;
+      window.storageUtils.set('FB_CHAT_ASSISTANTS', assistants);
+    }
+    return true;
+  }
 }
 
 // Expose

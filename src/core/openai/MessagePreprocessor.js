@@ -178,69 +178,6 @@ class MessagePreprocessor {
   }
 
   /**
-   * Attaches product information to the message list
-   * Limits images and uses ImageFilterUtils if available
-   * @param {Array} messages - Message array
-   * @param {Object} product - Product data
-   * @returns {Array} Messages with product info
-   */
-  attachProductInfo(messages, product) {
-    if (!messages || !Array.isArray(messages)) {
-      return [];
-    }
-
-    if (!product) {
-      console.log('No product data to attach');
-      return messages;
-    }
-
-    try {
-      // Limit images and filter if necessary
-      let images = Array.isArray(product.images) ? product.images.slice(0, 5) : [];
-      if (window.ImageFilterUtils) {
-        images = window.ImageFilterUtils.filterImageUrls(images);
-      }
-
-      // Create the product message
-      const productMessage = {
-        id: `product_${Date.now()}`,
-        sentByUs: false,
-        content: {
-          text: this.formatProductDetails(product),
-          type: 'product_info',
-          imageUrls: images
-        }
-      };
-
-      // Add at the beginning of the list
-      return [productMessage, ...messages];
-    } catch (error) {
-      logger.error('Error attaching product info', {}, error);
-      return messages;
-    }
-  }
-
-  /**
-   * Formats product details as a text block
-   * @param {Object} product - Product data
-   * @returns {string} Formatted product details
-   * @private
-   */
-  formatProductDetails(product) {
-    if (!product) return '';
-
-    const lines = ['=== PRODUCT DETAILS ==='];
-
-    if (product.title) lines.push(`Title: ${product.title}`);
-    if (product.price) lines.push(`Price: ${product.price}`);
-    if (product.condition) lines.push(`Condition: ${product.condition}`);
-    if (product.location) lines.push(`Location: ${product.location}`);
-    if (product.description) lines.push(`Description: ${product.description}`);
-
-    return lines.join('\n');
-  }
-
-  /**
    * Attaches transcriptions to audio messages using transcribeAudio if necessary
    * @param {Array} messages - Message array
    * @returns {Promise<Array>} Messages with transcriptions
@@ -325,46 +262,126 @@ class MessagePreprocessor {
   }
 
   /**
-   * Formats messages into OpenAI's expected structure
-   * @param {Array} messages - Facebook chat messages
-   * @returns {Array} OpenAI formatted messages
-   * @private
+   * Construye el mensaje de detalles de producto en formato OpenAI
+   * @param {Object} product - Detalles del producto
+   * @returns {Object|null} Mensaje OpenAI o null si no hay producto
    */
-  formatMessagesForOpenAI(messages) {
+  buildProductDetailMessage(product) {
+    if (!product) return null;
+    const content = [];
+
+    // Resumen textual
+    let summary = '';
+    if (window.productExtractor && typeof window.productExtractor.getRelevantProductSummary === 'function') {
+      summary = window.productExtractor.getRelevantProductSummary(product);
+    } else {
+      summary = [
+        product.title ? `Title: ${product.title}` : '',
+        product.price ? `Price: ${product.price}` : '',
+        product.condition ? `Condition: ${product.condition}` : '',
+        product.location ? `Location: ${product.location}` : '',
+        product.description ? `Description: ${product.description}` : ''
+      ].filter(Boolean).join('\n');
+    }
+    content.push({ type: "text", text: "PRODUCT DETAILS:\n" + summary });
+
+    // Imágenes (allImages preferido, fallback a images)
+    let images = [];
+    if (Array.isArray(product.allImages) && product.allImages.length > 0) {
+      images = product.allImages;
+    } else if (Array.isArray(product.images) && product.images.length > 0) {
+      images = product.images;
+    }
+    if (window.ImageFilterUtils) {
+      images = window.ImageFilterUtils.filterImageUrls(images);
+    }
+    for (const imgUrl of images.slice(0, 6)) {
+      if (!imgUrl || typeof imgUrl !== 'string' || imgUrl.trim() === '') continue;
+      if (window.ImageFilterUtils && window.ImageFilterUtils.isProblematicFacebookImage(imgUrl)) continue;
+      content.push({ type: "image_url", image_url: { url: imgUrl } });
+    }
+
+    return {
+      role: "user",
+      content
+    };
+  }
+
+  /**
+   * Formatea mensajes para OpenAI, agregando detalles de producto como primer mensaje si corresponde,
+   * asegurando roles explícitos y chunking de máximo 10 elementos por mensaje.
+   * @param {Array} messages - Mensajes del chat
+   * @param {Object} [productDetails] - Detalles del producto (opcional)
+   * @returns {Array} Mensajes formateados para OpenAI
+   */
+  formatMessagesForOpenAI(messages, productDetails = null) {
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return [];
     }
 
-    // Group messages by sender
-    const grouped = this.groupMessagesByRole(messages);
-    
-    // Format each group
     const formattedGroups = [];
-    
-    for (const group of grouped) {
-      // Split into chunks if needed
-      const chunks = this.chunkMessageGroup(group);
-      
-      // Format each chunk
-      for (const chunk of chunks) {
-        const formatted = this.formatMessageGroup(chunk);
-        // FILTER: Only add if it has valid content
-        if (
-          formatted &&
-          Array.isArray(formatted.content) &&
-          formatted.content.length > 0
-        ) {
-          formattedGroups.push(formatted);
+
+    // 1. Agrega el mensaje de producto como primer mensaje si hay detalles
+    if (productDetails) {
+      const productMsg = this.buildProductDetailMessage(productDetails);
+      if (productMsg) {
+        // Chunking si hay más de 10 bloques
+        for (let i = 0; i < productMsg.content.length; i += 10) {
+          formattedGroups.push({
+            role: "user",
+            content: productMsg.content.slice(i, i + 10)
+          });
         }
       }
     }
 
-    // Improved log
+    // 2. Agrupa mensajes por remitente
+    const grouped = this.groupMessagesByRole(messages);
+
+    // 3. Procesa cada grupo
+    for (const group of grouped) {
+      // Junta todos los bloques de contenido del grupo
+      let contentItems = [];
+      for (const message of group) {
+        // Textos
+        if (message.content && message.content.text) {
+          contentItems.push({
+            type: 'text',
+            text: this.sanitizeText(message.content.text)
+          });
+        }
+        // Imágenes
+        if (message.content && message.content.imageUrls && message.content.imageUrls.length > 0) {
+          for (const imageUrl of message.content.imageUrls) {
+            if (
+              imageUrl &&
+              typeof imageUrl === 'string' &&
+              (!window.ImageFilterUtils || !window.ImageFilterUtils.isProblematicFacebookImage(imageUrl))
+            ) {
+              contentItems.push({
+                type: 'image_url',
+                image_url: { url: imageUrl }
+              });
+            }
+          }
+        }
+      }
+
+      // 4. Chunking de máximo 10 elementos por mensaje
+      for (let i = 0; i < contentItems.length; i += 10) {
+        formattedGroups.push({
+          role: group[0].sentByUs ? 'assistant' : 'user',
+          content: contentItems.slice(i, i + 10)
+        });
+      }
+    }
+
+    // Log mejorado
     console.log('[MessagePreprocessor] Messages formatted for OpenAI:', {
       total: formattedGroups.length,
       examples: formattedGroups.slice(0, 2)
     });
-    
+
     return formattedGroups;
   }
 
@@ -404,81 +421,6 @@ class MessagePreprocessor {
   }
 
   /**
-   * Splits a message group into chunks if needed
-   * @param {Array} group - Group of messages from the same sender
-   * @returns {Array<Array>} Chunks of messages
-   * @private
-   */
-  chunkMessageGroup(group) {
-    if (!group || group.length === 0) return [];
-    
-    // If group is small enough, return as is
-    if (group.length <= this.config.maxItemsPerChunk) {
-      return [group];
-    }
-    
-    // Split into chunks
-    const chunks = [];
-    for (let i = 0; i < group.length; i += this.config.maxItemsPerChunk) {
-      chunks.push(group.slice(i, i + this.config.maxItemsPerChunk));
-    }
-    
-    return chunks;
-  }
-
-  /**
-   * Formats a group of messages into a single OpenAI message
-   * @param {Array} group - Group of messages from the same sender
-   * @returns {Object} Formatted OpenAI message
-   * @private
-   */
-  formatMessageGroup(group) {
-    if (!group || group.length === 0) {
-      logger.error('Empty group passed to formatMessageGroup');
-      return null;
-    }
-    
-    // Determine role based on first message
-    const role = group[0].sentByUs ? 'assistant' : 'user';
-    
-    // Collect all content
-    const contentItems = [];
-    
-    for (const message of group) {
-      // Add text content if available
-      if (message.content && message.content.text) {
-        contentItems.push({
-          type: 'text',
-          text: this.sanitizeText(message.content.text)
-        });
-      }
-      
-      // Add image URLs if available
-      if (message.content && message.content.imageUrls && message.content.imageUrls.length > 0) {
-        for (const imageUrl of message.content.imageUrls) {
-          if (
-            imageUrl &&
-            typeof imageUrl === 'string' &&
-            window.ImageFilterUtils &&
-            !window.ImageFilterUtils.isProblematicFacebookImage(imageUrl)
-          ) {
-            contentItems.push({
-              type: 'image_url',
-              image_url: { url: imageUrl }
-            });
-          }
-        }
-      }
-    }
-    
-    // Create the formatted message
-    return {
-      role,
-      content: contentItems
-    };
-  }
-
-  /**
    * Gets timestamp from a message
    * @param {Object} message - Message object
    * @returns {number} Timestamp in milliseconds
@@ -498,6 +440,26 @@ class MessagePreprocessor {
     
     // Otherwise use timestamp property or current time
     return message.timestamp || Date.now();
+  }
+
+  /**
+   * Adjunta la información del producto como el primer mensaje del usuario.
+   * @param {Array} messages - Lista de mensajes
+   * @param {Object} product - Detalles del producto
+   * @returns {Array} Mensajes con el bloque de producto al inicio (si aplica)
+   */
+  attachProductInfo(messages, product) {
+    if (!messages || !Array.isArray(messages)) {
+      return [];
+    }
+    if (!product) {
+      return messages;
+    }
+    // Construye el mensaje de producto usando el formato OpenAI
+    const productMsg = this.buildProductDetailMessage(product);
+    if (!productMsg) return messages;
+    // Inserta el mensaje de producto como primer mensaje
+    return [productMsg, ...messages];
   }
 }
 

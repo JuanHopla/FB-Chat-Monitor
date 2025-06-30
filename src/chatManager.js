@@ -38,8 +38,8 @@ class ChatManager {
     this._setupUrlChangeDetection();
 
     // Inicializa el sistema de asociación de audio (si está disponible)
-    if (window.audioAssociation && typeof window.audioAssociation.init === 'function') {
-      window.audioAssociation.init();
+    if (window.audioTranscriber && typeof window.audioTranscriber.init === 'function') {
+      window.audioTranscriber.init();
     }
   }
 
@@ -1534,6 +1534,7 @@ class ChatManager {
 
       // ─── Alerts / informative messages ───────────────────
       /^Estás recibiendo muchos mensajes sobre este anuncio/i,
+      /^To help identify and reduce scams and fraud, Meta may use technology to review Marketplace messages\./i,
       /^You're receiving a lot of messages about this listing/i,
       /^Estás esperando tu respuesta sobre este anuncio\.\s*Ver anuncio$/i,
       /^You're waiting for a response about this listing\.\s*View listing$/i,

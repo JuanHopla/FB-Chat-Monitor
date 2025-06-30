@@ -673,6 +673,8 @@ function showTabContent(tabId) {
       refreshLogs();
     } else if (tabId === 'history') {
       refreshHistory();
+    } else if (tabId === 'assistants') {
+      populateAssistantsFromStorage(); // <-- NUEVO: poblar asistentes desde storage al abrir la pestaña
     }
   }
 }
@@ -1249,6 +1251,72 @@ async function refreshAssistantsList() {
 
     if (sellerSelect) sellerSelect.innerHTML = '<option value="">Error loading assistants</option>';
     if (buyerSelect) buyerSelect.innerHTML = '<option value="">Error loading assistants</option>';
+  }
+}
+
+/**
+ * Pobla los selects de asistentes usando los datos almacenados en Tampermonkey.
+ * Esto permite mostrar los asistentes seleccionados previamente al recargar la página,
+ * sin depender de la API ni del botón "Refresh Assistants".
+ */
+function populateAssistantsFromStorage() {
+  try {
+    // Obtener los selects
+    const sellerSelect = document.getElementById('fb-chat-monitor-seller-assistant');
+    const buyerSelect = document.getElementById('fb-chat-monitor-buyer-assistant');
+    if (!sellerSelect || !buyerSelect) return;
+
+    // Leer los asistentes desde el storage de Tampermonkey
+    let assistants = null;
+    if (typeof GM_getValue === 'function') {
+      assistants = GM_getValue('FB_CHAT_MONITOR_FB_CHAT_ASSISTANTS', null);
+    }
+    if (!assistants && typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem('FB_CHAT_MONITOR_FB_CHAT_ASSISTANTS');
+      if (raw) {
+        try { assistants = JSON.parse(raw); } catch {}
+      }
+    }
+    if (!assistants) return;
+
+    // Limpiar selects
+    sellerSelect.innerHTML = '';
+    buyerSelect.innerHTML = '';
+
+    // Seller
+    if (assistants.seller && assistants.seller.id) {
+      const opt = document.createElement('option');
+      opt.value = assistants.seller.id;
+      opt.textContent = assistants.seller.name || assistants.seller.id;
+      opt.selected = true;
+      sellerSelect.appendChild(opt);
+    } else {
+      sellerSelect.innerHTML = '<option value="">Select an assistant</option>';
+    }
+
+    // Buyer
+    if (assistants.buyer && assistants.buyer.id) {
+      const opt = document.createElement('option');
+      opt.value = assistants.buyer.id;
+      opt.textContent = assistants.buyer.name || assistants.buyer.id;
+      opt.selected = true;
+      buyerSelect.appendChild(opt);
+    } else {
+      buyerSelect.innerHTML = '<option value="">Select an assistant</option>';
+    }
+
+    // --- NUEVO: Actualizar la configuración global para que el sistema detecte los asistentes ---
+    if (window.CONFIG && window.CONFIG.AI && window.CONFIG.AI.assistants) {
+      window.CONFIG.AI.assistants.seller = { ...window.CONFIG.AI.assistants.seller, ...assistants.seller };
+      window.CONFIG.AI.assistants.buyer = { ...window.CONFIG.AI.assistants.buyer, ...assistants.buyer };
+    }
+    // Si tienes otra referencia global (window.CONFIG.assistants), también actualízala:
+    if (window.CONFIG && window.CONFIG.assistants) {
+      window.CONFIG.assistants.seller = { ...window.CONFIG.assistants.seller, ...assistants.seller };
+      window.CONFIG.assistants.buyer = { ...window.CONFIG.assistants.buyer, ...assistants.buyer };
+    }
+  } catch (e) {
+    logger.error('Error populating assistants from storage', {}, e);
   }
 }
 
