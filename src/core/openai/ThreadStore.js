@@ -1,18 +1,20 @@
 /**
- * Thread Store - "The Archivist"
+ * Thread Store - "The Librarian"
  * 
  * Responsibilities:
- * - Map Facebook chat IDs to OpenAI thread IDs
- * - Store and retrieve thread metadata
- * - Update thread state after operations
- * - Provide persistence between sessions
+ * - Store mappings between Facebook thread IDs and OpenAI thread IDs
+ * - Manage thread metadata
+ * - Handle persistence of thread information
  */
 
 class ThreadStore {
   constructor() {
-    this.storagePrefix = 'FB_THREAD_';
-    this.threads = new Map(); // In-memory cache
+    this.threads = new Map(); // fbThreadId -> { openaiThreadId, lastMessageId, chatRole, lastAccessed }
     this.initialized = false;
+    this.storageKey = 'FB_CHAT_MONITOR_THREADS';
+    this.threadCleanupInterval = window.CONFIG?.threadSystem?.general?.threadCleanupInterval || 15 * 60 * 1000; // 15 min default
+    this.threadTTL = window.CONFIG?.threadSystem?.general?.threadTTL || 2 * 60 * 60 * 1000; // 2 hours default
+    this.maxThreadAge = window.CONFIG?.threadSystem?.general?.threadInfoMaxAge || 30 * 24 * 60 * 60 * 1000; // 30 days default
   }
 
   /**
@@ -23,13 +25,14 @@ class ThreadStore {
     if (this.initialized) return true;
     
     try {
-      console.log('Initializing ThreadStore');
+      // Load stored threads
+      this.loadThreads();
       
-      // Load existing threads from storage
-      await this.loadFromStorage();
+      // Start periodic cleanup
+      this.startCleanupInterval();
       
       this.initialized = true;
-      console.log(`ThreadStore initialized with ${this.threads.size} threads`);
+      logger.debug('ThreadStore initialized successfully');
       return true;
     } catch (error) {
       logger.error('Failed to initialize ThreadStore', {}, error);
@@ -40,255 +43,201 @@ class ThreadStore {
   /**
    * Gets thread info for a Facebook thread ID
    * @param {string} fbThreadId - Facebook thread ID
-   * @returns {Object|null} Thread metadata or null if not found
+   * @returns {Object|null} Thread info or null if not found
    */
   getThreadInfo(fbThreadId) {
-    if (!fbThreadId) {
-      logger.error('Invalid fbThreadId provided to getThreadInfo');
-      return null;
-    }
-
-    // Check the in-memory cache first
-    if (this.threads.has(fbThreadId)) {
-      return this.threads.get(fbThreadId);
-    }
+    console.log(`[ThreadStore][DEBUG] Buscando info para thread: ${fbThreadId}`);
+    const threadInfo = this.threads.get(fbThreadId);
     
-    // If not in cache, try loading from storage
-    const threadKey = this.getStorageKey(fbThreadId);
-    let threadInfo = null;
-    
-    // Try to get from storageManager first (preferred)
-    if (window.storageManager && typeof window.storageManager.get === 'function') {
-      threadInfo = window.storageManager.get(threadKey);
-    }
-    
-    // Fall back to localStorage
-    if (!threadInfo) {
-      const rawInfo = localStorage.getItem(threadKey);
-      if (rawInfo) {
-        try {
-          threadInfo = JSON.parse(rawInfo);
-        } catch (e) {
-          logger.error(`Error parsing thread info for ${fbThreadId}`, {}, e);
-        }
-      }
-    }
-    
-    // Update cache if found
+    // Update last accessed time if found
     if (threadInfo) {
+      console.log(`[ThreadStore][DEBUG] Thread encontrado: ${JSON.stringify(threadInfo)}`);
+      threadInfo.lastAccessed = Date.now();
       this.threads.set(fbThreadId, threadInfo);
-    }
-    
-    return threadInfo;
-  }
-
-  /**
-   * Saves thread info to storage
-   * @param {string} fbThreadId - Facebook thread ID
-   * @param {Object} metadata - Thread metadata to save
-   * @returns {boolean} Success status
-   */
-  saveThreadInfo(fbThreadId, metadata) {
-    if (!fbThreadId || !metadata || !metadata.openaiThreadId) {
-      logger.error('Invalid data for saveThreadInfo', { fbThreadId, metadata });
-      return false;
-    }
-    
-    try {
-      // Update in-memory cache
-      this.threads.set(fbThreadId, metadata);
-      
-      // Save to storage
-      const threadKey = this.getStorageKey(fbThreadId);
-      const threadData = JSON.stringify(metadata);
-      
-      // Try to use storageManager first
-      if (window.storageManager && typeof window.storageManager.set === 'function') {
-        window.storageManager.set(threadKey, metadata);
-      } else {
-        // Fall back to localStorage
-        localStorage.setItem(threadKey, threadData);
-      }
-      
-      console.log(`Thread info saved for ${fbThreadId}`);
-      return true;
-    } catch (error) {
-      logger.error(`Error saving thread info for ${fbThreadId}`, {}, error);
-      return false;
-    }
-  }
-
-  /**
-   * Updates the last message info for a thread
-   * @param {string} fbThreadId - Facebook thread ID
-   * @param {string} messageId - New last message ID
-   * @param {number} timestamp - New last message timestamp
-   * @returns {boolean} Success status
-   */
-  updateLastMessage(fbThreadId, messageId, timestamp) {
-    if (!fbThreadId || !messageId) {
-      logger.error('Invalid data for updateLastMessage', { fbThreadId, messageId, timestamp });
-      return false;
-    }
-    
-    // Get current thread info
-    const threadInfo = this.getThreadInfo(fbThreadId);
-    if (!threadInfo) {
-      logger.error(`Thread info not found for ${fbThreadId}`);
-      return false;
-    }
-    
-    // Update last message data
-    threadInfo.lastMessageId = messageId;
-    
-    // Update timestamp if provided
-    if (timestamp) {
-      threadInfo.lastTimestamp = timestamp;
     } else {
-      threadInfo.lastTimestamp = Date.now();
+      console.log(`[ThreadStore][DEBUG] Thread no encontrado: ${fbThreadId}`);
     }
     
-    // Save updated info
-    return this.saveThreadInfo(fbThreadId, threadInfo);
+    return threadInfo || null;
   }
 
   /**
-   * Creates thread info for a new thread
+   * Creates thread info and stores it
    * @param {string} fbThreadId - Facebook thread ID
    * @param {string} openaiThreadId - OpenAI thread ID
-   * @param {string} chatRole - Chat role (seller or buyer)
-   * @param {string} lastMessageId - Initial last message ID (optional)
-   * @returns {Object} Created thread info
+   * @param {string} chatRole - Role (seller or buyer)
+   * @returns {Object} Thread info
    */
-  createThreadInfo(fbThreadId, openaiThreadId, chatRole, lastMessageId = null) {
-    if (!fbThreadId || !openaiThreadId || !chatRole) {
-      logger.error('Missing required parameters for createThreadInfo');
-      throw new Error('Missing required parameters for thread creation');
-    }
-    
+  createThreadInfo(fbThreadId, openaiThreadId, chatRole) {
+    console.log(`[ThreadStore][DEBUG] Creando nuevo thread info: ${fbThreadId} -> ${openaiThreadId}, role: ${chatRole}`);
     const threadInfo = {
       openaiThreadId,
       chatRole,
-      lastMessageId,
-      lastTimestamp: Date.now(),
-      created: Date.now()
+      lastMessageId: null,
+      lastAccessed: Date.now(),
+      createdAt: Date.now()
     };
     
-    // Save the new thread info
-    const success = this.saveThreadInfo(fbThreadId, threadInfo);
-    
-    if (!success) {
-      throw new Error('Failed to save new thread info');
-    }
+    this.threads.set(fbThreadId, threadInfo);
+    this.saveThreads();
+    console.log(`[ThreadStore][DEBUG] Thread info creado y guardado`);
     
     return threadInfo;
   }
 
   /**
-   * Loads all threads from storage into memory
+   * Updates the last message ID for a thread
+   * @param {string} fbThreadId - Facebook thread ID
+   * @param {string} lastMessageId - Last message ID
+   * @param {number} [timestamp=Date.now()] - Timestamp
+   * @returns {boolean} Success status
+   */
+  updateLastMessage(fbThreadId, lastMessageId, timestamp = Date.now()) {
+    console.log(`[ThreadStore][DEBUG] Actualizando lastMessageId para ${fbThreadId}: ${lastMessageId}`);
+    const threadInfo = this.threads.get(fbThreadId);
+    
+    if (!threadInfo) {
+      console.log(`[ThreadStore][WARN] Thread info no encontrado para ${fbThreadId}, no se puede actualizar`);
+      logger.warn(`Thread info not found for ${fbThreadId}`);
+      return false;
+    }
+    
+    threadInfo.lastMessageId = lastMessageId;
+    threadInfo.lastAccessed = timestamp;
+    this.threads.set(fbThreadId, threadInfo);
+    this.saveThreads();
+    console.log(`[ThreadStore][DEBUG] lastMessageId actualizado`);
+    
+    return true;
+  }
+
+  /**
+   * Loads threads from storage
    * @private
    */
-  async loadFromStorage() {
+  loadThreads() {
     try {
-      // Clear existing cache
-      this.threads.clear();
+      let threadsData;
       
-      // Try to use storageManager first to get all keys
-      if (window.storageManager && typeof window.storageManager.getAllKeys === 'function') {
-        const allKeys = window.storageManager.getAllKeys() || [];
-        
-        // Filter thread keys
-        const threadKeys = allKeys.filter(key => key.startsWith(this.storagePrefix));
-        
-        // Load each thread
-        for (const key of threadKeys) {
-          const threadData = window.storageManager.get(key);
-          if (threadData) {
-            const fbThreadId = key.substring(this.storagePrefix.length);
-            this.threads.set(fbThreadId, threadData);
-          }
-        }
-      } 
-      // Fall back to localStorage
-      else {
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key && key.startsWith(this.storagePrefix)) {
-            try {
-              const rawData = localStorage.getItem(key);
-              if (rawData) {
-                const threadData = JSON.parse(rawData);
-                const fbThreadId = key.substring(this.storagePrefix.length);
-                this.threads.set(fbThreadId, threadData);
-              }
-            } catch (e) {
-              logger.error(`Error parsing thread data for key ${key}`, {}, e);
-            }
-          }
+      // Try to use storageManager if available
+      if (window.storageManager) {
+        threadsData = window.storageManager.get(this.storageKey);
+      } else {
+        // Fallback to localStorage
+        const stored = localStorage.getItem(this.storageKey);
+        if (stored) {
+          threadsData = JSON.parse(stored);
         }
       }
       
-      console.log(`Loaded ${this.threads.size} threads from storage`);
+      if (threadsData) {
+        this.threads = new Map(Object.entries(threadsData));
+        logger.debug(`Loaded ${this.threads.size} threads from storage`);
+      }
     } catch (error) {
       logger.error('Error loading threads from storage', {}, error);
     }
   }
 
   /**
-   * Gets storage key for a Facebook thread ID
-   * @param {string} fbThreadId - Facebook thread ID
-   * @returns {string} Storage key
+   * Saves threads to storage
    * @private
    */
-  getStorageKey(fbThreadId) {
-    return `${this.storagePrefix}${fbThreadId}`;
+  saveThreads() {
+    try {
+      // Convert Map to plain object
+      const threadsObj = Object.fromEntries(this.threads);
+      
+      // Try to use storageManager if available
+      if (window.storageManager) {
+        window.storageManager.set(this.storageKey, threadsObj);
+      } else {
+        // Fallback to localStorage
+        localStorage.setItem(this.storageKey, JSON.stringify(threadsObj));
+      }
+    } catch (error) {
+      logger.error('Error saving threads to storage', {}, error);
+    }
   }
 
   /**
-   * Gets all known thread IDs
+   * Starts periodic cleanup of old threads
+   * @private
+   */
+  startCleanupInterval() {
+    setInterval(() => this.cleanupOldThreads(), this.threadCleanupInterval);
+    logger.debug(`Thread cleanup scheduled every ${this.threadCleanupInterval / 1000} seconds`);
+  }
+
+  /**
+   * Removes threads that haven't been accessed recently
+   * @private
+   */
+  cleanupOldThreads() {
+    const now = Date.now();
+    let removedCount = 0;
+    
+    // Find expired threads
+    for (const [fbThreadId, threadInfo] of this.threads.entries()) {
+      // Remove threads that haven't been accessed recently or are too old
+      const timeSinceLastAccess = now - threadInfo.lastAccessed;
+      const timeSinceCreation = now - (threadInfo.createdAt || threadInfo.lastAccessed);
+      
+      if (timeSinceLastAccess > this.threadTTL || timeSinceCreation > this.maxThreadAge) {
+        this.threads.delete(fbThreadId);
+        removedCount++;
+      }
+    }
+    
+    if (removedCount > 0) {
+      logger.debug(`Cleaned up ${removedCount} expired threads`);
+      this.saveThreads();
+    }
+  }
+  
+  /**
+   * Checks if a thread exists for a Facebook thread ID
+   * @param {string} fbThreadId - Facebook thread ID
+   * @returns {boolean} Whether the thread exists
+   */
+  hasThread(fbThreadId) {
+    return this.threads.has(fbThreadId);
+  }
+  
+  /**
+   * Gets all stored thread IDs
    * @returns {string[]} Array of Facebook thread IDs
    */
   getAllThreadIds() {
-    return Array.from(this.threads.keys());
+    return [...this.threads.keys()];
   }
-
+  
   /**
-   * Gets thread statistics
-   * @returns {Object} Statistics about threads
+   * Gets thread stats (count, oldest, newest)
+   * @returns {Object} Thread stats
    */
-  getStats() {
-    const stats = {
-      totalThreads: this.threads.size,
-      roles: {
-        seller: 0,
-        buyer: 0,
-        unknown: 0
-      },
-      averageAge: 0
-    };
+  getThreadStats() {
+    const threadCount = this.threads.size;
+    let oldestThread = null;
+    let newestThread = null;
     
-    let totalAge = 0;
-    const now = Date.now();
-    
-    this.threads.forEach(thread => {
-      if (thread.chatRole === 'seller') {
-        stats.roles.seller++;
-      } else if (thread.chatRole === 'buyer') {
-        stats.roles.buyer++;
-      } else {
-        stats.roles.unknown++;
+    for (const [, threadInfo] of this.threads.entries()) {
+      const createdAt = threadInfo.createdAt || threadInfo.lastAccessed;
+      
+      if (!oldestThread || createdAt < oldestThread) {
+        oldestThread = createdAt;
       }
       
-      if (thread.created) {
-        totalAge += (now - thread.created);
+      if (!newestThread || createdAt > newestThread) {
+        newestThread = createdAt;
       }
-    });
-    
-    if (this.threads.size > 0) {
-      stats.averageAge = Math.round(totalAge / this.threads.size / (1000 * 60 * 60 * 24)); // In days
     }
     
-    return stats;
+    return {
+      count: threadCount,
+      oldest: oldestThread ? new Date(oldestThread).toISOString() : null,
+      newest: newestThread ? new Date(newestThread).toISOString() : null
+    };
   }
 }
 

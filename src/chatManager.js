@@ -420,7 +420,7 @@ class ChatManager {
   /**
    * Generates a response for the current chat (used by Generate Response button)
    * This method now uses only openaiManager and core modules
-   * @returns {Promise<boolean>} True if the response was successfully generated
+   * @returns {Promise<boolean} True if the response was successfully generated
    */
   async generateResponseForCurrentChat() {
     if (!this.currentChatId) {
@@ -502,29 +502,97 @@ class ChatManager {
         logger.debug(`Product link found: ${productLink}`);
         // Pass productLink to extractor
         productDetails = await productExtractor.getProductDetails(productId, productLink);
-        // INJECT: revert to fresh URLs from the DOM
-        // productDetails.images = productExtractor.getProductImagesFromChat(chatContainer); // Comentado: getProductImagesFromChat no está disponible en productExtractor
-        // logger.debug(`Product images extracted from DOM: ${productDetails.images.length} URLs`); // Comentar o ajustar si la línea anterior se elimina
       }
 
       // Get the messages container
       const messagesWrapper = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageWrapper);
-      const scrollContainer = domUtils.findElement(
-        CONFIG.selectors.activeChat.scrollbar,
-        messagesWrapper
-      ) || messagesWrapper;
-
-      // Scroll to load full history
-      await domUtils.scrollToTop(scrollContainer);
+      
+      // NUEVA INTEGRACIÓN: Usar ScrollManager para gestionar el scroll según tipo de hilo
+      // Determinar si es un hilo nuevo o existente
+      const threadInfo = window.threadStore?.getThreadInfo?.(this.currentChatId);
+      const isNewThread = !threadInfo;
+      logger.log(`Thread type: ${isNewThread ? 'new' : 'existing'}`);
+      
+      // Extraer mensajes según el tipo de hilo
+      let messages = [];
+      
+      if (window.scrollManager) {
+        if (isNewThread) {
+          // Para hilos nuevos: hacer scroll completo al inicio
+          logger.log('New thread: performing complete scroll to beginning');
+          await window.scrollManager.scrollToBeginning({
+            onScroll: () => {
+              // Detectar audios mientras se hace scroll
+              if (window.audioTranscriber) {
+                window.audioTranscriber.checkForAudioResources();
+              }
+            }
+          });
+          
+          // Extraer mensajes después del scroll completo
+          messages = await this.extractChatHistory(messagesWrapper);
+          
+          // Restaurar posición original (al final de la conversación)
+          await window.scrollManager.restorePosition();
+          
+          // Verificar si realmente volvimos al final, si no, forzar scroll
+          const scrollContainer = domUtils.findElement(CONFIG.selectors.activeChat.scrollbar, messagesWrapper);
+          if (scrollContainer) {
+            // Esperar un momento para que se estabilice el DOM
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            // Si el scroll no está en la posición correcta, forzar scroll al final
+            if (Math.abs(scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight) > 50) {
+              logger.debug('Forcing scroll to bottom after restoration');
+              scrollContainer.scrollTop = scrollContainer.scrollHeight;
+            }
+          }
+        } else {
+          // Para hilos existentes: intentar cargar hasta el último mensaje conocido
+          if (threadInfo?.lastMessageId) {
+            logger.log(`Existing thread: scrolling to last known message: ${threadInfo.lastMessageId}`);
+            await window.scrollManager.scrollToMessage(threadInfo.lastMessageId);
+          }
+          
+          // Extraer mensajes visibles
+          messages = await this.extractChatHistory(messagesWrapper);
+          
+          // NUEVA IMPLEMENTACIÓN: También restaurar posición para hilos existentes
+          logger.log('Existing thread: restoring original scroll position');
+          await window.scrollManager.restorePosition();
+          
+          // También verificar para hilos existentes si volvimos a la posición correcta
+          const scrollContainer = domUtils.findElement(CONFIG.selectors.activeChat.scrollbar, messagesWrapper);
+          if (scrollContainer) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            if (Math.abs(scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight) > 50) {
+              logger.debug('Forcing scroll to bottom after restoration for existing thread');
+              scrollContainer.scrollTop = scrollContainer.scrollHeight;
+            }
+          }
+        }
+      } else {
+        // Fallback al método antiguo si scrollManager no está disponible
+        logger.warn('ScrollManager not available, using legacy scroll method');
+        const scrollContainer = domUtils.findElement(
+          CONFIG.selectors.activeChat.scrollbar,
+          messagesWrapper
+        ) || messagesWrapper;
+        
+        // Guardar posición original
+        const originalPosition = scrollContainer.scrollTop;
+        
+        await domUtils.scrollToTop(scrollContainer);
+        messages = await this.extractChatHistory(messagesWrapper);
+        
+        // Restaurar posición (al final de la conversación)
+        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      }
+      
       // Determine if we are seller or buyer
       const isSeller = this.determineIfSeller(chatContainer);
       logger.log(`Role in chat: ${isSeller ? 'seller' : 'buyer'}`);
-      scrollContainer.scrollTop = scrollContainer.scrollHeight;
-
-      // Get the full chat history with improved extraction
-      // Pass messagesWrapper to extractChatHistory
-      const messages = await this.extractChatHistory(messagesWrapper);
-      logger.log(`Extracted ${messages.length} messages from chat`);
 
       // Store in history
       const chatData = {
@@ -543,21 +611,21 @@ class ChatManager {
       return { success: false, error };
     }
   }
-
+  
   /**
    * Processes the current chat: Extracts data and optionally generates response.
+   * Combines the old logic with improved scroll/thread detection from the new version.
    * @param {boolean} autoRespond - Whether to automatically generate response
    * @returns {Promise<boolean>} - True if processing was successful
    */
   async processCurrentChat(autoRespond = false) {
-    // FIX: Explicitly check operation mode if not provided
+    // Explicitly check operation mode if not provided
     if (autoRespond === undefined || autoRespond === null) {
       autoRespond = window.CONFIG?.operationMode === 'auto';
       logger.debug(`Auto-respond not specified, using global setting: ${autoRespond ? 'AUTO' : 'MANUAL'}`);
     }
 
-    // NEW PROTECTION: If we are in AUTO mode, preventively clear the input field
-    // before any processing to avoid sending pre-existing text
+    // Preventively clear the input field in AUTO mode
     if (autoRespond) {
       try {
         logger.debug(`AUTO mode detected - Preventively clearing input field`);
@@ -576,15 +644,14 @@ class ChatManager {
         }
       } catch (e) {
         logger.error(`Error in preventive cleaning: ${e.message}`);
-        // Continue despite error
       }
     }
 
-      // If we already responded to this chat in auto mode, skip to avoid duplicates
-      if (autoRespond && this.respondedChats.has(this.currentChatId)) {
-        logger.debug(`Auto-response already sent for chat ${this.currentChatId}, skipping.`);
-        return true;
-      }
+    // If we already responded to this chat in auto mode, skip to avoid duplicates
+    if (autoRespond && this.respondedChats.has(this.currentChatId)) {
+      logger.debug(`Auto-response already sent for chat ${this.currentChatId}, skipping.`);
+      return true;
+    }
 
     // Anti-reentrancy
     if (autoRespond && this.isResponding) {
@@ -593,52 +660,154 @@ class ChatManager {
     }
     this.isResponding = autoRespond;
 
-    // Step 1: Extract data
-    const extractionResult = await this.extractCurrentChatData();
-
-    if (!extractionResult.success) {
-      logger.error('Failed to extract chat data during processCurrentChat.');
-      return false; // Indicate failure
-    }
-
-    // Step 2: Optionally generate response if autoRespond is true
-    if (autoRespond) {
-      logger.debug(`Automatic response enabled for chat ${this.currentChatId} (operationMode: ${window.CONFIG?.operationMode})`);
-      const chatData = extractionResult.chatData;
-
-      if (!chatData || !chatData.messages || chatData.messages.length === 0) {
-        logger.warn('No messages found in extracted data, cannot auto-respond.');
-        return true;
-      }
-
-      // Create context for response generation
-      const context = {
-        chatId: this.currentChatId,
-        role: chatData.isSeller ? 'seller' : 'buyer',
-        messages: chatData.messages,
-        productDetails: chatData.productDetails
-      };
-
-      try {
-        // FIX: Add more diagnostic logs
-        logger.log(`Generating automatic response as ${context.role} for chat ${this.currentChatId}`);
-
-        // Call handleResponse to generate and potentially send the response
-        await this.handleResponse(context);
-        this.respondedChats.add(this.currentChatId); // Mark as responded
-
-        logger.log('Automatic response generated and sent successfully');
-        return true;
-      } catch (responseError) {
-        logger.error(`Error during automatic response generation: ${responseError.message}`);
+    // --- BEGIN: Improved scroll/thread logic from new version ---
+    try {
+      logger.log('Processing current chat with improved scroll/thread logic');
+      const chatContainer = document.querySelector(CONFIG.selectors.activeChat.container);
+      if (!chatContainer) {
+        logger.error('Active chat container not found');
+        this.isResponding = false;
         return false;
       }
-    } else {
-      logger.debug(`Automatic response disabled for chat ${this.currentChatId}. Only data was extracted.`);
-    }
 
-    this.isResponding = false;
-    return true; // Indicate successful processing (at least extraction)
+      const chatId = this.currentChatId;
+      if (!chatId) {
+        logger.error('Could not extract chat ID');
+        this.isResponding = false;
+        return false;
+      }
+
+      // Get thread info to determine if it's a new or existing thread
+      const threadInfo = window.threadStore?.getThreadInfo?.(chatId);
+      const isNewThread = !threadInfo;
+      logger.debug(`Thread ${isNewThread ? 'NEW' : 'EXISTING'}: ${chatId}`);
+
+      // Prepare messages extraction with scroll logic
+      let messages = [];
+      const messagesWrapper = chatContainer.querySelector(CONFIG.selectors.activeChat.messageWrapper);
+
+      if (!messagesWrapper) {
+        logger.error('Messages wrapper not found');
+        this.isResponding = false;
+        return false;
+      }
+
+      if (isNewThread && window.scrollManager) {
+        logger.debug('New thread: performing complete scroll to beginning');
+        await window.scrollManager.scrollToBeginning({
+          onScroll: () => {
+            if (window.audioTranscriber) {
+              window.audioTranscriber.checkForAudioResources();
+            }
+          }
+        });
+        messages = await this.extractChatHistory(messagesWrapper);
+        await window.scrollManager.restorePosition();
+        // Ensure scroll is at the end
+        const scrollContainer = messagesWrapper.querySelector(CONFIG.selectors.activeChat.scrollbar) ||
+                               messagesWrapper.querySelector('div[style*="overflow-y: auto"]');
+        if (scrollContainer) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          if (Math.abs(scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight) > 50) {
+            logger.debug('Forcing scroll to bottom after restoration');
+            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+          }
+        }
+      } else if (!isNewThread && window.scrollManager && threadInfo?.lastMessageId) {
+        logger.debug(`Existing thread: scrolling to last known message: ${threadInfo.lastMessageId}`);
+        await window.scrollManager.scrollToMessage(threadInfo.lastMessageId);
+        messages = await this.extractChatHistory(messagesWrapper);
+        await window.scrollManager.restorePosition();
+        const scrollContainer = messagesWrapper.querySelector(CONFIG.selectors.activeChat.scrollbar) ||
+                               messagesWrapper.querySelector('div[style*="overflow-y: auto"]');
+        if (scrollContainer) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          if (Math.abs(scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight) > 50) {
+            logger.debug('Forcing scroll to bottom after restoration for existing thread');
+            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+          }
+        }
+      } else {
+        logger.debug('Extracting messages without special scroll');
+        messages = await this.extractChatHistory(messagesWrapper);
+      }
+
+      // If no messages found, abort
+      if (!messages || messages.length === 0) {
+        logger.error('No messages found in conversation');
+        this.isResponding = false;
+        return false;
+      }
+
+      // Extract product details and role as in the old method
+      let productDetails = null;
+      if (typeof this.extractProductDetails === 'function') {
+        try {
+          productDetails = await this.extractProductDetails(chatContainer);
+        } catch (e) {
+          logger.warn('Error extracting product details: ' + e.message);
+        }
+      }
+      let isSeller = false;
+      if (typeof this.determineIfSeller === 'function') {
+        try {
+          isSeller = this.determineIfSeller(chatContainer);
+        } catch (e) {
+          logger.warn('Error determining seller/buyer: ' + e.message);
+        }
+      }
+
+      // Store in chatHistory for compatibility with old flow
+      this.chatHistory.set(chatId, {
+        messages,
+        productDetails,
+        isSeller,
+        lastUpdated: new Date()
+      });
+
+      // Step 2: Optionally generate response if autoRespond is true
+      if (autoRespond) {
+        logger.debug(`Automatic response enabled for chat ${chatId} (operationMode: ${window.CONFIG?.operationMode})`);
+        const chatData = { messages, productDetails, isSeller };
+
+        if (!chatData || !chatData.messages || chatData.messages.length === 0) {
+          logger.warn('No messages found in extracted data, cannot auto-respond.');
+          this.isResponding = false;
+          return true;
+        }
+
+        // Create context for response generation
+        const context = {
+          chatId,
+          role: isSeller ? 'seller' : 'buyer',
+          messages,
+          productDetails
+        };
+
+        try {
+          logger.log(`Generating automatic response as ${context.role} for chat ${chatId}`);
+          await this.handleResponse(context);
+          this.respondedChats.add(chatId); // Mark as responded
+          logger.log('Automatic response generated and sent successfully');
+          this.isResponding = false;
+          return true;
+        } catch (responseError) {
+          logger.error(`Error during automatic response generation: ${responseError.message}`);
+          this.isResponding = false;
+          return false;
+        }
+      } else {
+        logger.debug(`Automatic response disabled for chat ${chatId}. Only data was extracted.`);
+      }
+
+      this.isResponding = false;
+      return true;
+    } catch (error) {
+      logger.error('Error processing chat', {}, error);
+      this.isResponding = false;
+      return false;
+    }
+    // --- END: Improved scroll/thread logic ---
   }
 
   /**
@@ -1877,6 +2046,7 @@ class ChatManager {
 
     // Important events in a Marketplace conversation
     const eventPatterns = [
+     
       // Purchase/sale events
       {
         pattern: /marked this item as (sold|pending|available)/i,
@@ -2845,77 +3015,122 @@ class ChatManager {
   }
 
   /**
-   * Processes a chat and decides whether to generate an automatic response
-   * @param {string} chatId 
+   * Procesa una conversación completa para generar una respuesta
+   * @param {string} chatId - ID del chat
+   * @param {string} role - Rol en la conversación ('seller' o 'buyer')
+   * @param {Object} options - Opciones adicionales
+   * @returns {Promise<Object>} Resultado del procesamiento
    */
-  async processChatAndAutoRespond(chatId) {
+  async processConversation(chatId, role = null, options = {}) {
+    console.log(`[ChatManager][DEBUG] Inicio processConversation para chatId: ${chatId}`);
+    logger.debug(`Processing conversation ${chatId}`);
+    
     try {
-      logger.log(`Extracting data from chat ${chatId}`);
-
-      // FIX: Correctly verify the operation mode
-      const autoMode = window.CONFIG?.operationMode === 'auto';
-
-      // Verify FIRST if automatic mode is enabled
-      // This avoids extracting data unnecessarily when we are in manual mode
-      if (!autoMode) {
-        logger.debug(`Auto-response deactivated for chat ${chatId}. The current mode is: ${window.CONFIG?.operationMode}`);
-        return false;
+      // 1. Lanzar en paralelo tareas independientes
+      console.log(`[ChatManager][DEBUG] Iniciando extracción de producto y audio en paralelo`);
+      const [productDetailsPromise, audioInitPromise] = await Promise.allSettled([
+        // Extraer detalles del producto en paralelo
+        this.extractProductDetails(chatId),
+        
+        // Inicializar sistema de transcripción de audio
+        window.audioTranscriber ? window.audioTranscriber.initialize() : Promise.resolve(false)
+      ]);
+      
+      // 2. Extraer o detectar el rol si no se proporcionó
+      if (!role) {
+        role = await this.detectRole(chatId);
+        console.log(`[ChatManager][DEBUG] Rol detectado: ${role}`);
+        logger.debug(`Detected role: ${role}`);
       }
-
-      // FIX: Additional log for diagnosis
-      logger.log(`Automatic mode activated (operationMode: ${window.CONFIG?.operationMode}), processing automatic response...`);
-
-      const chatData = await this.extractChatData(chatId);
-
-      if (!chatData.success) {
-        logger.error(`Error extracting chat data for automatic response: ${chatData.error || 'Unknown error'}`);
-        return false;
+      
+      // 3. Scroll y extracción de mensajes
+      console.log(`[ChatManager][DEBUG] Iniciando extracción de mensajes`);
+      const messages = await this.extractMessages(chatId);
+      
+      if (!messages || messages.length === 0) {
+        console.log(`[ChatManager][ERROR] No se encontraron mensajes en la conversación`);
+        throw new Error('No messages found in conversation');
       }
-
-      // We already know that we are in automatic mode, we proceed with the response
-      logger.debug(`AUTO mode activated (${window.CONFIG?.operationMode}), processing automatic response`);
-
-      // Verify that responseManager exists for automatic response
-      if (!window.responseManager) {
-        logger.error('responseManager not found to process automatic response');
-        return false;
+      
+      console.log(`[ChatManager][DEBUG] Extraídos ${messages.length} mensajes de chat ${chatId}`);
+      console.log(`[ChatManager][DEBUG] Primer mensaje: ${JSON.stringify(messages[0])}`);
+      console.log(`[ChatManager][DEBUG] Último mensaje: ${JSON.stringify(messages[messages.length-1])}`);
+      logger.debug(`Extracted ${messages.length} messages from chat ${chatId}`);
+      
+      // 4. Esperar a que termine la extracción de producto
+      let productData = null;
+      if (productDetailsPromise.status === 'fulfilled' && productDetailsPromise.value) {
+        productData = productDetailsPromise.value;
+        console.log(`[ChatManager][DEBUG] Datos del producto extraídos: ${JSON.stringify(productData)}`);
+        logger.debug('Product data extracted successfully');
+      } else {
+        console.log(`[ChatManager][DEBUG] No se pudieron extraer datos del producto: ${productDetailsPromise.reason || 'Sin detalles'}`);
       }
-
-      // Verify availability of OpenAI Manager for automatic mode
-      if (!window.openaiManager) {
-        logger.error('openaiManager not found to process automatic response');
-        return false;
-      }
-
-      // Verify if OpenAI Manager is ready
-      const openaiReady = typeof window.openaiManager.isReady === 'function' ?
-        window.openaiManager.isReady() :
-        (window.openaiManager.apiKey && window.openaiManager.isInitialized);
-
-      if (!openaiReady) {
-        logger.error('OpenAI Manager is not ready to process automatic response');
-        return false;
-      }
-
-      // Call processAutoResponse directly
-      const result = await window.responseManager.processAutoResponse(chatId, chatData.chatData);
-
-      // FIX: Additional log for diagnosis
-      logger.log(`Result of processAutoResponse: ${result ? 'success' : 'failed'}`);
-      return result;
-
+      
+      // 5. Generar respuesta usando el flujo optimizado
+      console.log(`[ChatManager][DEBUG] Generando respuesta con flujo optimizado. Role: ${role}, chatId: ${chatId}`);
+      logger.debug('Generating response with optimized flow');
+      const response = await window.openAIManager.generateAssistantResponse(chatId, messages, {
+        role,
+        productData
+      });
+      
+      console.log(`[ChatManager][DEBUG] Respuesta generada con éxito: "${response.substring(0, 50)}${response.length > 50 ? '...' : ''}"`);
+      
+      // 6. Devolver resultado con metadata
+      return {
+        success: true,
+        response,
+        role,
+        productData,
+        messageCount: messages.length,
+        timestamp: Date.now()
+      };
     } catch (error) {
-      logger.error(`Error processing chat for automatic response: ${error.message}`, {}, error);
-      showSimpleAlert(`Error processing automatic response: ${error.message}`, 'error');
-      return false;
+      console.log(`[ChatManager][ERROR] Error procesando conversación: ${error.message}`, error);
+      logger.error(`Error processing conversation: ${error.message}`, {}, error);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: Date.now()
+      };
     }
   }
 
   /**
-   * Marks the current chat as read to avoid duplicate responses
-   * @param {string} chatId - Chat ID to mark as read (optional, uses current if not provided)
-   * @returns {Promise<boolean>} - True if it could be marked as read
+   * Extrae los detalles del producto en la conversación
+   * @param {string} chatId - ID del chat
+   * @returns {Promise<Object|null>} Detalles del producto o null si no se encuentra
+   * @private
    */
+  async extractProductDetails(chatId) {
+    console.log(`[ChatManager][DEBUG] Extrayendo detalles del producto para chatId: ${chatId}`);
+    if (!window.productExtractor) {
+      console.log(`[ChatManager][WARN] Product extractor no disponible`);
+      logger.warn('Product extractor not available');
+      return null;
+    }
+    
+    try {
+      // Usar extractProduct si existe, o getProductInfoFromChat como fallback
+      let productData = null;
+      if (typeof window.productExtractor.extractProduct === 'function') {
+        console.log(`[ChatManager][DEBUG] Usando productExtractor.extractProduct()`);
+        productData = await window.productExtractor.extractProduct(chatId);
+      } else if (typeof window.productExtractor.getProductInfoFromChat === 'function') {
+        console.log(`[ChatManager][DEBUG] Usando productExtractor.getProductInfoFromChat()`);
+        productData = await window.productExtractor.getProductInfoFromChat(chatId);
+      }
+      
+      console.log(`[ChatManager][DEBUG] Datos del producto extraídos: ${JSON.stringify(productData || {})}`);
+      return productData;
+    } catch (error) {
+      console.log(`[ChatManager][ERROR] Error extrayendo detalles del producto: ${error.message}`);
+      logger.warn(`Error extracting product details: ${error.message}`);
+      return null;
+    }
+  }
+
   async markChatAsRead(chatId = null) {
     const targetChatId = chatId || this.currentChatId;
 

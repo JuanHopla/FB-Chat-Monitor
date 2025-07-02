@@ -135,6 +135,73 @@ class OpenAIManager {
     return payload;
   }
 
+  /**
+   * Generates a response using the Assistants API
+   * @param {string} fbThreadId - Facebook thread ID
+   * @param {Array} messages - Messages in the chat
+   * @param {Object} options - Options for response generation
+   * @returns {Promise<string>} Generated response
+   */
+  async generateAssistantResponse(fbThreadId, messages, options = {}) {
+    const {
+      role = 'seller',
+      productData = null,
+      forceNewThread = false
+    } = options;
+    
+    console.log(`[OpenAIManager][DEBUG] generateAssistantResponse - threadId: ${fbThreadId}, role: ${role}, messages: ${messages.length}, hasProduct: ${!!productData}`);
+    
+    try {
+      // 1. Ensure required components are initialized
+      console.log(`[OpenAIManager][DEBUG] Verificando inicialización de componentes`);
+      if (!window.assistantHandler || !window.assistantHandler.initialized) {
+        console.log(`[OpenAIManager][DEBUG] AssistantHandler necesita inicialización`);
+        if (window.assistantHandler && typeof window.assistantHandler.initialize === 'function') {
+          await window.assistantHandler.initialize();
+        } else {
+          console.log(`[OpenAIManager][ERROR] AssistantHandler no disponible`);
+          throw new Error('AssistantHandler not available');
+        }
+      }
+      
+      // Initialize AudioTranscriber to enable parallel transcription
+      if (window.audioTranscriber && typeof window.audioTranscriber.initialize === 'function' 
+          && !window.audioTranscriber.initialized) {
+        console.log(`[OpenAIManager][DEBUG] Inicializando AudioTranscriber`);
+        await window.audioTranscriber.initialize();
+      }
+      
+      // 2. If forceNewThread, delete any existing thread
+      if (forceNewThread && window.threadStore && window.threadStore.hasThread(fbThreadId)) {
+        console.log(`[OpenAIManager][DEBUG] Forzando nuevo thread para ${fbThreadId}`);
+        logger.debug(`Forcing new thread for ${fbThreadId}`);
+        // Get the existing thread info before deletion
+        const existingThread = window.threadStore.getThreadInfo(fbThreadId);
+        
+        // Delete from thread store
+        window.threadStore.threads.delete(fbThreadId);
+        window.threadStore.saveThreads();
+        console.log(`[OpenAIManager][DEBUG] Thread antiguo eliminado del ThreadStore`);
+      }
+      
+      // 3. Generate response using AssistantHandler
+      console.log(`[OpenAIManager][DEBUG] Llamando a assistantHandler.generateResponse`);
+      const response = await window.assistantHandler.generateResponse(
+        fbThreadId,
+        messages,
+        role,
+        productData
+      );
+      
+      console.log(`[OpenAIManager][DEBUG] Respuesta generada: "${response.substring(0, 50)}${response.length > 50 ? '...' : ''}"`);
+      return response;
+    } catch (error) {
+      console.log(`[OpenAIManager][ERROR] Error generando respuesta: ${error.message}`, error);
+      logger.error(`Error generating assistant response: ${error.message}`, {}, error);
+      throw error;
+    }
+  }
+
   // --- Thread management methods delegate to ThreadStore ---
 
   getThreadInfo(fbThreadId) {

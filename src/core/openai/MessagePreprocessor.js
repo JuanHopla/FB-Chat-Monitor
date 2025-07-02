@@ -31,13 +31,14 @@ class MessagePreprocessor {
    */
   getNewMessagesSince(messages, lastMessageId) {
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      console.log(`[MessagePreprocessor][ERROR] Array de mensajes inválido proporcionado a getNewMessagesSince`);
       logger.error('Invalid messages array provided to getNewMessagesSince');
       return [];
     }
 
     // If no lastMessageId, return all messages (up to limit)
     if (!lastMessageId) {
-      console.log('No lastMessageId provided, using all messages');
+      console.log(`[MessagePreprocessor][DEBUG] No se proporcionó lastMessageId, usando todos los mensajes`);
       return this.formatMessagesForOpenAI(
         messages.slice(-this.config.maxMessagesInNewThread)
       );
@@ -47,18 +48,19 @@ class MessagePreprocessor {
     const lastIndex = messages.findIndex(msg => msg.id === lastMessageId);
 
     if (lastIndex === -1) {
+      console.log(`[MessagePreprocessor][WARN] Último ID ${lastMessageId} no encontrado, usando fallback por timestamp`);
       logger.warn(`Last message ID ${lastMessageId} not found, using timestamp-based fallback`);
       return this.getNewMessagesUsingTimestampFallback(messages, lastMessageId);
     }
 
     // Get messages after the last processed one
     const newMessages = messages.slice(lastIndex + 1);
-    console.log(`Found ${newMessages.length} new messages since ${lastMessageId}`);
+    console.log(`[MessagePreprocessor][DEBUG] Encontrados ${newMessages.length} mensajes nuevos desde ${lastMessageId}`);
 
     // If no new messages, return just the last message for context
     if (newMessages.length === 0) {
       const lastMessage = messages[messages.length - 1];
-      console.log('No new messages, returning only the last message for context');
+      console.log(`[MessagePreprocessor][DEBUG] No hay mensajes nuevos, devolviendo solo el último mensaje para contexto`);
       return this.formatMessagesForOpenAI([lastMessage]);
     }
 
@@ -187,56 +189,112 @@ class MessagePreprocessor {
       return [];
     }
 
-    // Process each message and transcribe if necessary
-    const processed = await Promise.all(messages.map(async message => {
-      if (
-        message.content &&
-        message.content.hasAudio &&
-        message.content.audioUrl &&
-        (!message.content.transcribedAudio || message.content.transcribedAudio === '[Transcription Pending]')
-      ) {
-        // If transcription already exists, use it
-        if (typeof window.audioTranscriber?.getTranscription === 'function') {
-          const transcription = window.audioTranscriber.getTranscription(message.content.audioUrl);
-          if (transcription) {
+    // Find all messages that need transcription
+    const messagesToTranscribe = messages.filter(message => 
+      message.content?.hasAudio && 
+      message.content.audioUrl && 
+      (!message.content.transcribedAudio || message.content.transcribedAudio === '[Transcription Pending]')
+    );
+
+    console.log(`[MessagePreprocessor][DEBUG] attachTranscriptions - Encontrados ${messagesToTranscribe.length} mensajes que necesitan transcripción`);
+    
+    // Process all transcriptions in parallel
+    if (messagesToTranscribe.length > 0) {
+      try {
+        // Create parallel transcription tasks
+        console.log(`[MessagePreprocessor][DEBUG] Iniciando transcripciones en paralelo`);
+        const transcriptionTasks = messagesToTranscribe.map(async message => {
+          const audioUrl = message.content.audioUrl;
+          console.log(`[MessagePreprocessor][DEBUG] Procesando audio: ${audioUrl}`);
+          
+          // Check for cached transcription first
+          if (typeof window.audioTranscriber?.getTranscription === 'function') {
+            const cachedTranscription = window.audioTranscriber.getTranscription(audioUrl);
+            if (cachedTranscription) {
+              console.log(`[MessagePreprocessor][DEBUG] Transcripción en caché encontrada para ${audioUrl}`);
+              return {
+                messageId: message.id,
+                audioUrl,
+                transcription: cachedTranscription,
+                success: true
+              };
+            }
+          }
+          
+          // No cached version, attempt to transcribe
+          if (window.apiClient && typeof window.apiClient.transcribeAudio === 'function' && message.content.audioBlob) {
+            try {
+              console.log(`[MessagePreprocessor] Transcribing audio blob for ${audioUrl}`);
+              const transcription = await window.apiClient.transcribeAudio(message.content.audioBlob);
+              
+              // Cache the transcription if possible
+              if (typeof window.audioTranscriber?.addTranscription === 'function') {
+                window.audioTranscriber.addTranscription(audioUrl, transcription);
+              }
+              
+              return {
+                messageId: message.id,
+                audioUrl,
+                transcription,
+                success: true
+              };
+            } catch (error) {
+              console.warn(`[MessagePreprocessor] Transcription failed for ${audioUrl}:`, error);
+              return {
+                messageId: message.id, 
+                audioUrl,
+                error: error.message,
+                success: false
+              };
+            }
+          }
+          
+          return {
+            messageId: message.id,
+            audioUrl,
+            success: false
+          };
+        });
+        
+        // Wait for all transcriptions to complete in parallel
+        const transcriptionResults = await Promise.allSettled(transcriptionTasks);
+        
+        // Apply successful transcriptions to messages
+        const successfulResults = transcriptionResults
+          .filter(result => result.status === 'fulfilled' && result.value?.success)
+          .map(result => result.value);
+        
+        console.log(`[MessagePreprocessor][DEBUG] Completadas ${successfulResults.length}/${messagesToTranscribe.length} transcripciones`);
+        
+        // Apply transcriptions to the original messages array
+        return messages.map(message => {
+          if (!message.content?.hasAudio || !message.content.audioUrl) return message;
+          
+          const result = successfulResults.find(r => 
+            r.audioUrl === message.content.audioUrl || r.messageId === message.id
+          );
+          
+          if (result?.transcription) {
             return {
               ...message,
               content: {
                 ...message.content,
-                transcribedAudio: transcription,
+                transcribedAudio: result.transcription,
                 text: message.content.text ?
-                  `${message.content.text}\n[Audio Transcription: ${transcription}]` :
-                  `[Audio Transcription: ${transcription}]`
+                  `${message.content.text}\n[Audio Transcription: ${result.transcription}]` :
+                  `[Audio Transcription: ${result.transcription}]`
               }
             };
           }
-        }
-        // If no transcription, try using ApiClient.transcribeAudio
-        if (window.apiClient && typeof window.apiClient.transcribeAudio === 'function') {
-          try {
-            const blob = message.content.audioBlob;
-            if (blob) {
-              const transcription = await window.apiClient.transcribeAudio(blob);
-              return {
-                ...message,
-                content: {
-                  ...message.content,
-                  transcribedAudio: transcription,
-                  text: message.content.text ?
-                    `${message.content.text}\n[Audio Transcription: ${transcription}]` :
-                    `[Audio Transcription: ${transcription}]`
-                }
-              };
-            }
-          } catch (e) {
-            logger.warn('Error transcribing audio:', e);
-          }
-        }
+          return message;
+        });
+      } catch (error) {
+        console.log(`[MessagePreprocessor][ERROR] Error en proceso de transcripción paralelo:`, error);
       }
-      return message;
-    }));
-
-    return processed;
+    }
+    
+    // Return original messages if no transcription was performed or process failed
+    return messages;
   }
 
   /**
@@ -316,9 +374,12 @@ class MessagePreprocessor {
    */
   formatMessagesForOpenAI(messages, productDetails = null) {
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      console.log(`[MessagePreprocessor][DEBUG] No hay mensajes para formatear para OpenAI`);
       return [];
     }
 
+    console.log(`[MessagePreprocessor][DEBUG] Formateando ${messages.length} mensajes para OpenAI, producto: ${!!productDetails}`);
+    
     const formattedGroups = [];
 
     // 1. Agrega el mensaje de producto como primer mensaje si hay detalles
@@ -377,11 +438,7 @@ class MessagePreprocessor {
     }
 
     // Log mejorado
-    console.log('[MessagePreprocessor] Messages formatted for OpenAI:', {
-      total: formattedGroups.length,
-      examples: formattedGroups.slice(0, 2)
-    });
-
+    console.log(`[MessagePreprocessor][DEBUG] Formateados ${formattedGroups.length} grupos de mensajes para OpenAI`);
     return formattedGroups;
   }
 
