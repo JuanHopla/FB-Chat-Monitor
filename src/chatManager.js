@@ -2658,11 +2658,6 @@ class ChatManager {
 
       // PHASE 1: Previous cleaning with delay to ensure Facebook is ready
       setTimeout(() => {
-        // First try to clean with openaiManager - more aggressive if we are in AUTO
-        if (window.openaiManager && typeof window.openaiManager.clearInputField === 'function') {
-          window.openaiManager.clearInputField();
-          logger.debug('First cleaning phase completed with openaiManager');
-        }
 
         // PHASE 2: Additional direct cleaning, more intense in AUTO
         this.forceCleanInputField(inputField);
@@ -2677,7 +2672,6 @@ class ChatManager {
         if (currentContent) {
           logger.warn(`Field is NOT empty after two cleaning attempts. Current content: "${currentContent.substring(0, 20)}..."`);
           // PHASE 4: Emergency cleaning as a last resort
-          this.emergencyCleanField(inputField);
 
           // In AUTO mode, wait a little longer to ensure complete cleaning
           if (isAutoMode) {
@@ -2881,72 +2875,49 @@ class ChatManager {
   /**
    * Additional method to force cleaning of the input field directly
    * @param {HTMLElement} inputField - Input field to clean
+   * @returns {Promise<Object>} Result of the cleaning operation
    */
   forceCleanInputField(inputField) {
-    try {
-      if (!inputField) return;
+    // New implementation: simulate Ctrl+A and Backspace/Delete to clear Messenger input
+    return new Promise((resolve) => {
+      if (!inputField) return resolve({ exito: false, mensaje: "Campo no encontrado" });
 
-      const isContentEditable = inputField.getAttribute('contenteditable') === 'true';
+      inputField.focus();
+      const contenidoInicial = inputField.textContent?.trim() || "";
 
-      if (isContentEditable) {
-        // Clean HTML and text content
-        inputField.innerHTML = '';
-        inputField.textContent = '';
+      if (!contenidoInicial) return resolve({ exito: true, mensaje: "Campo ya vacío" });
 
-        // Use selection and delete command
-        try {
-          const selection = window.getSelection();
-          const range = document.createRange();
-          range.selectNodeContents(inputField);
-          selection.removeAllRanges();
-          selection.addRange(range);
-          document.execCommand('delete', false, null);
-        } catch (e) {
-          logger.debug(`Error using selection to clean: ${e.message}`);
-        }
-      } else {
-        inputField.value = '';
-      }
-
-      // Trigger events
-      ['input', 'change', 'keyup'].forEach(eventType => {
-        const event = new Event(eventType, { bubbles: true });
-        inputField.dispatchEvent(event);
+      // Simulate Ctrl+A
+      ['keydown', 'keyup'].forEach(type => {
+        inputField.dispatchEvent(new KeyboardEvent(type, {
+          key: 'Control', code: 'ControlLeft', keyCode: 17, ctrlKey: true, bubbles: true
+        }));
+        inputField.dispatchEvent(new KeyboardEvent(type, {
+          key: 'a', code: 'KeyA', keyCode: 65, ctrlKey: true, bubbles: true
+        }));
       });
-    } catch (error) {
-      logger.debug(`Error in forced cleaning: ${error.message}`);
-    }
-  }
 
-  /**
-   * Emergency method to clean a field that does not respond to normal methods
-   * @param {HTMLElement} inputField - Input field to clean
-   */
-  emergencyCleanField(inputField) {
-    try {
-      // 1. Try replacing the node completely
-      if (inputField.parentNode) {
-        const newField = inputField.cloneNode(false); // Clone without content
-        inputField.parentNode.replaceChild(newField, inputField);
+      setTimeout(() => {
+        // Simulate Backspace and Delete
+        ['Backspace', 'Delete'].forEach(key => {
+          inputField.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, keyCode: key === 'Backspace' ? 8 : 46, bubbles: true }));
+          inputField.dispatchEvent(new KeyboardEvent('keyup',   { key, code: key, keyCode: key === 'Backspace' ? 8 : 46, bubbles: true }));
+        });
 
-        // 2. Simulate keyboard events to delete content
-        const keyEvents = [
-          new KeyboardEvent('keydown', { key: 'Control', keyCode: 17, bubbles: true }),
-          new KeyboardEvent('keydown', { key: 'a', keyCode: 65, bubbles: true }),
-          new KeyboardEvent('keyup', { key: 'a', keyCode: 65, bubbles: true }),
-          new KeyboardEvent('keyup', { key: 'Control', keyCode: 17, bubbles: true }),
-          new KeyboardEvent('keydown', { key: 'Delete', keyCode: 46, bubbles: true }),
-          new KeyboardEvent('keyup', { key: 'Delete', keyCode: 46, bubbles: true })
-        ];
+        inputField.dispatchEvent(new Event('input', { bubbles: true }));
 
-        keyEvents.forEach(event => newField.dispatchEvent(event));
-        logger.debug('Emergency cleaning applied (node replacement)');
-      } else {
-        logger.warn('Could not apply emergency cleaning: the field has no parent node');
-      }
-    } catch (error) {
-      logger.debug(`Error in emergency cleaning: ${error.message}`);
-    }
+        setTimeout(() => {
+          const contenidoFinal = inputField.textContent?.trim() || "";
+          const exito = contenidoFinal === "";
+          resolve({
+            exito,
+            mensaje: exito ? "Campo limpiado con éxito" : "No se pudo limpiar completamente",
+            contenidoInicial,
+            contenidoFinal
+          });
+        }, 100);
+      }, 50);
+    });
   }
 
   /**

@@ -25,7 +25,6 @@ const sourceFiles = [
   // Header will be handled separately now, not in this list
   'config.js',
   'utils.js',
-  'responseManager.js',
   'core/openai/Storage.js',
   'core/openai/ThreadStore.js',
   'audioTranscriber.js',
