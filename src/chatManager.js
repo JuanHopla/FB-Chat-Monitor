@@ -431,6 +431,10 @@ class ChatManager {
 
     try {
       console.log('[ChatManager] Step 1: Extracting data from the current chat...');
+      // Incrementar el contador de chats procesados en modo manual
+      if (window.FBChatMonitor && typeof window.FBChatMonitor.incrementChatsProcessed === 'function') {
+        window.FBChatMonitor.incrementChatsProcessed();
+      }
       await this.extractCurrentChatData();
 
       const chatData = this.chatHistory.get(this.currentChatId);
@@ -506,16 +510,16 @@ class ChatManager {
 
       // Get the messages container
       const messagesWrapper = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageWrapper);
-      
+
       // NUEVA INTEGRACIÓN: Usar ScrollManager para gestionar el scroll según tipo de hilo
       // Determinar si es un hilo nuevo o existente
       const threadInfo = window.threadStore?.getThreadInfo?.(this.currentChatId);
       const isNewThread = !threadInfo;
       logger.log(`Thread type: ${isNewThread ? 'new' : 'existing'}`);
-      
+
       // Extraer mensajes según el tipo de hilo
       let messages = [];
-      
+
       if (window.scrollManager) {
         if (isNewThread) {
           // Para hilos nuevos: hacer scroll completo al inicio
@@ -528,19 +532,19 @@ class ChatManager {
               }
             }
           });
-          
+
           // Extraer mensajes después del scroll completo
           messages = await this.extractChatHistory(messagesWrapper);
-          
+
           // Restaurar posición original (al final de la conversación)
           await window.scrollManager.restorePosition();
-          
+
           // Verificar si realmente volvimos al final, si no, forzar scroll
           const scrollContainer = domUtils.findElement(CONFIG.selectors.activeChat.scrollbar, messagesWrapper);
           if (scrollContainer) {
             // Esperar un momento para que se estabilice el DOM
             await new Promise(resolve => setTimeout(resolve, 100));
-            
+
             // Si el scroll no está en la posición correcta, forzar scroll al final
             if (Math.abs(scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight) > 50) {
               logger.debug('Forcing scroll to bottom after restoration');
@@ -553,19 +557,19 @@ class ChatManager {
             logger.log(`Existing thread: scrolling to last known message: ${threadInfo.lastMessageId}`);
             await window.scrollManager.scrollToMessage(threadInfo.lastMessageId);
           }
-          
+
           // Extraer mensajes visibles
           messages = await this.extractChatHistory(messagesWrapper);
-          
+
           // NUEVA IMPLEMENTACIÓN: También restaurar posición para hilos existentes
           logger.log('Existing thread: restoring original scroll position');
           await window.scrollManager.restorePosition();
-          
+
           // También verificar para hilos existentes si volvimos a la posición correcta
           const scrollContainer = domUtils.findElement(CONFIG.selectors.activeChat.scrollbar, messagesWrapper);
           if (scrollContainer) {
             await new Promise(resolve => setTimeout(resolve, 100));
-            
+
             if (Math.abs(scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight) > 50) {
               logger.debug('Forcing scroll to bottom after restoration for existing thread');
               scrollContainer.scrollTop = scrollContainer.scrollHeight;
@@ -579,17 +583,17 @@ class ChatManager {
           CONFIG.selectors.activeChat.scrollbar,
           messagesWrapper
         ) || messagesWrapper;
-        
+
         // Guardar posición original
         const originalPosition = scrollContainer.scrollTop;
-        
+
         await domUtils.scrollToTop(scrollContainer);
         messages = await this.extractChatHistory(messagesWrapper);
-        
+
         // Restaurar posición (al final de la conversación)
         scrollContainer.scrollTop = scrollContainer.scrollHeight;
       }
-      
+
       // Determine if we are seller or buyer
       const isSeller = this.determineIfSeller(chatContainer);
       logger.log(`Role in chat: ${isSeller ? 'seller' : 'buyer'}`);
@@ -611,7 +615,7 @@ class ChatManager {
       return { success: false, error };
     }
   }
-  
+
   /**
    * Processes the current chat: Extracts data and optionally generates response.
    * Combines the old logic with improved scroll/thread detection from the new version.
@@ -705,7 +709,7 @@ class ChatManager {
         await window.scrollManager.restorePosition();
         // Ensure scroll is at the end
         const scrollContainer = messagesWrapper.querySelector(CONFIG.selectors.activeChat.scrollbar) ||
-                               messagesWrapper.querySelector('div[style*="overflow-y: auto"]');
+          messagesWrapper.querySelector('div[style*="overflow-y: auto"]');
         if (scrollContainer) {
           await new Promise(resolve => setTimeout(resolve, 100));
           if (Math.abs(scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight) > 50) {
@@ -719,7 +723,7 @@ class ChatManager {
         messages = await this.extractChatHistory(messagesWrapper);
         await window.scrollManager.restorePosition();
         const scrollContainer = messagesWrapper.querySelector(CONFIG.selectors.activeChat.scrollbar) ||
-                               messagesWrapper.querySelector('div[style*="overflow-y: auto"]');
+          messagesWrapper.querySelector('div[style*="overflow-y: auto"]');
         if (scrollContainer) {
           await new Promise(resolve => setTimeout(resolve, 100));
           if (Math.abs(scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight) > 50) {
@@ -928,9 +932,9 @@ class ChatManager {
           messages.push({
             id: `msg_${this.currentChatId}_${idx}`,
             sentByUs,
-            content: { 
-              text, 
-              type, 
+            content: {
+              text,
+              type,
               media: {}
             }
           });
@@ -2046,7 +2050,7 @@ class ChatManager {
 
     // Important events in a Marketplace conversation
     const eventPatterns = [
-     
+
       // Purchase/sale events
       {
         pattern: /marked this item as (sold|pending|available)/i,
@@ -2665,8 +2669,8 @@ class ChatManager {
 
         // PHASE 3: Verify the cleaning status before inserting
         const isContentEditable = inputField.getAttribute('contenteditable') === 'true';
-        const currentContent = isContentEditable ? 
-          (inputField.textContent || '').trim() : 
+        const currentContent = isContentEditable ?
+          (inputField.textContent || '').trim() :
           (inputField.value || '').trim();
 
         if (currentContent) {
@@ -2748,83 +2752,81 @@ class ChatManager {
    */
   sendMessage(isAfterInsert = false) {
     try {
-      // NEW: Detailed log about the sending attempt
+      let messageSent = false; // Solo incrementar una vez
+
       logger.debug(`Initiating message sending attempt (${isAfterInsert ? 'after inserting text' : 'direct'})`);
 
-      // Strategy 1: Click on the send button with improved selectors
-      // IMPROVEMENT: Use more specific selectors and verify visibility/enablement
+      // Strategy 1: Click on the send button con selectores mejorados
       const sendButtonSelectors = [
-        ...CONFIG.selectors.activeChat.sendButton, // Use the configured ones
-        'div[aria-label="Press enter to send"]', // Common button in new version
-        'div[aria-label="Pulsa Intro para enviar"]', // Spanish version
-        'div[role="button"][tabindex="0"][style*="transform: translateY(0px)"]', // Transformed visible button
-        'div.xjbqb8w:not([style*="opacity: 0"])', // Button with visible opacity
-        'div.x1i10hfl[role="button"]:not(.x1hc1fzr)' // Generic non-hidden button
+        ...CONFIG.selectors.activeChat.sendButton,
+        'div[aria-label="Press enter to send"]',
+        'div[aria-label="Pulsa Intro para enviar"]',
+        'div[role="button"][tabindex="0"][style*="transform: translateY(0px)"]',
+        'div.xjbqb8w:not([style*="opacity: 0"])',
+        'div.x1i10hfl[role="button"]:not(.x1hc1fzr)'
       ];
-
-      // Log for debugging
       logger.debug(`Searching for send button with ${sendButtonSelectors.length} selectors...`);
-
-      // Search for the button with any of the selectors
       const sendButton = domUtils.findElement(sendButtonSelectors);
 
       if (sendButton) {
-        // NEW: Verify that the button is visible and enabled before clicking
         const rect = sendButton.getBoundingClientRect();
         const styles = window.getComputedStyle(sendButton);
         const isVisible = rect.width > 0 && rect.height > 0 &&
-          styles.visibility !== 'hidden' &&
-          styles.display !== 'none' &&
-          styles.opacity !== '0';
+                          styles.visibility !== 'hidden' &&
+                          styles.display !== 'none' &&
+                          styles.opacity !== '0';
 
         if (isVisible) {
           logger.debug(`Send button found and visible (${rect.width}x${rect.height}), clicking...`);
-
-          // IMPROVEMENT: Add small delay before the click to give Facebook time
           setTimeout(() => {
             try {
-              // Try a normal click
               sendButton.click();
               logger.log('Message sent by clicking on the button');
               this.markChatAsRead();
+              if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
+                messageSent = true;
+                window.FBChatMonitor.incrementResponseSent();
+              }
               return true;
             } catch (clickError) {
-              // If the normal click fails, try simulating a click event
-              logger.warn(`Error when doing normal click: ${clickError.message}, trying simulated event...`);
+              logger.warn(`Error on normal click: ${clickError.message}, trying simulated event...`);
               try {
-                sendButton.dispatchEvent(new MouseEvent('click', {
-                  bubbles: true,
-                  cancelable: true,
-                  view: window
-                }));
+                sendButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
                 logger.log('Message sent using simulated click event');
                 this.markChatAsRead();
+                if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
+                  messageSent = true;
+                  window.FBChatMonitor.incrementResponseSent();
+                }
                 return true;
               } catch (eventError) {
                 logger.error(`Error simulating click event: ${eventError.message}`);
               }
             }
-          }, 100); // Small delay before the click
+          }, 100);
+          return true;
         } else {
-          logger.warn(`Send button found but NOT visible/enabled. Using alternative method.`);
+          logger.warn('Send button found but NOT visible/enabled. Using alternative method.');
         }
       } else {
         logger.debug('Send button not found, trying with Enter key...');
       }
 
-      // Strategy 2: Simulate Enter key in the input field
+      // Strategy 2: Simular tecla Enter en el campo
       const inputField = document.querySelector(CONFIG.selectors.activeChat.messageInput);
       if (inputField) {
         logger.debug('Simulating Enter key in the input field...');
 
-        // Use the simulateKeyPress method from domUtils
         if (domUtils.simulateKeyPress(inputField, 'Enter', 13)) {
           logger.log('Message sent simulating Enter key with domUtils.simulateKeyPress');
           this.markChatAsRead();
+          if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
+            messageSent = true;
+            window.FBChatMonitor.incrementResponseSent();
+          }
           return true;
         }
 
-        // Alternative strategy if the previous one fails
         inputField.focus();
         const enterEvent = new KeyboardEvent('keydown', {
           key: 'Enter',
@@ -2834,38 +2836,45 @@ class ChatManager {
           bubbles: true,
           cancelable: true
         });
-
         const sent = inputField.dispatchEvent(enterEvent);
 
         if (sent) {
           logger.log('Message sent simulating Enter key with KeyboardEvent');
           this.markChatAsRead();
+          if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
+            messageSent = true;
+            window.FBChatMonitor.incrementResponseSent();
+          }
           return true;
         } else {
           logger.warn('The event was not sent correctly');
         }
 
-        // Strategy 3: Use execCommand (alternative method)
         try {
           if (document.execCommand('insertText', false, '\n')) {
             logger.log('Message sent using execCommand insertText');
             this.markChatAsRead();
+            if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
+              messageSent = true;
+              window.FBChatMonitor.incrementResponseSent();
+            }
             return true;
           }
         } catch (execError) {
           logger.error(`Error using execCommand: ${execError.message}`);
         }
 
-        // NEW: Strategy 4 - Try resending after a while if it is the first attempt
+        // Reintentar una vez si falló el primer intento
         if (!isAfterInsert) {
           logger.debug('First attempt failed, scheduling retry after 1 second...');
           setTimeout(() => this.sendMessage(true), 1000);
-          return true; // Indicate that the retry has been scheduled
+          return true;
         }
       }
 
       logger.error('Could not send the message after all attempts');
       return false;
+
     } catch (error) {
       logger.error(`Error sending message: ${error.message}`, {}, error);
       return false;
@@ -2901,7 +2910,7 @@ class ChatManager {
         // Simulate Backspace and Delete
         ['Backspace', 'Delete'].forEach(key => {
           inputField.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, keyCode: key === 'Backspace' ? 8 : 46, bubbles: true }));
-          inputField.dispatchEvent(new KeyboardEvent('keyup',   { key, code: key, keyCode: key === 'Backspace' ? 8 : 46, bubbles: true }));
+          inputField.dispatchEvent(new KeyboardEvent('keyup', { key, code: key, keyCode: key === 'Backspace' ? 8 : 46, bubbles: true }));
         });
 
         inputField.dispatchEvent(new Event('input', { bubbles: true }));
@@ -2921,71 +2930,6 @@ class ChatManager {
   }
 
   /**
-   * Sends the message by clicking on the send button or simulating the Enter key
-   * @returns {boolean} - True if the message could be sent
-   */
-  sendMessage() {
-    try {
-      // Strategy 1: Click on the send button
-      const sendButton = domUtils.findElement(CONFIG.selectors.activeChat.sendButton);
-
-      if (sendButton) {
-        logger.debug('Send button found, clicking...');
-        sendButton.click();
-        logger.log('Message sent by clicking on the button');
-        return true;
-      }
-
-      // Strategy 2: Simulate Enter key in the input field
-      const inputField = document.querySelector(CONFIG.selectors.activeChat.messageInput);
-      if (inputField) {
-        logger.debug('Simulating Enter key in the input field...');
-
-        // Use the new simulateKeyPress method from domUtils
-        if (domUtils.simulateKeyPress(inputField, 'Enter', 13)) {
-          logger.log('Message sent simulating Enter key with simulateKeyPress');
-          return true;
-        }
-
-        // Alternative strategy if the previous one fails
-        inputField.focus();
-        const enterEvent = new KeyboardEvent('keydown', {
-          key: 'Enter',
-          code: 'Enter',
-          keyCode: 13,
-          which: 13,
-          bubbles: true,
-          cancelable: true
-        });
-
-        const sent = inputField.dispatchEvent(enterEvent);
-
-        if (sent) {
-          logger.log('Message sent simulating Enter key');
-          return true;
-        } else {
-          logger.warn('The keydown event was not processed by the input field');
-        }
-
-        // Strategy 3: Use execCommand (alternative method)
-        try {
-          document.execCommand('insertText', false, '\n');
-          logger.log('Message sent using execCommand');
-          return true;
-        } catch (execError) {
-          logger.debug(`execCommand failed: ${execError.message}`);
-        }
-      }
-
-      logger.error('Could not send the message - send button or input field not found');
-      return false;
-    } catch (error) {
-      logger.error(`Error sending message: ${error.message}`, {}, error);
-      return false;
-    }
-  }
-
-  /**
    * Procesa una conversación completa para generar una respuesta
    * @param {string} chatId - ID del chat
    * @param {string} role - Rol en la conversación ('seller' o 'buyer')
@@ -2995,39 +2939,39 @@ class ChatManager {
   async processConversation(chatId, role = null, options = {}) {
     console.log(`[ChatManager][DEBUG] Inicio processConversation para chatId: ${chatId}`);
     logger.debug(`Processing conversation ${chatId}`);
-    
+
     try {
       // 1. Lanzar en paralelo tareas independientes
       console.log(`[ChatManager][DEBUG] Iniciando extracción de producto y audio en paralelo`);
       const [productDetailsPromise, audioInitPromise] = await Promise.allSettled([
         // Extraer detalles del producto en paralelo
         this.extractProductDetails(chatId),
-        
+
         // Inicializar sistema de transcripción de audio
         window.audioTranscriber ? window.audioTranscriber.initialize() : Promise.resolve(false)
       ]);
-      
+
       // 2. Extraer o detectar el rol si no se proporcionó
       if (!role) {
         role = await this.detectRole(chatId);
         console.log(`[ChatManager][DEBUG] Rol detectado: ${role}`);
         logger.debug(`Detected role: ${role}`);
       }
-      
+
       // 3. Scroll y extracción de mensajes
       console.log(`[ChatManager][DEBUG] Iniciando extracción de mensajes`);
       const messages = await this.extractMessages(chatId);
-      
+
       if (!messages || messages.length === 0) {
         console.log(`[ChatManager][ERROR] No se encontraron mensajes en la conversación`);
         throw new Error('No messages found in conversation');
       }
-      
+
       console.log(`[ChatManager][DEBUG] Extraídos ${messages.length} mensajes de chat ${chatId}`);
       console.log(`[ChatManager][DEBUG] Primer mensaje: ${JSON.stringify(messages[0])}`);
-      console.log(`[ChatManager][DEBUG] Último mensaje: ${JSON.stringify(messages[messages.length-1])}`);
+      console.log(`[ChatManager][DEBUG] Último mensaje: ${JSON.stringify(messages[messages.length - 1])}`);
       logger.debug(`Extracted ${messages.length} messages from chat ${chatId}`);
-      
+
       // 4. Esperar a que termine la extracción de producto
       let productData = null;
       if (productDetailsPromise.status === 'fulfilled' && productDetailsPromise.value) {
@@ -3037,7 +2981,7 @@ class ChatManager {
       } else {
         console.log(`[ChatManager][DEBUG] No se pudieron extraer datos del producto: ${productDetailsPromise.reason || 'Sin detalles'}`);
       }
-      
+
       // 5. Generar respuesta usando el flujo optimizado
       console.log(`[ChatManager][DEBUG] Generando respuesta con flujo optimizado. Role: ${role}, chatId: ${chatId}`);
       logger.debug('Generating response with optimized flow');
@@ -3045,9 +2989,9 @@ class ChatManager {
         role,
         productData
       });
-      
+
       console.log(`[ChatManager][DEBUG] Respuesta generada con éxito: "${response.substring(0, 50)}${response.length > 50 ? '...' : ''}"`);
-      
+
       // 6. Devolver resultado con metadata
       return {
         success: true,
@@ -3081,7 +3025,7 @@ class ChatManager {
       logger.warn('Product extractor not available');
       return null;
     }
-    
+
     try {
       // Usar extractProduct si existe, o getProductInfoFromChat como fallback
       let productData = null;
@@ -3092,7 +3036,7 @@ class ChatManager {
         console.log(`[ChatManager][DEBUG] Usando productExtractor.getProductInfoFromChat()`);
         productData = await window.productExtractor.getProductInfoFromChat(chatId);
       }
-      
+
       console.log(`[ChatManager][DEBUG] Datos del producto extraídos: ${JSON.stringify(productData || {})}`);
       return productData;
     } catch (error) {

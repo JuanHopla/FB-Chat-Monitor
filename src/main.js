@@ -320,6 +320,19 @@ function incrementErrorCount() {
   }
 }
 
+function incrementResponseSent() {
+  appState.stats.responsesSent++;
+  logger.debug(`Response sent - Total count: ${appState.stats.responsesSent}`);
+}
+
+/**
+ * Incrementa el contador de chats procesados
+ */
+function incrementChatsProcessed() {
+  appState.stats.chatsProcessed++;
+  logger.debug(`Chat processed - Total count: ${appState.stats.chatsProcessed}`);
+}
+
 /**
  * Get current monitoring stats
  * @returns {Object} Current monitoring statistics
@@ -542,6 +555,8 @@ window.FBChatMonitor = {
   toggleMonitoring,
   manualScan,
   getMonitoringStats, // Ensure this function is exposed correctly
+  incrementResponseSent,
+  incrementChatsProcessed,
   changeOperationMode(mode) {
     // Simplify to only accept 'auto' or 'manual'
     if (mode !== 'auto' && mode !== 'manual') {
