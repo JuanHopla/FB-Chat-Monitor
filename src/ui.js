@@ -455,6 +455,31 @@ function createStyles() {
           visibility: visible;
           opacity: 1;
         }
+        
+        .fb-chat-monitor-tooltip:hover .fb-chat-monitor-tooltiptext {
+          visibility: visible;
+          opacity: 1;
+        }
+
+        .fb-chat-monitor-history-container tr td:nth-child(3) {
+          color: #1877f2;
+          text-decoration: underline;
+          cursor: pointer;
+          transition: color 0.2s;
+        }
+        
+        .fb-chat-monitor-history-container tr td:nth-child(3):hover {
+          color: #166fe5;
+          background-color: rgba(24, 119, 242, 0.05);
+        }
+        
+        .fb-chat-monitor-badge-seller {
+          background-color: #4CAF50;
+        }
+        
+        .fb-chat-monitor-badge-buyer {
+          background-color: #2196F3;
+        }
       `;
 
   domUtils.injectStyles(styles);
@@ -470,7 +495,7 @@ function toggleControlPanel() {
     uiState.isControlPanelVisible = false;
     // Also reset the minimized state when completely closed
     uiState.isControlPanelMinimized = false;
-    
+
     // Update floating button visibility when the panel is closed
     updateFloatingResponseButtonVisibility();
     return;
@@ -479,7 +504,7 @@ function toggleControlPanel() {
   // Create the control panel
   uiState.controlPanel = createControlPanel();
   uiState.isControlPanelVisible = true;
-  
+
   // ADDED: Hide the floating button when the panel is opened
   if (uiState.floatingResponseButton) {
     uiState.floatingResponseButton.style.display = 'none';
@@ -853,7 +878,7 @@ function createHistoryContent() {
                 <th>Time</th>
                 <th>Mode</th>
                 <th>Content</th>
-                <th>Status</th>
+                <th>Chat Role</th>
               </tr>
             </thead>
             <tbody id="fb-chat-monitor-history-list">
@@ -1274,7 +1299,7 @@ function populateAssistantsFromStorage() {
     if (!assistants && typeof localStorage !== 'undefined') {
       const raw = localStorage.getItem('FB_CHAT_MONITOR_FB_CHAT_ASSISTANTS');
       if (raw) {
-        try { assistants = JSON.parse(raw); } catch {}
+        try { assistants = JSON.parse(raw); } catch { }
       }
     }
     if (!assistants) return;
@@ -1328,17 +1353,17 @@ function saveConfig() {
     logger.warn('GM_setValue not available. Cannot save persistent configuration.');
     return;
   }
-  
+
   try {
     // Only save options that still exist
     GM_setValue('CONFIG_operationMode', window.CONFIG.operationMode || 'manual');
     GM_setValue('CONFIG_autoSendMessages', window.CONFIG.autoSendMessages || false);
-    
+
     // Save API key if it exists
     if (window.CONFIG.AI && window.CONFIG.AI.apiKey) {
       GM_setValue('CONFIG_AI_apiKey', window.CONFIG.AI.apiKey);
     }
-    
+
     logger.log('Configuration saved to persistent storage');
   } catch (error) {
     logger.error(`Error saving configuration: ${error.message}`);
@@ -1353,18 +1378,18 @@ function loadConfig() {
     logger.warn('GM_getValue not available. Using default configuration.');
     return;
   }
-  
+
   try {
     // Only load options that still exist
     window.CONFIG.operationMode = GM_getValue('CONFIG_operationMode', 'manual');
     window.CONFIG.autoSendMessages = GM_getValue('CONFIG_autoSendMessages', false);
-    
+
     // Load API key if it exists
     if (!window.CONFIG.AI) window.CONFIG.AI = {};
     window.CONFIG.AI.apiKey = GM_getValue('CONFIG_AI_apiKey', '');
-    
+
     logger.log('Configuration loaded from persistent storage');
-    
+
     // Update UI with the loaded configuration
     updateUIWithLoadedConfig();
   } catch (error) {
@@ -1479,6 +1504,17 @@ function exportLogs() {
   }
 }
 
+function formatDateTime(timestamp) {
+  const date = new Date(timestamp);
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
 /**
  * Refresh conversation history display
  */
@@ -1486,7 +1522,7 @@ function refreshHistory() {
   try {
     const historyList = document.getElementById('fb-chat-monitor-history-list');
 
-    // Get history
+    // Obtener historial
     const history = getConversationHistory();
 
     if (!history || history.length === 0) {
@@ -1494,42 +1530,91 @@ function refreshHistory() {
       return;
     }
 
-    // Render history
+    // Renderizar historial
     historyList.innerHTML = '';
     history.slice(0, 50).forEach(item => {
       const row = document.createElement('tr');
-      row.addEventListener('click', () => showConversationDetails(item));
 
-      // Time column
+      // Columna de tiempo
       const timeCell = document.createElement('td');
       const date = new Date(item.timestamp);
-      timeCell.textContent = timeUtils.formatDate(date).split(',')[1].trim(); // Just the time part
+      // Mostrar fecha y hora completas con formato adecuado
+      timeCell.textContent = formatDateTime(item.timestamp);
 
-      // Mode column
+      // Columna de modo (Auto/Manual)
       const modeCell = document.createElement('td');
       const modeBadge = document.createElement('span');
-      modeBadge.textContent = item.mode;
+      modeBadge.textContent = item.mode === 'auto' ? 'Auto' : 'Manual';
       modeBadge.className = `fb-chat-monitor-badge fb-chat-monitor-badge-${item.mode}`;
       modeCell.appendChild(modeBadge);
 
-      // Content column
+      // Columna de contenido con la respuesta generada y evento de clic para redirección
       const contentCell = document.createElement('td');
-      const content = item.context?.lastMessage || 'No content';
-      contentCell.textContent = typeof content === 'string' ?
-        content.substring(0, 30) + (content.length > 30 ? '...' : '') :
-        'Complex content';
+      contentCell.style.cursor = 'pointer'; // Indicar que es clickeable
 
-      // Status column
-      const statusCell = document.createElement('td');
-      const statusBadge = document.createElement('span');
-      statusBadge.textContent = item.sent ? 'Sent' : 'Not sent';
-      statusBadge.className = `fb-chat-monitor-badge fb-chat-monitor-badge-${item.sent ? 'sent' : 'notsent'}`;
-      statusCell.appendChild(statusBadge);
+      // Usar la respuesta generada
+      const content = item.response || 'No response';
+      contentCell.textContent = content.substring(0, 30) + (content.length > 30 ? '...' : '');
+      contentCell.style.color = '#2196F3'; // Color azul para indicar que es clickeable
 
+      // Añadir evento de clic para redireccionar al chat
+      if (item.context && item.context.chatId) {
+        contentCell.addEventListener('click', () => {
+          try {
+            // Buscar el chat en la lista de chats por ID
+            const chatId = item.context.chatId;
+
+            // Buscar el elemento del chat en la lista de chats
+            const chatElement = findChatElementById(chatId);
+
+            if (chatElement) {
+              // Desplazar para que sea visible
+              chatElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+              // Notificar al usuario
+              showSimpleAlert('Abriendo chat...', 'info');
+
+              // Esperar un momento y hacer clic
+              setTimeout(() => {
+                chatElement.click();
+              }, 500);
+            } else {
+              // Fallback: si no encontramos el elemento, usar navegación directa
+              // pero advertir al usuario que se refrescará la página
+              if (confirm('No se encuentra el chat en la lista actual. ¿Deseas navegar directamente? (Esto refrescará la página)')) {
+                const chatUrl = `https://www.facebook.com/messages/t/${chatId}/`;
+                window.location.href = chatUrl;
+              }
+            }
+          } catch (e) {
+            showSimpleAlert('No se pudo navegar al chat: ' + e.message, 'error');
+          }
+        });
+
+        // Tooltip para indicar la acción
+        contentCell.title = 'Clic para abrir esta conversación';
+      }
+
+      // Columna de rol de chat (en lugar de contacto)
+      const roleCell = document.createElement('td');
+
+      // Determinar el rol en el chat
+      let role = 'Unknown';
+      if (item.context && item.context.role) {
+        // Mostrar el rol con formato visual
+        const roleBadge = document.createElement('span');
+        roleBadge.textContent = item.context.role === 'seller' ? 'Seller' : 'Buyer';
+        roleBadge.className = `fb-chat-monitor-badge fb-chat-monitor-badge-${item.context.role === 'seller' ? 'seller' : 'buyer'}`;
+        roleCell.appendChild(roleBadge);
+      } else {
+        roleCell.textContent = role;
+      }
+
+      // Añadir celdas a la fila
       row.appendChild(timeCell);
       row.appendChild(modeCell);
       row.appendChild(contentCell);
-      row.appendChild(statusCell);
+      row.appendChild(roleCell);
       historyList.appendChild(row);
     });
   } catch (error) {
@@ -1540,123 +1625,40 @@ function refreshHistory() {
 }
 
 /**
- * Show details of a conversation
- * @param {Object} conversation - The conversation data
+ * Busca un elemento de chat por ID en la lista de chats
+ * @param {string} chatId - ID del chat a buscar
+ * @returns {HTMLElement|null} - Elemento del chat o null si no se encuentra
  */
-function showConversationDetails(conversation) {
-  // Create modal to show details
-  const modalOverlay = document.createElement('div');
-  modalOverlay.style.position = 'fixed';
-  modalOverlay.style.top = '0';
-  modalOverlay.style.left = '0';
-  modalOverlay.style.width = '100%';
-  modalOverlay.style.height = '100%';
-  modalOverlay.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
-  modalOverlay.style.display = 'flex';
-  modalOverlay.style.justifyContent = 'center';
-  modalOverlay.style.alignItems = 'center';
-  modalOverlay.style.zIndex = '10000';
+function findChatElementById(chatId) {
+  try {
+    // Buscar en la lista de chats usando los selectores de configuración
+    const chatContainer = domUtils.findElement(CONFIG.selectors.chatList.container);
+    if (!chatContainer) return null;
 
-  const modalContent = document.createElement('div');
-  modalContent.style.backgroundColor = 'white';
-  modalContent.style.borderRadius = '8px';
-  modalContent.style.padding = '20px';
-  modalContent.style.width = '600px';
-  modalContent.style.maxWidth = '90%';
-  modalContent.style.maxHeight = '80%';
-  modalContent.style.overflowY = 'auto';
-  modalContent.style.position = 'relative';
+    // Obtener todos los elementos de chat
+    const chatItems = domUtils.findAllElements(CONFIG.selectors.chatList.chatItem, chatContainer);
 
-  // Close button
-  const closeButton = document.createElement('button');
-  closeButton.innerHTML = '&times;';
-  closeButton.style.position = 'absolute';
-  closeButton.style.top = '10px';
-  closeButton.style.right = '10px';
-  closeButton.style.background = 'none';
-  closeButton.style.border = 'none';
-  closeButton.style.fontSize = '24px';
-  closeButton.style.cursor = 'pointer';
-  closeButton.addEventListener('click', () => document.body.removeChild(modalOverlay));
-  modalContent.appendChild(closeButton);
+    // Buscar el chat con el ID correspondiente
+    for (const chatItem of chatItems) {
+      const href = chatItem.getAttribute('href');
+      if (href && href.includes(`/marketplace/t/${chatId}/`)) {
+        return chatItem;
+      }
 
-  // Title
-  const title = document.createElement('h2');
-  title.textContent = 'Conversation Details';
-  title.style.marginTop = '0';
-  title.style.marginBottom = '20px';
-  modalContent.appendChild(title);
-
-  // Details
-  const details = document.createElement('div');
-
-  // Format and add basic details
-  const date = new Date(conversation.timestamp);
-  details.innerHTML = `
-        <p><strong>Time:</strong> ${timeUtils.formatDate(date)}</p>
-        <p><strong>Mode:</strong> ${conversation.mode}</p>
-        <p><strong>Status:</strong> ${conversation.sent ? 'Sent' : 'Not sent'}</p>
-      `;
-
-  // Add context details if available
-  if (conversation.context) {
-    const contextDiv = document.createElement('div');
-    contextDiv.style.marginTop = '15px';
-    contextDiv.style.marginBottom = '15px';
-    contextDiv.innerHTML = `<h3 style="margin-top:0;">Context</h3>`;
-
-    if (conversation.context.role) {
-      contextDiv.innerHTML += `<p><strong>Role:</strong> ${conversation.context.role}</p>`;
+      // Buscar también en enlaces secundarios
+      const childLinks = chatItem.querySelectorAll('a[href*="/marketplace/t/"]');
+      for (const link of childLinks) {
+        const childHref = link.getAttribute('href');
+        if (childHref && childHref.includes(`/marketplace/t/${chatId}/`)) {
+          return chatItem; // Devuelve el elemento padre del chat
+        }
+      }
     }
 
-    if (conversation.context.productDetails) {
-      const product = conversation.context.productDetails;
-      contextDiv.innerHTML += `
-            <div style="margin-top: 10px; margin-bottom: 15px;">
-              <h4 style="margin-top: 0; margin-bottom: 5px;">Product Details</h4>
-              <p style="margin: 2px 0;"><strong>Title:</strong> ${product.title || 'N/A'}</p>
-              <p style="margin: 2px 0;"><strong>Price:</strong> ${product.price || 'N/A'}</p>
-              ${product.id ? `<p style="margin: 2px 0;"><strong>ID:</strong> ${product.id}</p>` : ''}
-            </div>
-          `;
-    }
-
-    if (conversation.context.lastMessage) {
-      contextDiv.innerHTML += `
-            <div style="margin-top: 10px;">
-              <h4 style="margin-top: 0; margin-bottom: 5px;">Last Message</h4>
-              <div style="background-color: #f5f5f5; padding: 10px; border-radius: 4px; white-space: pre-wrap;">${conversation.context.lastMessage}</div>
-            </div>
-          `;
-    }
-
-    details.appendChild(contextDiv);
-  }
-
-  // Add response
-  if (conversation.response) {
-    const responseDiv = document.createElement('div');
-    responseDiv.style.marginTop = '15px';
-    responseDiv.innerHTML = `
-          <h3 style="margin-top: 0;">Response</h3>
-          <div style="background-color: #e9f5ff; padding: 10px; border-radius: 4px; white-space: pre-wrap; margin-bottom: 15px; border: 1px solid #2196F3;">${conversation.response}</div>
-          <button id="copy-response-btn" style="padding: 5px 10px; background-color: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer;">Copy Response</button>
-        `;
-    details.appendChild(responseDiv);
-  }
-
-  modalContent.appendChild(details);
-  modalOverlay.appendChild(modalContent);
-  document.body.appendChild(modalOverlay);
-
-  // Add event listener for copy button
-  const copyButton = document.getElementById('copy-response-btn');
-  if (copyButton && conversation.response) {
-    copyButton.addEventListener('click', () => {
-      navigator.clipboard.writeText(conversation.response);
-      copyButton.textContent = 'Copied!';
-      setTimeout(() => copyButton.textContent = 'Copy Response', 2000);
-    });
+    return null; // No se encontró
+  } catch (error) {
+    console.error('Error buscando chat por ID:', error);
+    return null;
   }
 }
 
@@ -1805,7 +1807,7 @@ function createFloatingResponseButton() {
   button.id = 'fbChatMonitorQuickResponse';
   button.classList.add('fb-chat-monitor-floating-button');
   button.textContent = '✨ Generate Response';
-  
+
   // Styles to position near the message input field
   button.style.position = 'fixed';
   button.style.bottom = '20px';
@@ -1821,7 +1823,7 @@ function createFloatingResponseButton() {
   button.style.fontWeight = 'bold';
   button.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
   button.style.display = 'none'; // Hidden by default
-  
+
   // Hover effect
   button.addEventListener('mouseenter', () => {
     button.style.backgroundColor = '#166fe5';
@@ -1829,7 +1831,7 @@ function createFloatingResponseButton() {
   button.addEventListener('mouseleave', () => {
     button.style.backgroundColor = '#1877f2';
   });
-  
+
   // Generate response on click
   button.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1841,7 +1843,7 @@ function createFloatingResponseButton() {
       showSimpleAlert('Error: Could not generate response. Try opening the full panel.', 'error');
     }
   });
-  
+
   return button;
 }
 
@@ -1853,34 +1855,34 @@ function updateFloatingResponseButtonVisibility() {
   if (!uiState.floatingResponseButton) {
     return;
   }
-  
+
   // Verify if we are in manual mode (OFF)
   const isManualMode = window.CONFIG && window.CONFIG.operationMode === 'manual';
-  
+
   // Only show the button if:
   // 1. We are in manual mode
   // 2. The panel is closed or minimized
   // 3. There is an active chat
-  const shouldShow = isManualMode && 
-                     !uiState.isControlPanelVisible && 
-                     window.chatManager && 
-                     window.chatManager.currentChatId;
-  
+  const shouldShow = isManualMode &&
+    !uiState.isControlPanelVisible &&
+    window.chatManager &&
+    window.chatManager.currentChatId;
+
   // Reposition the button to appear near the chat input field
   if (shouldShow) {
     // Find the input field or send button to better position the floating button
     const inputField = document.querySelector(CONFIG.selectors.activeChat.messageInput);
     const sendButton = domUtils.findElement(CONFIG.selectors.activeChat.sendButton);
-    
+
     if (inputField || sendButton) {
       const referenceElement = inputField || sendButton;
       const rect = referenceElement.getBoundingClientRect();
-      
+
       // Position just above the input field
       uiState.floatingResponseButton.style.bottom = `${window.innerHeight - rect.top + 10}px`;
       uiState.floatingResponseButton.style.right = '20px';
     }
-    
+
     uiState.floatingResponseButton.style.display = 'block';
   } else {
     uiState.floatingResponseButton.style.display = 'none';
@@ -1897,10 +1899,10 @@ function showSimpleAlert(message, type = 'info', duration = 3000) {
   // Create alert element
   const alert = document.createElement('div');
   alert.className = 'fb-chat-monitor-alert';
-  
+
   // Determine the optimal position for the alert
   const positionInfo = getOptimalAlertPosition();
-  
+
   // Apply base styles
   alert.style.position = 'fixed';
   alert.style.zIndex = '10000';
@@ -1912,13 +1914,13 @@ function showSimpleAlert(message, type = 'info', duration = 3000) {
   alert.style.opacity = '0';
   alert.style.transform = 'translateY(20px)';
   alert.style.pointerEvents = 'none'; // So it doesn't interfere with clicks
-  
+
   // Position the alert according to the calculated position
   alert.style.left = positionInfo.left;
   alert.style.top = positionInfo.top;
   alert.style.right = positionInfo.right;
   alert.style.maxWidth = '300px';
-  
+
   // Apply styles according to alert type
   switch (type) {
     case 'success':
@@ -1937,24 +1939,24 @@ function showSimpleAlert(message, type = 'info', duration = 3000) {
       alert.style.backgroundColor = '#2196F3';
       alert.style.color = 'white';
   }
-  
+
   // Add text
   alert.textContent = message;
-  
+
   // Add to the DOM
   document.body.appendChild(alert);
-  
+
   // Animate entry
   setTimeout(() => {
     alert.style.opacity = '1';
     alert.style.transform = 'translateY(0)';
   }, 50);
-  
+
   // Remove after the specified duration
   setTimeout(() => {
     alert.style.opacity = '0';
     alert.style.transform = 'translateY(-20px)';
-    
+
     // Remove from the DOM after the animation
     setTimeout(() => {
       if (alert.parentElement) {
@@ -1972,14 +1974,14 @@ function getOptimalAlertPosition() {
   // Check if the panel is open or closed
   const panel = document.getElementById('fbChatMonitorPanel');
   const mainButton = document.getElementById('fbChatMonitorButton');
-  
+
   // Default values (standard position in the upper right)
   const defaultPosition = {
     top: '60px',
     right: '20px',
     left: 'auto'
   };
-  
+
   // If the panel is open, position below the panel
   if (panel && uiState.isControlPanelVisible) {
     const panelRect = panel.getBoundingClientRect();
@@ -1989,7 +1991,7 @@ function getOptimalAlertPosition() {
       left: 'auto'
     };
   }
-  
+
   // If the main button is visible, position below the button
   if (mainButton) {
     const buttonRect = mainButton.getBoundingClientRect();
@@ -1999,7 +2001,7 @@ function getOptimalAlertPosition() {
       left: 'auto'
     };
   }
-  
+
   // If there are no references, use the default position
   return defaultPosition;
 }
