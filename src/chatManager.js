@@ -17,22 +17,11 @@ class ChatManager {
     this.pendingChats = []; // Queue of unread chats
     this.currentChatId = null; // Currently open chat ID
     this.chatHistory = new Map(); // Conversation history by ID
-    this.isProcessing = false; // Indicates if we are processing messages
-    this.conversationLogs = JSON.parse(localStorage.getItem('FB_CHAT_MONITOR_LOGS') || '[]');
     this.lastProcessedMessageCount = 0; // Counter of processed messages
-    this.manualChatChangeDetected = false; // Indicator of manual changes
-    this.activeChatObserver = null; // Observer for active chat content
-    this.lastScrollHeight = 0; // To detect new messages by scrolling
     this.isProcessingChat = false; // Anti-concurrency flag
     this.respondedChats = new Set(); // Avoids duplicate responses in auto mode
     this.isResponding = false; // New anti-reentrancy flag
 
-    // State to simulate human typing
-    this.typingState = {
-      isTyping: false,
-      intervalId: null,
-      chatId: null
-    };
 
     // Configure URL monitoring for manual chat changes
     this._setupUrlChangeDetection();
@@ -388,8 +377,6 @@ class ChatManager {
         // Pass isAutoMode value for auto-response
         await this.processCurrentChat(isAutoMode);
 
-        await this.markChatAsRead();
-
         return true;
       }
       // OPTION 2: Navigate directly by URL if we have a numeric ID
@@ -401,7 +388,6 @@ class ChatManager {
 
         // Change current location - this will reload the page
         window.location.href = url;
-        await this.markChatAsRead();
         return true;
       }
 
@@ -931,16 +917,25 @@ class ChatManager {
 
         // SKIP if it is a divider or system message
         if (!isDiv && !isSys) {
-          messages.push({
+          const messageData = {
             id: `msg_${this.currentChatId}_${idx}`,
             sentByUs,
             content: {
               text,
-              type,
+              type: "unknown",
               media: {}
             }
-          });
-          logger.debug(`#${idx + 1}: ${type} – ${text.substring(0, 30)}${text.length > 30 ? '…' : ''}`);
+          };
+
+          // Detectar y añadir contenido multimedia
+          this.detectAndAddImageContent(el, messageData);
+          this.detectAndAddAudioContent(el, messageData);
+          this.detectAndAddVideoContent(el, messageData);
+          this.detectAndAddFileContent(el, messageData);
+          this.detectAndAddLocationContent(el, messageData);
+
+          messages.push(messageData);
+          logger.debug(`#${idx + 1}: ${messageData.content.type} – ${text.substring(0, 30)}${text.length > 30 ? '…' : ''}`);
         } else {
           logger.debug(`#${idx + 1}: Skipped ${isDiv ? 'DIVIDER' : 'SYSTEM'} message`);
         }
@@ -956,45 +951,6 @@ class ChatManager {
     }
 
     return messages;
-  }
-
-  /**
-   * PHASE 2: New function to validate timestamps
-   * @param {string} text - Text to validate as timestamp
-   * @returns {boolean} True if it appears to be a valid timestamp
-   */
-  isValidTimestamp(text) {
-    if (!text || typeof text !== 'string') return false;
-
-    const trimmedText = text.trim();
-
-    // Patterns indicating it is NOT a timestamp (names, simple durations, actions)
-    const invalidPatterns = [
-      /^\d{1,2}:\d{2}$/, // Only MM:SS (probably audio duration)
-      /^[a-záéíóúüñ\s]+$/i, // Only letters and spaces (probably name or action)
-      /^(Play|Reproducir|Pause|Pausar)$/i, // Button labels
-      /^Message replied to:/i, // Reply indicator
-      /^Message:/i // Generic indicator
-    ];
-
-    // If it matches any invalid pattern, return false
-    if (invalidPatterns.some(pattern => pattern.test(trimmedText))) {
-      return false;
-    }
-
-    // Patterns indicating a valid timestamp
-    const validPatterns = [
-      /\d{1,2}:\d{2}\s*(AM|PM)/i, // HH:MM AM/PM
-      /\d{1,2}\/\d{1,2}\/\d{2,4}/, // DD/MM/YY(YY)
-      /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Sep|Oct|Nov|Dic)/i, // Month name
-      /(Today|Yesterday|Hoy|Ayer)/i, // Today/Yesterday
-      /minutes? ago|hours? ago|minutes?|hours?/i, // Relative (X minutes ago)
-      /sent at \d{1,2}:\d{2}\s*(AM|PM)?/i, // "sent at HH:MM"
-      /sent at \d{1,2}:\d{2}/i // "sent at HH:MM"
-    ];
-
-    // If it matches any valid pattern, return true
-    return validPatterns.some(pattern => pattern.test(trimmedText));
   }
 
   /**
@@ -1582,57 +1538,6 @@ class ChatManager {
   }
 
   /**
-   * Detects GIFs and stickers
-   * @param {HTMLElement} container - Message container
-   * @param {Object} messageData - Message data to update
-   */
-  detectAndAddGifContent(container, messageData) {
-    try {
-      const gifSelectors = Array.isArray(CONFIG.selectors.activeChat.messageGifElement) ?
-        CONFIG.selectors.activeChat.messageGifElement.join(', ') :
-        CONFIG.selectors.activeChat.messageGifElement;
-
-      const gifElement = container.querySelector(gifSelectors);
-
-      if (gifElement) {
-        let gifInfo = null;
-
-        // For image elements
-        if (gifElement.tagName === 'IMG') {
-          const url = gifElement.src;
-          const isGif = url && (url.includes('giphy.com') || url.includes('tenor.com') || url.endsWith('.gif'));
-          const isSticker = !!container.querySelector('[data-testid="sticker"]');
-
-          gifInfo = {
-            url: url,
-            type: isSticker ? 'sticker' : (isGif ? 'gif' : 'animated_content'),
-            alt: gifElement.alt || ''
-          };
-        } else { // For containers
-          const label = gifElement.getAttribute('aria-label') || 'GIF';
-          const imgElement = gifElement.querySelector('img');
-          const url = imgElement ? imgElement.src : null;
-
-          gifInfo = {
-            url: url,
-            type: label.toLowerCase().includes('sticker') ? 'sticker' : 'gif',
-            label: label
-          };
-        }
-
-        if (gifInfo) {
-          messageData.content.media.gif = gifInfo;
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'gif';
-          }
-        }
-      }
-    } catch (error) {
-      logger.error(`Error detecting GIF/sticker: ${error.message}`, {}, error);
-    }
-  }
-
-  /**
    * Determines if a message is a system message - IMPROVED VERSION
    * @param {string} messageText - Message text to check
    * @returns {boolean} True if the message is a system message
@@ -1838,560 +1743,6 @@ class ChatManager {
     } catch (error) {
       logger.debug(`Error detecting quoted message: ${error.message}`);
       return null;
-    }
-  }
-
-  /**
-   * Detects and extracts mentions in a message
-   * @param {HTMLElement} container - Message container
-   * @returns {array} Array of found mentions
-   */
-  extractMentions(container) {
-    try {
-      const mentions = [];
-
-      // Look for mention elements with specific classes or attributes
-      const mentionElements = container.querySelectorAll('a[href*="/user/"], span.xngnso2, span[data-hovercard]');
-
-      mentionElements.forEach(element => {
-        const name = element.innerText.trim();
-        let userId = null;
-
-        // Try to extract user ID from different sources
-        if (element.href) {
-          const match = element.href.match(/\/user\/(\d+)|\?id=(\d+)/);
-          if (match) {
-            userId = match[1] || match[2];
-          }
-        } else if (element.getAttribute('data-hovercard')) {
-          const match = element.getAttribute('data-hovercard').match(/id=(\d+)/);
-          if (match) {
-            userId = match[1];
-          }
-        }
-
-        if (name) {
-          mentions.push({
-            name: name,
-            id: userId
-          });
-        }
-      });
-
-      return mentions.length > 0 ? mentions : null;
-    } catch (error) {
-      logger.debug(`Error extracting mentions: ${error.message}`);
-      return null;
-    }
-  }
-
-  /**
-   * Analyzes the context of a message to get additional information
-   * @param {HTMLElement} container - Message container
-   * @param {Object} messageData - Message data
-   */
-  enhanceMessageContext(container, messageData) {
-    try {
-      // 1. Detect if it's a reply
-      const quoteInfo = this.detectQuotedMessage(container);
-      if (quoteInfo) {
-        messageData.context = {
-          ...messageData.context || {},
-          ...quoteInfo
-        };
-        // If it's a reply, update the message type
-        messageData.content.type = messageData.content.type === 'unknown' ? 'reply' : `${messageData.content.type}_reply`;
-      }
-
-      // 2. Extract mentions
-      const mentions = this.extractMentions(container);
-      if (mentions) {
-        messageData.context = {
-          ...messageData.context || {},
-          mentions: mentions
-        };
-      }
-
-      // 3. Detect reactions to the message
-      const reactions = this.detectReactions(container);
-      if (reactions) {
-        messageData.context = {
-          ...messageData.context || {},
-          reactions: reactions
-        };
-      }
-
-      // 4. Detect products or links mentioned
-      const productMention = this.detectProductMention(container);
-      if (productMention) {
-        messageData.context = {
-          ...messageData.context || {},
-          productMention: productMention
-        };
-      }
-    } catch (error) {
-      logger.debug(`Error enhancing message context: ${error.message}`);
-    }
-  }
-
-  /**
-   * Detects reactions to a message (emojis, likes)
-   * @param {HTMLElement} container - Message container
-   * @returns {array|null} Array of reactions or null
-   */
-  detectReactions(container) {
-    try {
-      // Look for reaction containers
-      const reactionContainer = container.querySelector('div.xq8finb, div.x6s0dn4.x78zum5.xl56j7k, div[role="toolbar"][aria-label*="reaction"]');
-
-      if (!reactionContainer) return null;
-
-      const reactions = [];
-
-      // Look for emoji elements
-      const emojiElements = reactionContainer.querySelectorAll('img.emoji, span[aria-label*=":"], div[aria-label*="Reacted"]');
-
-      emojiElements.forEach(element => {
-        let type = 'unknown';
-        let value = '';
-
-        // Get details based on element type
-        if (element.tagName === 'IMG') {
-          type = 'emoji';
-          value = element.alt || element.getAttribute('aria-label') || '';
-        } else {
-          const label = element.getAttribute('aria-label') || '';
-          if (label.includes('Like')) {
-            type = 'like';
-            value = '👍';
-          } else if (label.includes('Love')) {
-            type = 'love';
-            value = '❤️';
-          } else if (label.match(/Reacted with/i)) {
-            type = 'emoji';
-            // Extract emoji from text (format: "Reacted with :emoji:")
-            const match = label.match(/Reacted with :([^:]+):/);
-            if (match) {
-              value = match[1];
-            } else {
-              value = label.replace(/Reacted with\s*/i, '');
-            }
-          } else {
-            value = label;
-          }
-        }
-
-        if (value) {
-          reactions.push({
-            type: type,
-            value: value
-          });
-        }
-      });
-
-      return reactions.length > 0 ? reactions : null;
-    } catch (error) {
-      logger.debug(`Error detecting reactions: ${error.message}`);
-      return null;
-    }
-  }
-
-  /**
-   * Detects product mentions or links in a message
-   * @param {HTMLElement} container - Message container
-   * @returns {object|null} Product information or null
-   */
-  detectProductMention(container) {
-    try {
-      // Look for links to Marketplace products
-      const productLink = container.querySelector('a[href*="/marketplace/item/"]');
-      if (!productLink) return null;
-
-      const href = productLink.href;
-      let productId = null;
-
-      // Extract product ID
-      const match = href.match(/\/marketplace\/item\/(\d+)/);
-      if (match) {
-        productId = match[1];
-      }
-
-      // Extract title and image if available
-      let title = '';
-      let imageUrl = '';
-
-      // Look for elements related to the product
-      const titleElement = productLink.querySelector('span[dir="auto"], div[dir="auto"]');
-      if (titleElement) {
-        title = titleElement.innerText.trim();
-      }
-
-      const imageElement = container.querySelector('a[href*="/marketplace/item/"] img, div.x1ey2m1c img');
-      if (imageElement && imageElement.src) {
-        imageUrl = imageElement.src;
-      }
-
-      return {
-        type: 'product',
-        productId: productId,
-        productUrl: href,
-        title: title,
-        imageUrl: imageUrl
-      };
-    } catch (error) {
-      logger.debug(`Error detecting product mention: ${error.message}`);
-      return null;
-    }
-  }
-
-  /**
-   * PHASE 3: Advanced detector for system messages and important events
-   */
-  detectSpecialSystemEvents(messageText) {
-    if (!messageText) return null;
-
-    // Important events in a Marketplace conversation
-    const eventPatterns = [
-
-      // Purchase/sale events
-      {
-        pattern: /marked this item as (sold|pending|available)/i,
-        type: 'status_change',
-        action: (match) => match[1].toLowerCase()
-      },
-      // Price changes
-      {
-        pattern: /changed the price from ([\d,\.]+) to ([\d,\.]+)/i,
-        type: 'price_change',
-        action: (match) => ({ oldPrice: match[1], newPrice: match[2] })
-      },
-      // Cancellation or completion
-      {
-        pattern: /(canceled|completed) this sale/i,
-        type: 'sale_event',
-        action: (match) => match[1].toLowerCase()
-      },
-      // Specific requests
-      {
-        pattern: /requested more details about/i,
-        type: 'request',
-        action: () => 'details_request'
-      },
-      // Spanish version
-      {
-        pattern: /marcó este artículo como (vendido|pendiente|disponible)/i,
-        type: 'status_change',
-        action: (match) => {
-          const status = match[1].toLowerCase();
-          return status === 'vendido' ? 'sold' : (status === 'pendiente' ? 'pending' : 'available');
-        }
-      }
-    ];
-
-    // Check each pattern
-    for (const eventDef of eventPatterns) {
-      const match = messageText.match(eventDef.pattern);
-      if (match) {
-        return {
-          type: eventDef.type,
-          action: eventDef.action(match),
-          originalText: messageText
-        };
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * PHASE 3: Extracts enhanced chat history with asynchronous processing and promises
-   * @param {HTMLElement} messagesWrapper - Messages container
-   * @returns {Promise<Array>} Promise that resolves to the messages array
-   */
-  async extractChatHistoryEnhanced(messagesWrapper) {
-    if (this.isProcessingChat) {
-      logger.warn('Chat history extraction already in progress. Skipping.');
-      return [];
-    }
-    if (!messagesWrapper) {
-      logger.error('messagesWrapper element not provided to extractChatHistory.');
-      return [];
-    }
-
-    this.isProcessingChat = true;
-    logger.debug('Starting enhanced chat history extraction...');
-
-    const messages = [];
-    let messageElements = [];
-    let previousMessageBubbleHTML = null;
-
-    try {
-      // Use the improved message row selector
-      messageElements = domUtils.findAllElements(CONFIG.selectors.activeChat.messageRow, messagesWrapper);
-      logger.debug(`Found ${messageElements.length} message row elements`);
-
-      if (messageElements.length === 0) {
-        // Fallback if elements aren't found with main selector
-        const potentialMessages = messagesWrapper.querySelectorAll('div[dir="auto"][role="none"]');
-        if (potentialMessages.length > 0) {
-          messageElements = Array.from(potentialMessages);
-        } else {
-          throw new Error("No message elements found with main or fallback selectors");
-        }
-      }
-
-      // Use batch processing for large messages
-      const BATCH_SIZE = 20;
-      const batches = Math.ceil(messageElements.length / BATCH_SIZE);
-
-      for (let batchIndex = 0; batchIndex < batches; batchIndex++) {
-        const start = batchIndex * BATCH_SIZE;
-        const end = Math.min(start + BATCH_SIZE, messageElements.length);
-        const currentBatch = messageElements.slice(start, end);
-
-        logger.debug(`Processing batch ${batchIndex + 1}/${batches} (${currentBatch.length} messages)`);
-
-        // Process messages in batches and allow the browser to "breathe" between batches
-        const batchMessages = await this.processBatchOfMessages(
-          currentBatch,
-          previousMessageBubbleHTML,
-          batchIndex
-        );
-
-        if (batchMessages.lastProcessed) {
-          previousMessageBubbleHTML = batchMessages.lastProcessed;
-        }
-
-        // Add valid messages from this batch
-        if (batchMessages.messages && batchMessages.messages.length > 0) {
-          messages.push(...batchMessages.messages);
-        }
-
-        // Pause between batches to avoid blocking the interface
-        if (batchIndex < batches - 1) {
-          await new Promise(resolve => setTimeout(resolve, 5));
-        }
-      }
-
-      this.lastProcessedMessageCount = messages.length;
-      logger.log(`Enhanced extraction completed: ${messages.length} messages processed in ${batches} batches`);
-
-      // PHASE 3: Post-processing to add references between messages
-      this.buildMessageReferences(messages);
-
-    } catch (error) {
-      logger.error('Error during enhanced chat history extraction:', {}, error);
-    } finally {
-      this.isProcessingChat = false;
-    }
-
-    return messages;
-  }
-
-  /**
-   * Processes a batch of messages and returns an array with the valid messages
-   * @param {Array<HTMLElement>} elements - Elements to process
-   * @param {string} previousHTML - HTML of the previous message to detect duplicates
-   * @param {number} batchIndex - Index of the current batch
-   * @returns {Promise<Object>} - Object with the messages and the last processed HTML
-   */
-  async processBatchOfMessages(elements, previousHTML, batchIndex) {
-    const batchMessages = [];
-    let lastProcessedHTML = previousHTML;
-
-    for (let i = 0; i < elements.length; i++) {
-      const rowElement = elements[i];
-
-      // The 'messageBubble' is now the row itself for duplicate checking
-      const messageBubble = rowElement;
-      const currentMessageBubbleHTML = messageBubble.outerHTML;
-
-      // Skip duplicates
-      if (currentMessageBubbleHTML === lastProcessedHTML) {
-        continue;
-      }
-      lastProcessedHTML = currentMessageBubbleHTML;
-
-      // The 'contentContainer' is where we will look for the actual message content
-      const contentContainer = domUtils.findElement([
-        'div.x1cy8zhl', // Common container for message bubble
-        'div[data-testid*="message-container"]', // Another possible container
-        'span.x1lliihq.x1plvlek > div[dir="auto"]' // Directly the text div
-      ], rowElement) || rowElement; // Fallback to the row
-
-      // Improved structure - PHASE 3
-      const messageData = {
-        id: `msg_${this.currentChatId}_${batchIndex * 100 + i}`,
-        timestamp: null,
-        sentByUs: false,
-        content: {
-          text: '',
-          type: 'unknown',
-          media: {
-            images: [],
-            audio: null,
-            video: null,
-            files: [],
-            location: null,
-            gif: null
-          }
-        },
-        context: {} // NEW: Contextual information of the message
-      };
-
-      try {
-        // Determine if it was sent by us
-        messageData.sentByUs = this.isMessageSentByUs(messageBubble);
-
-        // Extract text with improved cleaning
-        const textElement = domUtils.findElement(CONFIG.selectors.activeChat.messageContent, contentContainer);
-        let textContent = '';
-        if (textElement) {
-          textContent = (textElement.innerText || textElement.textContent || '').trim();
-
-          // Cleaning of timestamps at the beginning of the text
-          textContent = textContent.replace(/^(\d{1,2}\/\d{1,2}\/\d{2,4},\s*)?\d{1,2}:\d{2}\s*(?:AM|PM)?\s*:\s*/i, '').trim();
-          textContent = textContent.replace(/^(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4},\s*\d{1,2}:\d{2}\s*(?:AM|PM)?\s*:\s*/i, '').trim();
-          textContent = textContent.replace(/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{1,2}:\d{2}\s*(?:AM|PM)?\s*:\s*/i, '').trim();
-          textContent = textContent.replace(/^Sent \d+d ago:\s*/i, '').trim(); // Format "Sent Xd ago: "
-          textContent = textContent.replace(/^\d{1,2}\/\d{1,2}\/\d{2,4},?\s+\d{1,2}:\d{2}\s*(?:AM|PM)?\s*:\s*/i, '').trim(); // Format "DD/MM/YY, HH:MM AM/PM:"
-        }
-
-        const isSys = this.isSystemMessage(textContent);
-        const isDiv = this.isDividerElement(rowElement);
-
-        if (textContent && !isDiv) {
-          messageData.content.text = textContent;
-
-          if (isSys) {
-            // Detect special system events
-            const specialEvent = this.detectSpecialSystemEvents(textContent);
-            if (specialEvent) {
-              messageData.content.type = 'system_event';
-              messageData.context.systemEvent = specialEvent;
-            } else {
-              messageData.content.type = 'system';
-            }
-          } else {
-            messageData.content.type = 'text';
-          }
-        }
-
-        // PHASE 3: Context improvement (mentions, replies, etc.)
-        this.enhanceMessageContext(contentContainer, messageData);
-
-        // Extract timestamp
-        const timestampElement = domUtils.findElement(CONFIG.selectors.activeChat.messageTimestamp, messageBubble);
-        if (timestampElement) {
-          const potentialTimestamp = timestampElement.getAttribute('data-tooltip-content') ||
-            timestampElement.getAttribute('aria-label') ||
-            timestampElement.innerText;
-
-          if (this.isValidTimestamp(potentialTimestamp)) {
-            messageData.timestamp = potentialTimestamp;
-          }
-        }
-
-        // Detection of media types
-        this.detectAndAddImageContent(contentContainer, messageData);
-        this.detectAndAddAudioContent(contentContainer, messageData);
-        this.detectAndAddVideoContent(contentContainer, messageData);
-        this.detectAndAddFileContent(contentContainer, messageData);
-        this.detectAndAddLocationContent(contentContainer, messageData);
-        this.detectAndAddGifContent(contentContainer, messageData);
-
-        // Determine final content type
-        if (messageData.content.type === 'unknown') {
-          if (messageData.content.text) {
-            messageData.content.type = 'text';
-          } else if (messageData.content.media.images.length > 0) {
-            messageData.content.type = 'image';
-          } else if (messageData.content.media.audio) {
-            messageData.content.type = 'audio';
-          } else if (messageData.content.media.video) {
-            messageData.content.type = 'video';
-          } else if (messageData.content.media.files.length > 0) {
-            messageData.content.type = 'file';
-          } else if (messageData.content.media.location) {
-            messageData.content.type = 'location';
-          } else if (messageData.content.media.gif) {
-            messageData.content.type = 'gif';
-          }
-        }
-
-        // Add message only if it has relevant content and is not a divider
-        if (messageData.content.type !== 'unknown' && !isDiv) {
-          batchMessages.push(messageData);
-        }
-
-      } catch (msgError) {
-        logger.error(`Error processing message element in batch ${batchIndex}, item ${i}:`, {}, msgError);
-      }
-    }
-
-    return {
-      messages: batchMessages,
-      lastProcessed: lastProcessedHTML
-    };
-  }
-
-  /**
-   * Builds references between messages (replies, quotes) after processing
-   * @param {Array} messages - List of processed messages
-   */
-  buildMessageReferences(messages) {
-    if (!messages || messages.length === 0) return;
-
-    try {
-      // Create an indexing of messages by text to facilitate searching
-      const textMap = new Map();
-
-      // First pass: index by text
-      for (let i = 0; i < messages.length; i++) {
-        const msg = messages[i];
-        if (msg.content.text) {
-          // Use the first 50 characters as a key to improve partial matches
-          const textKey = msg.content.text.substring(0, 50).toLowerCase();
-          if (!textMap.has(textKey)) {
-            textMap.set(textKey, []);
-          }
-          textMap.get(textKey).push({ index: i, id: msg.id });
-        }
-      }
-
-      // Second pass: set references
-      for (let i = 0; i < messages.length; i++) {
-        const msg = messages[i];
-        if (msg.context && msg.context.type === 'reply' && msg.context.quotedText) {
-          const quotedTextKey = msg.context.quotedText.substring(0, 50).toLowerCase();
-
-          // Search for possible original messages
-          if (textMap.has(quotedTextKey)) {
-            const candidates = textMap.get(quotedTextKey);
-
-            // Prioritize messages prior to this response
-            const validCandidates = candidates.filter(c => c.index < i);
-
-            if (validCandidates.length > 0) {
-              // Use the closest message as the original
-              const originalMsg = validCandidates.reverse()[0];
-              msg.context.referencesMessageId = originalMsg.id;
-
-              // Also add a reverse reference in the original message
-              const originalMsgObj = messages[originalMsg.index];
-              if (originalMsgObj) {
-                originalMsgObj.context = originalMsgObj.context || {};
-                originalMsgObj.context.referencedBy = originalMsgObj.context.referencedBy || [];
-                originalMsgObj.context.referencedBy.push(msg.id);
-              }
-            }
-          }
-        }
-      }
-
-      logger.debug(`Message references built for ${messages.length} messages`);
-    } catch (error) {
-      logger.error('Error building message references:', {}, error);
     }
   }
 
@@ -2616,7 +1967,6 @@ class ChatManager {
 
         this.insertResponseInInputField(replyText);
         showSimpleAlert('Response inserted. Review and send.', 'info');
-        await this.markChatAsRead();
         // Registrar en historial (nueva línea)
         this.logResponseToHistory(context, context.role, replyText, CONFIG.operationMode === 'auto');
         return { text: replyText };
@@ -2786,7 +2136,6 @@ class ChatManager {
             try {
               sendButton.click();
               logger.log('Message sent by clicking on the button');
-              this.markChatAsRead();
               if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
                 messageSent = true;
                 window.FBChatMonitor.incrementResponseSent();
@@ -2797,7 +2146,6 @@ class ChatManager {
               try {
                 sendButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
                 logger.log('Message sent using simulated click event');
-                this.markChatAsRead();
                 if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
                   messageSent = true;
                   window.FBChatMonitor.incrementResponseSent();
@@ -2823,7 +2171,6 @@ class ChatManager {
 
         if (domUtils.simulateKeyPress(inputField, 'Enter', 13)) {
           logger.log('Message sent simulating Enter key with domUtils.simulateKeyPress');
-          this.markChatAsRead();
           if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
             messageSent = true;
             window.FBChatMonitor.incrementResponseSent();
@@ -2844,7 +2191,6 @@ class ChatManager {
 
         if (sent) {
           logger.log('Message sent simulating Enter key with KeyboardEvent');
-          this.markChatAsRead();
           if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
             messageSent = true;
             window.FBChatMonitor.incrementResponseSent();
@@ -2857,7 +2203,6 @@ class ChatManager {
         try {
           if (document.execCommand('insertText', false, '\n')) {
             logger.log('Message sent using execCommand insertText');
-            this.markChatAsRead();
             if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
               messageSent = true;
               window.FBChatMonitor.incrementResponseSent();
@@ -2974,230 +2319,6 @@ class ChatManager {
       }
     } catch (error) {
       logger.error(`Error logging response to history: ${error.message}`);
-    }
-  }
-
-  /**
-   * Procesa una conversación completa para generar una respuesta
-   * @param {string} chatId - ID del chat
-   * @param {string} role - Rol en la conversación ('seller' o 'buyer')
-   * @param {Object} options - Opciones adicionales
-   * @returns {Promise<Object>} Resultado del procesamiento
-   */
-  async processConversation(chatId, role = null, options = {}) {
-    console.log(`[ChatManager][DEBUG] Inicio processConversation para chatId: ${chatId}`);
-    logger.debug(`Processing conversation ${chatId}`);
-
-    try {
-      // 1. Lanzar en paralelo tareas independientes
-      console.log(`[ChatManager][DEBUG] Iniciando extracción de producto y audio en paralelo`);
-      const [productDetailsPromise, audioInitPromise] = await Promise.allSettled([
-        // Extraer detalles del producto en paralelo
-        this.extractProductDetails(chatId),
-
-        // Inicializar sistema de transcripción de audio
-        window.audioTranscriber ? window.audioTranscriber.initialize() : Promise.resolve(false)
-      ]);
-
-      // 2. Extraer o detectar el rol si no se proporcionó
-      if (!role) {
-        role = await this.detectRole(chatId);
-        console.log(`[ChatManager][DEBUG] Rol detectado: ${role}`);
-        logger.debug(`Detected role: ${role}`);
-      }
-
-      // 3. Scroll y extracción de mensajes
-      console.log(`[ChatManager][DEBUG] Iniciando extracción de mensajes`);
-      const messages = await this.extractMessages(chatId);
-
-      if (!messages || messages.length === 0) {
-        console.log(`[ChatManager][ERROR] No se encontraron mensajes en la conversación`);
-        throw new Error('No messages found in conversation');
-      }
-
-      console.log(`[ChatManager][DEBUG] Extraídos ${messages.length} mensajes de chat ${chatId}`);
-      console.log(`[ChatManager][DEBUG] Primer mensaje: ${JSON.stringify(messages[0])}`);
-      console.log(`[ChatManager][DEBUG] Último mensaje: ${JSON.stringify(messages[messages.length - 1])}`);
-      logger.debug(`Extracted ${messages.length} messages from chat ${chatId}`);
-
-      // 4. Esperar a que termine la extracción de producto
-      let productData = null;
-      if (productDetailsPromise.status === 'fulfilled' && productDetailsPromise.value) {
-        productData = productDetailsPromise.value;
-        console.log(`[ChatManager][DEBUG] Datos del producto extraídos: ${JSON.stringify(productData)}`);
-        logger.debug('Product data extracted successfully');
-      } else {
-        console.log(`[ChatManager][DEBUG] No se pudieron extraer datos del producto: ${productDetailsPromise.reason || 'Sin detalles'}`);
-      }
-
-      // 5. Generar respuesta usando el flujo optimizado
-      console.log(`[ChatManager][DEBUG] Generando respuesta con flujo optimizado. Role: ${role}, chatId: ${chatId}`);
-      logger.debug('Generating response with optimized flow');
-      const response = await window.openAIManager.generateAssistantResponse(chatId, messages, {
-        role,
-        productData
-      });
-
-      console.log(`[ChatManager][DEBUG] Respuesta generada con éxito: "${response.substring(0, 50)}${response.length > 50 ? '...' : ''}"`);
-
-      // 6. Devolver resultado con metadata
-      return {
-        success: true,
-        response,
-        role,
-        productData,
-        messageCount: messages.length,
-        timestamp: Date.now()
-      };
-    } catch (error) {
-      console.log(`[ChatManager][ERROR] Error procesando conversación: ${error.message}`, error);
-      logger.error(`Error processing conversation: ${error.message}`, {}, error);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: Date.now()
-      };
-    }
-  }
-
-  /**
-   * Extrae los detalles del producto en la conversación
-   * @param {string} chatId - ID del chat
-   * @returns {Promise<Object|null>} Detalles del producto o null si no se encuentra
-   * @private
-   */
-  async extractProductDetails(chatId) {
-    console.log(`[ChatManager][DEBUG] Extrayendo detalles del producto para chatId: ${chatId}`);
-    if (!window.productExtractor) {
-      console.log(`[ChatManager][WARN] Product extractor no disponible`);
-      logger.warn('Product extractor not available');
-      return null;
-    }
-
-    try {
-      // Usar extractProduct si existe, o getProductInfoFromChat como fallback
-      let productData = null;
-      if (typeof window.productExtractor.extractProduct === 'function') {
-        console.log(`[ChatManager][DEBUG] Usando productExtractor.extractProduct()`);
-        productData = await window.productExtractor.extractProduct(chatId);
-      } else if (typeof window.productExtractor.getProductInfoFromChat === 'function') {
-        console.log(`[ChatManager][DEBUG] Usando productExtractor.getProductInfoFromChat()`);
-        productData = await window.productExtractor.getProductInfoFromChat(chatId);
-      }
-
-      console.log(`[ChatManager][DEBUG] Datos del producto extraídos: ${JSON.stringify(productData || {})}`);
-      return productData;
-    } catch (error) {
-      console.log(`[ChatManager][ERROR] Error extrayendo detalles del producto: ${error.message}`);
-      logger.warn(`Error extracting product details: ${error.message}`);
-      return null;
-    }
-  }
-
-  async markChatAsRead(chatId = null) {
-    const targetChatId = chatId || this.currentChatId;
-
-    if (!targetChatId) {
-      logger.error('No chat ID to mark as read');
-      return false;
-    }
-
-    logger.log(`Attempting to mark chat as read: ${targetChatId}`);
-
-    try {
-      // Method 1: Find and click the unread message indicator
-      // These selectors may need adjustments depending on Facebook's current structure
-      const unreadIndicatorSelectors = [
-        // Specific "mark as read" buttons/indicators
-        'div[aria-label="Marcar como leído"]',
-        'div[aria-label="Mark as read"]',
-        'div[aria-label*="read"][role="button"]',
-        // General elements that indicate unread messages
-        'div.xuk3077[role="row"] div[aria-label*="unread"]',
-        'div.x78zum5[role="row"] div.xzg4506:not(:empty)',
-        'div[role="grid"] div[role="row"] div.xzg4506:not(:empty)' // Generic unread indicator
-      ];
-
-      // Try to find any unread indicator in this chat
-      let unreadElement = null;
-
-      // If we are in the active chat, search directly in the DOM
-      if (document.querySelector(`[data-thread-id="${targetChatId}"]`) ||
-        document.querySelector(`[href*="${targetChatId}"]`)) {
-
-        for (const selector of unreadIndicatorSelectors) {
-          unreadElement = document.querySelector(selector);
-          if (unreadElement) {
-            logger.debug(`Found unread message indicator with selector: ${selector}`);
-            break;
-          }
-        }
-      }
-
-      // If we found an element, simulate click
-      if (unreadElement) {
-        logger.debug('Simulating click on "mark as read" indicator');
-        this.simulateCompatibleMouseEvents(unreadElement);
-
-        // Verify that the indicator disappeared
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        if (!document.querySelector(unreadIndicatorSelectors.join(', '))) {
-          logger.log('Chat marked as read successfully (indicator disappeared)');
-          return true;
-        }
-      }
-
-      // Method 2: Update an internal Facebook attribute (more advanced)
-      // This approach is more technical and may require adjustments when Facebook changes its implementation
-      try {
-        // Try to find the React data model where Facebook stores read state
-        const chatElements = document.querySelectorAll(`[data-thread-id="${targetChatId}"], [href*="${targetChatId}"]`);
-
-        for (const element of chatElements) {
-          // Access React instance properties
-          const reactKey = Object.keys(element).find(key => key.startsWith('__reactFiber$'));
-          if (reactKey) {
-            const internalInstance = element[reactKey];
-            if (internalInstance) {
-              // Navigate through internal structure to find state
-              const stateNode = internalInstance.return?.stateNode;
-              if (stateNode && typeof stateNode.markRead === 'function') {
-                logger.debug('Found Facebook internal markRead function, attempting to use');
-                stateNode.markRead();
-                logger.log('Chat marked as read using Facebook internal API');
-                return true;
-              }
-            }
-          }
-        }
-      } catch (internalError) {
-        logger.debug(`Error attempting to use internal API: ${internalError.message}`);
-        // Continue with other methods if this fails
-      }
-
-      // Method 3: Simulate complete viewing of chat (usually marks as read)
-      if (this.currentChatId === targetChatId) {
-        // Find messages container
-        const messagesContainer = domUtils.findElement(CONFIG.selectors.activeChat.container);
-        if (messagesContainer) {
-          // Scroll completely to bottom
-          messagesContainer.scrollTop = messagesContainer.scrollHeight;
-
-          // Wait a moment for Facebook to process the action
-          await new Promise(resolve => setTimeout(resolve, 1500));
-          logger.debug('Chat marked as read by scrolling to most recent messages');
-          return true;
-        }
-      }
-
-      // If we get here, we couldn't explicitly mark as read
-      logger.warn(`Could not explicitly mark chat ${targetChatId} as read, but sending response may have done it automatically`);
-
-      // Return true since FB may have marked it automatically when sending message
-      return true;
-    } catch (error) {
-      logger.error(`Error marking chat as read: ${error.message}`);
-      return false;
     }
   }
 }
