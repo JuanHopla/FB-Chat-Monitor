@@ -249,16 +249,13 @@ class AudioTranscriber {
    * @returns {number} Número de nuevos audios encontrados
    */
   checkForAudioResources() {
-    this.debugLog("Buscando recursos de audio en la página");
-
-    // 1. Buscar audios en el DOM (implementación actual)
+    // 1. Buscar audios en el DOM
     const audioElements = document.querySelectorAll('audio[src]');
-    this.debugLog(`Encontrados ${audioElements.length} elementos de audio en el DOM`);
+    const domAudioCount = audioElements.length;
 
-    // 2. Buscar audios con la API de Performance (método del POC)
+    // 2. Buscar audios con la API de Performance
     const performanceUrls = this.detectAudioUrlsWithPerformanceAPI();
-    this.debugLog(`Buscando recursos de audio con Performance API`);
-    this.debugLog(`Encontrados ${performanceUrls.length} URLs de audio con Performance API`);
+    const perfAudioCount = performanceUrls.length;
 
     let newAudiosFound = 0;
     const newAudioUrls = [];
@@ -268,26 +265,22 @@ class AudioTranscriber {
       const audioUrl = audioEl.src;
       if (!audioUrl || this.processedMediaUrls.has(audioUrl)) return;
 
-      // Encontrar el mensaje al que pertenece este audio
       const row = audioEl.closest(this.MESSAGE_ROW_SELECTOR);
       const messageId = row?.dataset?.messageId || null;
 
-      // Marcar como visto
       this.processedMediaUrls.add(audioUrl);
       newAudiosFound++;
       newAudioUrls.push(audioUrl);
 
-      this.debugLog(`Nuevo audio encontrado en DOM: ${audioUrl}, messageId: ${messageId || 'ninguno'}`);
-
       // Procesar inmediatamente
-      if (!this.pendingTranscriptions.has(audioUrl) && !this.completedTranscriptions.has(audioUrl)) {
+      if (!this.pendingTranscriptions.has(audioUrl) &&
+          !this.completedTranscriptions.has(audioUrl)) {
         this.processAudioUrl(audioUrl, messageId);
       }
     });
 
-    // Procesar audios de Performance API (enfoque del POC)
+    // Procesar audios de Performance API
     performanceUrls.forEach(audioUrl => {
-      // Usamos cleanUrl solo para verificar si ya fue procesada
       const cleanUrl = audioUrl.split('?')[0];
       if (this.processedMediaUrls.has(cleanUrl)) return;
 
@@ -295,35 +288,31 @@ class AudioTranscriber {
       newAudiosFound++;
       newAudioUrls.push(audioUrl);
 
-      // Asociar con messageId esperando (si existe)
       let messageIdToUse = null;
       if (this.expectingAudioForMessageId &&
-        (Date.now() - this.expectingAudioTimestamp) < this.CLICK_ASSOCIATION_WINDOW_MS) {
+          (Date.now() - this.expectingAudioTimestamp) < this.CLICK_ASSOCIATION_WINDOW_MS) {
         messageIdToUse = this.expectingAudioForMessageId;
-        this.debugLog(`Asociando audio ${cleanUrl} con mensaje esperado ${messageIdToUse}`);
-
-        // Registrar asociación usando cleanUrl para el mapeo
         this.audioUrlsToMessages.set(cleanUrl, messageIdToUse);
         this.messageIdsToAudioUrls.set(messageIdToUse, cleanUrl);
-
-        // Limpiar expectativa
         this.expectingAudioForMessageId = null;
         this.expectingAudioTimestamp = 0;
       }
 
-      this.debugLog(`Procesando audio encontrado con Performance API: ${audioUrl}`);
-
-      // Procesar inmediatamente con la URL COMPLETA 
-      if (!this.pendingTranscriptions.has(cleanUrl) && !this.completedTranscriptions.has(cleanUrl)) {
-        this.processAudioUrl(audioUrl, messageIdToUse); // Pasar la URL completa
+      if (!this.pendingTranscriptions.has(cleanUrl) &&
+          !this.completedTranscriptions.has(cleanUrl)) {
+        this.processAudioUrl(audioUrl, messageIdToUse);
       }
     });
 
+    // Sólo logueamos si hay nuevos audios
     if (newAudiosFound > 0) {
-      this.debugLog(`Se encontraron ${newAudiosFound} nuevos audios.`);
+      this.debugLog(
+        `Se encontraron ${newAudiosFound} nuevo(s) audio(s) ` +
+        `(DOM: ${domAudioCount}, PerfAPI: ${perfAudioCount})`
+      );
+      this.debugLog(`URLs: ${newAudioUrls.join(', ')}`);
       logger.debug(`AudioTranscriber: Found ${newAudiosFound} new audio resources`);
 
-      // Emitir evento para notificar a otros componentes
       if (window.eventCoordinator) {
         window.eventCoordinator.emit('audioResourcesFound', {
           count: newAudiosFound,
