@@ -40,13 +40,21 @@ class ThreadStore {
     }
   }
 
-  /**
+/**
    * Gets thread info for a Facebook thread ID
    * @param {string} fbThreadId - Facebook thread ID
+   * @param {boolean} forceReload - Whether to force reload from storage first
    * @returns {Object|null} Thread info or null if not found
    */
-  getThreadInfo(fbThreadId) {
+  getThreadInfo(fbThreadId, forceReload = false) {
     console.log(`[ThreadStore][DEBUG] Buscando info para thread: ${fbThreadId}`);
+    
+    // Si se solicita forzar recarga o el store no está inicializado, cargar desde storage
+    if (forceReload || !this.initialized) {
+      console.log(`[ThreadStore][DEBUG] ${forceReload ? 'Forzando recarga' : 'Store no inicializado'}, cargando desde storage`);
+      this.loadThreads();
+    }
+    
     const threadInfo = this.threads.get(fbThreadId);
     
     // Update last accessed time if found

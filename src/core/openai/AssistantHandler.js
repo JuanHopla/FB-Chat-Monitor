@@ -47,7 +47,7 @@ class AssistantHandler {
     }
   }
 
-  /**
+/**
    * Generates a response based on the chat context
    * @param {string} fbThreadId - Facebook thread ID
    * @param {Array} allMessages - All messages in the chat
@@ -75,8 +75,14 @@ class AssistantHandler {
     console.log(`[AssistantHandler] Step 4.1: Generating response for thread ${fbThreadId} as ${chatRole}`);
 
     try {
-      // Check if thread exists to determine flow
-      let threadInfo = window.threadStore.getThreadInfo(fbThreadId);
+      // Primero asegurar que ThreadStore está inicializado
+      if (window.threadStore && typeof window.threadStore.initialize === 'function' && 
+          !window.threadStore.initialized) {
+        await window.threadStore.initialize();
+      }
+      
+      // Primera verificación del thread
+      let threadInfo = window.threadStore?.getThreadInfo(fbThreadId);
       
       // Choose appropriate flow
       if (!threadInfo) {
@@ -104,7 +110,17 @@ class AssistantHandler {
     console.log('No existing thread found, creating new one');
     console.log('[AssistantHandler] Processing new thread flow...');
 
-    // Create new thread
+    // Verificar nuevamente con recarga forzada antes de crear el thread
+    // Para asegurar que no se haya creado por otra operación en paralelo
+    if (window.threadStore) {
+      const threadInfoCheck = window.threadStore.getThreadInfo(fbThreadId, true); // Forzar recarga
+      if (threadInfoCheck) {
+        console.log(`[AssistantHandler][DEBUG] Thread encontrado en verificación final, usando existente en lugar de crear nuevo`);
+        return await this.handleExistingThread(fbThreadId, allMessages, chatRole, threadInfoCheck);
+      }
+    }
+
+    // Crear nuevo thread solo si realmente no existe después de la verificación final
     console.log(`[AssistantHandler][DEBUG] Creando nuevo thread en OpenAI para ${fbThreadId}`);
     const threadInfo = await this.createNewThread(fbThreadId, chatRole);
     
