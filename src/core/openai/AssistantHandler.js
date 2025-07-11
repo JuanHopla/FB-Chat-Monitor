@@ -24,20 +24,20 @@ class AssistantHandler {
    */
   async initialize() {
     if (this.initialized) return true;
-    
+
     try {
       // Check required dependencies
       if (!window.apiClient || !window.threadStore || !window.messagePreprocessor) {
         logger.error('Missing required dependencies for AssistantHandler');
         return false;
       }
-      
+
       // Initialize ThreadStore if not already done
-      if (window.threadStore && typeof window.threadStore.initialize === 'function' && 
-          !window.threadStore.initialized) {
+      if (window.threadStore && typeof window.threadStore.initialize === 'function' &&
+        !window.threadStore.initialized) {
         await window.threadStore.initialize();
       }
-      
+
       this.initialized = true;
       console.log('AssistantHandler initialized successfully');
       return true;
@@ -47,14 +47,14 @@ class AssistantHandler {
     }
   }
 
-/**
-   * Generates a response based on the chat context
-   * @param {string} fbThreadId - Facebook thread ID
-   * @param {Array} allMessages - All messages in the chat
-   * @param {string} chatRole - Role (seller or buyer)
-   * @param {Object} productData - Product information
-   * @returns {Promise<string>} Generated response
-   */
+  /**
+     * Generates a response based on the chat context
+     * @param {string} fbThreadId - Facebook thread ID
+     * @param {Array} allMessages - All messages in the chat
+     * @param {string} chatRole - Role (seller or buyer)
+     * @param {Object} productData - Product information
+     * @returns {Promise<string>} Generated response
+     */
   async generateResponse(fbThreadId, allMessages, chatRole, productData) {
     // Ensure initialized
     if (!this.initialized) {
@@ -76,14 +76,14 @@ class AssistantHandler {
 
     try {
       // Primero asegurar que ThreadStore está inicializado
-      if (window.threadStore && typeof window.threadStore.initialize === 'function' && 
-          !window.threadStore.initialized) {
+      if (window.threadStore && typeof window.threadStore.initialize === 'function' &&
+        !window.threadStore.initialized) {
         await window.threadStore.initialize();
       }
-      
+
       // Primera verificación del thread
       let threadInfo = window.threadStore?.getThreadInfo(fbThreadId);
-      
+
       // Choose appropriate flow
       if (!threadInfo) {
         return await this.handleNewThread(fbThreadId, allMessages, chatRole, productData);
@@ -123,7 +123,7 @@ class AssistantHandler {
     // Crear nuevo thread solo si realmente no existe después de la verificación final
     console.log(`[AssistantHandler][DEBUG] Creando nuevo thread en OpenAI para ${fbThreadId}`);
     const threadInfo = await this.createNewThread(fbThreadId, chatRole);
-    
+
     // Get assistant ID for the role
     console.log(`[AssistantHandler][DEBUG] Obteniendo ID de asistente para role: ${chatRole}`);
     const assistantId = this.getAssistantIdForRole(chatRole);
@@ -132,15 +132,15 @@ class AssistantHandler {
       throw new Error(`No assistant ID configured for role: ${chatRole}`);
     }
     console.log(`[AssistantHandler][DEBUG] ID de asistente obtenido: ${assistantId}`);
-    
+
     // Prepare messages with product info and transcriptions
     console.log('[AssistantHandler] Step 4.2: Preparing messages for new thread...');
-    
+
     // 1. Attach product info to messages if available
     console.log(`[AssistantHandler][DEBUG] Adjuntando información de producto: ${!!productData}`);
     const messagesWithProduct = window.messagePreprocessor.attachProductInfo(allMessages, productData);
     console.log('[AssistantHandler] [DEBUG] After attachProductInfo:', messagesWithProduct);
-    
+
     // 2. Process transcriptions (in parallel with other operations)
     console.log(`[AssistantHandler][DEBUG] Procesando transcripciones de audio`);
     let messagesWithTranscriptions;
@@ -150,44 +150,44 @@ class AssistantHandler {
       messagesWithTranscriptions = window.messagePreprocessor.attachTranscriptions(messagesWithProduct);
     }
     console.log('[AssistantHandler] [DEBUG] After attachTranscriptions:', messagesWithTranscriptions);
-    
+
     // 3. Format messages for OpenAI (limit to recent messages for new threads)
     console.log(`[AssistantHandler][DEBUG] Formateando mensajes para OpenAI (limitando a los ${Math.min(messagesWithTranscriptions.length, 50)} más recientes)`);
     const openAIMessages = window.messagePreprocessor.formatMessagesForOpenAI(
       messagesWithTranscriptions.slice(-50)
     );
-    
+
     // Filter and validate messages
     console.log(`[AssistantHandler][DEBUG] Validando mensajes: ${openAIMessages.length} grupos de mensajes`);
     const validatedMessages = this.validateMessages(openAIMessages);
     console.log(`[AssistantHandler][DEBUG] Mensajes validados: ${validatedMessages.length} grupos`);
-    
+
     if (!validatedMessages.length) {
       console.log(`[AssistantHandler][WARN] No hay mensajes válidos para procesar en este nuevo thread`);
       logger.warn('No valid messages to process for new thread');
       return '';
     }
-    
+
     // 4. Add messages to the OpenAI thread
     console.log(`[AssistantHandler][DEBUG] Agregando ${validatedMessages.length} mensajes al hilo ${threadInfo.openaiThreadId}`);
     for (const message of validatedMessages) {
       await window.apiClient.addMessage(threadInfo.openaiThreadId, message);
     }
-    
+
     // 5. Create a run with the appropriate assistant
     console.log(`[AssistantHandler][DEBUG] Creando run con assistant ${assistantId}`);
     const { runId } = await window.apiClient.createRun(threadInfo.openaiThreadId, assistantId);
     console.log(`[AssistantHandler][DEBUG] Run creado: ${runId}`);
-    
+
     // 6. Wait for completion and process response
     console.log(`[AssistantHandler][DEBUG] Esperando completación del run ${runId}`);
     const runResult = await window.apiClient.waitForRunCompletion(
-      threadInfo.openaiThreadId, 
+      threadInfo.openaiThreadId,
       runId,
       this.maxWaitTime
     );
     console.log(`[AssistantHandler][DEBUG] Run completado con status: ${runResult.status}`);
-    
+
     // 7. Process results
     if (runResult.status === 'completed' && runResult.output) {
       // Update thread info with latest message ID
@@ -197,7 +197,7 @@ class AssistantHandler {
         console.log(`[AssistantHandler][DEBUG] Actualizando lastMessageId a ${messageId}`);
         window.threadStore.updateLastMessage(fbThreadId, messageId, Date.now());
       }
-      
+
       console.log(`[AssistantHandler][DEBUG] Procesando respuesta del run completado`);
       const response = this.processResponse(runResult.output);
       console.log(`[AssistantHandler][DEBUG] Respuesta procesada: "${response.substring(0, 50)}${response.length > 50 ? '...' : ''}"`);
@@ -222,8 +222,8 @@ class AssistantHandler {
    */
   async handleExistingThread(fbThreadId, allMessages, chatRole, threadInfo) {
     console.log(`[AssistantHandler][DEBUG] handleExistingThread - fbThreadId: ${fbThreadId}, messages: ${allMessages.length}, role: ${chatRole}`);
-    
-    // Caso especial: thread existe pero sin lastMessageId (primera interacción real)
+
+    // Caso especial: thread existe pero sin lastMessageId
     if (!threadInfo.lastMessageId) {
       console.log(`[AssistantHandler][DEBUG] Thread existe pero tiene lastMessageId nulo. Procesando como primera interacción real.`);
       console.log(`Thread exists but has null lastMessageId. Processing as first real interaction.`);
@@ -233,7 +233,7 @@ class AssistantHandler {
       console.log(`Processing existing thread with last message ID: ${threadInfo.lastMessageId}`);
       console.log('[AssistantHandler] Processing existing thread flow...');
     }
-    
+
     // Get assistant ID for the role
     console.log(`[AssistantHandler][DEBUG] Obteniendo ID de asistente para role: ${chatRole}`);
     const assistantId = this.getAssistantIdForRole(chatRole);
@@ -242,56 +242,61 @@ class AssistantHandler {
       throw new Error(`No assistant ID configured for role: ${chatRole}`);
     }
     console.log(`[AssistantHandler][DEBUG] ID de asistente obtenido: ${assistantId}`);
-    
-    // Process transcriptions in parallel
-    console.log(`[AssistantHandler][DEBUG] Procesando transcripciones de audio`);
-    let messagesWithTranscriptions;
-    if (window.messagePreprocessor.attachTranscriptions.constructor.name === 'AsyncFunction') {
-      messagesWithTranscriptions = await window.messagePreprocessor.attachTranscriptions(allMessages);
-    } else {
-      messagesWithTranscriptions = window.messagePreprocessor.attachTranscriptions(allMessages);
-    }
-    console.log('[AssistantHandler][DEBUG] After attachTranscriptions:', messagesWithTranscriptions);
-    
-    // Get only new messages since the last processed message
+
+    // MODIFICACIÓN: Primero obtener los nuevos mensajes sin transcripción
     console.log(`[AssistantHandler][DEBUG] Obteniendo nuevos mensajes desde el último procesado: ${threadInfo.lastMessageId}`);
-    const openAIMessages = window.messagePreprocessor.getNewMessagesSince(
-      messagesWithTranscriptions,
+    const newMessages = window.messagePreprocessor.getNewMessagesSinceNoFormat(
+      allMessages,
       threadInfo.lastMessageId
     );
-    console.log('[AssistantHandler][DEBUG] New messages since last processing:', openAIMessages);
-    
+    console.log(`[AssistantHandler][DEBUG] Encontrados ${newMessages.length} mensajes nuevos`);
+
+    // MODIFICACIÓN: Procesar transcripciones SOLO para los nuevos mensajes
+    console.log(`[AssistantHandler][DEBUG] Procesando transcripciones solo para los ${newMessages.length} mensajes nuevos`);
+    let messagesWithTranscriptions;
+    if (window.messagePreprocessor.attachTranscriptions.constructor.name === 'AsyncFunction') {
+      messagesWithTranscriptions = await window.messagePreprocessor.attachTranscriptions(newMessages);
+    } else {
+      messagesWithTranscriptions = window.messagePreprocessor.attachTranscriptions(newMessages);
+    }
+    console.log('[AssistantHandler][DEBUG] After attachTranscriptions:', messagesWithTranscriptions);
+
+    // Formatear mensajes para OpenAI
+    console.log(`[AssistantHandler][DEBUG] Formateando ${messagesWithTranscriptions.length} mensajes nuevos para OpenAI`);
+    const openAIMessages = window.messagePreprocessor.formatMessagesForOpenAI(messagesWithTranscriptions);
+    console.log('[AssistantHandler][DEBUG] New messages for OpenAI:', openAIMessages);
+
     // Filter and validate messages
     console.log(`[AssistantHandler][DEBUG] Validando mensajes: ${openAIMessages.length} grupos de mensajes`);
     const validatedMessages = this.validateMessages(openAIMessages);
     console.log(`[AssistantHandler][DEBUG] Mensajes validados: ${validatedMessages.length} grupos`);
-    
+
     if (!validatedMessages.length) {
       console.log(`[AssistantHandler][WARN] No hay mensajes nuevos válidos para procesar en este thread existente`);
       logger.warn('No new valid messages to process for existing thread');
       return '';
     }
-    
+
     // Add new messages to the OpenAI thread
     console.log(`[AssistantHandler][DEBUG] Agregando ${validatedMessages.length} mensajes al hilo ${threadInfo.openaiThreadId}`);
     for (const message of validatedMessages) {
       await window.apiClient.addMessage(threadInfo.openaiThreadId, message);
     }
-    
+
     // Create a run with the appropriate assistant
     console.log(`[AssistantHandler][DEBUG] Creando run con assistant ${assistantId}`);
     const { runId } = await window.apiClient.createRun(threadInfo.openaiThreadId, assistantId);
     console.log(`[AssistantHandler][DEBUG] Run creado: ${runId}`);
-    
+
     // Wait for completion and process response
     console.log(`[AssistantHandler][DEBUG] Esperando completación del run ${runId}`);
     const runResult = await window.apiClient.waitForRunCompletion(
-      threadInfo.openaiThreadId, 
+      threadInfo.openaiThreadId,
       runId,
       this.maxWaitTime
     );
     console.log(`[AssistantHandler][DEBUG] Run completado con status: ${runResult.status}`);
-    
+
     // Process results
     if (runResult.status === 'completed' && runResult.output) {
       // Update thread info with latest message ID
@@ -301,7 +306,7 @@ class AssistantHandler {
         console.log(`[AssistantHandler][DEBUG] Actualizando lastMessageId a ${messageId}`);
         window.threadStore.updateLastMessage(fbThreadId, messageId, Date.now());
       }
-      
+
       console.log(`[AssistantHandler][DEBUG] Procesando respuesta del run completado`);
       const response = this.processResponse(runResult.output);
       console.log(`[AssistantHandler][DEBUG] Respuesta procesada: "${response.substring(0, 50)}${response.length > 50 ? '...' : ''}"`);
@@ -325,17 +330,17 @@ class AssistantHandler {
   async createNewThread(fbThreadId, chatRole) {
     try {
       console.log(`Creating new thread for ${fbThreadId} as ${chatRole}`);
-      
+
       // Create the thread in OpenAI
       const { id: openaiThreadId } = await window.apiClient.createThread();
-      
+
       // Create and store thread info
       const threadInfo = window.threadStore.createThreadInfo(
         fbThreadId,
         openaiThreadId,
         chatRole
       );
-      
+
       console.log(`New thread created successfully: ${openaiThreadId}`);
       return threadInfo;
     } catch (error) {
@@ -358,15 +363,15 @@ class AssistantHandler {
     }
 
     // Remove messages with empty content or not an array
-    const validMessages = messages.filter(msg => 
+    const validMessages = messages.filter(msg =>
       Array.isArray(msg.content) && msg.content.length > 0
     );
-    
+
     console.log(`[AssistantHandler][DEBUG] Validación completada: ${validMessages.length}/${messages.length} mensajes válidos`);
     if (messages.length > 0 && validMessages.length === 0) {
       console.log(`[AssistantHandler][DEBUG] Mensajes inválidos encontrados:`, messages);
     }
-    
+
     return validMessages;
   }
 
@@ -488,7 +493,7 @@ class AssistantHandler {
 
       // Wait for completion
       const runResult = await window.apiClient.waitForRunCompletion(
-        threadId, 
+        threadId,
         runId,
         this.maxWaitTime
       );

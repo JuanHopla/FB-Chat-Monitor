@@ -16,6 +16,13 @@
 // @connect      api.openai.com
 // @connect      facebook.com
 // @connect      messenger.com
+// @connect      fbcdn.net
+// @connect      *.fbcdn.net
+// @connect      fbsbx.com
+// @connect      *.fbsbx.com
+// @connect      cdn.fbsbx.com
+// @connect      video-*.xx.fbcdn.net
+// @connect      scontent-*.xx.fbcdn.net
 // @updateURL    https://juanhopla.github.io/FB-Chat-Monitor/main.user.js
 // @downloadURL  https://juanhopla.github.io/FB-Chat-Monitor/main.user.js
 // @license      MIT

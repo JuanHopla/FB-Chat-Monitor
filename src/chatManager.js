@@ -944,6 +944,16 @@ class ChatManager {
       this.lastProcessedMessageCount = messages.length;
       logger.log(`Extraction completed: ${messages.length} messages found`);
 
+      // Contar mensajes de audio y transcripciones
+      const messagesWithAudio = messages.filter(m => m.content?.hasAudio).length;
+      const messagesWithTranscription = messages.filter(m =>
+        m.content?.hasAudio &&
+        m.content.transcribedAudio &&
+        m.content.transcribedAudio !== '[Transcription Pending]'
+      ).length;
+
+      logger.debug(`Extracción completa: ${messages.length} mensajes (${messagesWithAudio} con audio, ${messagesWithTranscription} con transcripción)`);
+
     } catch (error) {
       logger.error('Error during chat history extraction:', {}, error);
     } finally {
@@ -1034,92 +1044,54 @@ class ChatManager {
   }
 
   /**
-   * Improved audio detection
+   * Mejorada la detección de audio en mensajes
    * @param {HTMLElement} container - Message container
    * @param {Object} messageData - Message data to update
    */
   detectAndAddAudioContent(container, messageData) {
-    try {
-      // Look for audio buttons
-      const audioSelectors = Array.isArray(CONFIG.selectors.activeChat.messageAudioPlayButton) ?
-        CONFIG.selectors.activeChat.messageAudioPlayButton.join(', ') :
-        CONFIG.selectors.activeChat.messageAudioPlayButton;
+    // Usar todos los selectores de botones de audio para mejor detección
+    const audioButtonSelectors = CONFIG.selectors.activeChat.messageAudioPlayButton;
+    let audioButton = null;
 
-      const audioButton = container.querySelector(audioSelectors);
+    // Intentar cada selector hasta encontrar un botón de audio
+    for (const selector of audioButtonSelectors) {
+      const buttons = container.querySelectorAll(selector);
+      if (buttons.length > 0) {
+        audioButton = buttons[0];
+        break;
+      }
+    }
 
+    if (!audioButton) return;
+
+    // Si encontramos un botón de audio, marcar este mensaje como contenedor de audio
+    messageData.content.hasAudio = true;
+
+    // Intentar obtener URL directa (rara vez disponible en el DOM)
+    const audioElement = container.querySelector('audio[src]');
+    if (audioElement && audioElement.src) {
+      messageData.content.audioUrl = audioElement.src;
+    } else {
+      // Si no hay URL directa, generar un marcador único para este audio
+      // que podemos usar para asociar más tarde con las transcripciones
+      const audioMarkerId = `audio_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      messageData.content.audioMarkerId = audioMarkerId;
+
+      // Añadir al DOM como atributo de datos para facilitar la asociación posterior
       if (audioButton) {
-        const label = audioButton.getAttribute('aria-label') || '';
+        audioButton.setAttribute('data-audio-marker-id', audioMarkerId);
 
-        // Ignore if it's a video button
-        if (label.toLowerCase().includes('video')) {
-          return;
-        }
-
-        // Try to extract duration if available
-        const duration = this.extractAudioDuration(container) || '';
-        const audioUrl = this.extractAudioUrl(container) || null;
-
-        // Backward compatibility
-        messageData.content.hasAudio = true;
-        messageData.content.audioUrl = audioUrl;
-
-        // New improved structure
-        messageData.content.media.audio = {
-          exists: true,
-          url: audioUrl,
-          duration: duration,
-          label: label
-        };
-
-        if (messageData.content.type === 'unknown') {
-          messageData.content.type = 'audio';
-        }
-
-        // If there's a URL, try to get transcription if available
-        if (audioUrl && typeof this.getAudioTranscription === 'function') {
-          const transcription = this.getAudioTranscription(audioUrl);
-          if (transcription) {
-            messageData.content.transcribedAudio = transcription;
-          } else {
-            messageData.content.transcribedAudio = "[Audio Transcription Pending]";
-          }
-        }
-      } else {
-        // Look for <audio> elements directly as alternative
-        const audioElement = container.querySelector('audio[src]');
-        if (audioElement) {
-          const audioUrl = audioElement.src;
-
-          // Backward compatibility
-          messageData.content.hasAudio = true;
-          messageData.content.audioUrl = audioUrl;
-
-          // New improved structure
-          messageData.content.media.audio = {
-            exists: true,
-            url: audioUrl,
-            duration: audioElement.duration ? `${Math.round(audioElement.duration)}s` : '',
-            label: 'Audio message'
-          };
-
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'audio';
-          }
-
-          // Try to get transcription
-          if (typeof this.getAudioTranscription === 'function') {
-            const transcription = this.getAudioTranscription(audioUrl);
-            if (transcription) {
-              messageData.content.transcribedAudio = transcription;
-            } else {
-              messageData.content.transcribedAudio = "[Audio Transcription Pending]";
-            }
-          }
+        // Registrar que estamos esperando este audio para cuando se detecte
+        if (window.audioTranscriber) {
+          window.audioTranscriber.expectingAudioForMessageId = messageData.id;
+          window.audioTranscriber.expectingAudioTimestamp = Date.now();
         }
       }
-    } catch (error) {
-      logger.error(`Error detecting audio: ${error.message}`, {}, error);
     }
+
+    // Extraer duración si está disponible
+    messageData.content.audioDuration = this.extractAudioDuration(container);
+    messageData.content.transcribedAudio = '[Transcription Pending]';
   }
 
   /**

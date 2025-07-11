@@ -1,5 +1,6 @@
 /**
  * AudioTranscriber - Sistema optimizado para detección y transcripción de audio
+ * Integrado con componentes del sistema central
  * 
  * Responsibilities:
  * - Detectar audio en el DOM y extraer sus URLs
@@ -9,14 +10,33 @@
  */
 class AudioTranscriber {
   constructor() {
-    this.AUDIO_SELECTOR = 'audio[src]';
+    // --- CONFIGURACIÓN ---
+    this.DEBUG_MODE = true;
+    this.POLLING_INTERVAL_MS = 5000; // Revisar cada 5 segundos
+    this.CLICK_ASSOCIATION_WINDOW_MS = 5000; // Ventana de tiempo para asociar por clic
+    this.pollingInterval = null;
+
+    // --- Selectores (Para UI y contexto) ---
+    this.CHAT_CONTAINER_SELECTOR = 'div.x1ey2m1c.xds687c.xixxii4.x1vjfegm, div[role="main"] > div > div > div:last-child';
+    this.MESSAGE_WRAPPER_SELECTOR = 'div.x4k7w5x > div > div > div, div[role="main"] > div > div > div:last-child > div';
     this.MESSAGE_ROW_SELECTOR = 'div[role="row"]';
-    this.audioCache = new Map(); // URL -> transcription
-    this.processingQueue = new Set(); // URLs en proceso
-    this.processedAudios = new Set(); // URLs ya procesadas
+    this.AUDIO_PLAY_BUTTON_SELECTOR_IN_ROW = 'div[aria-label="Play"][role="button"]';
+
+    // --- Metadatos y Estado ---
+    this.processedMediaUrls = new Set(); // URLs ya procesadas (cleanUrl)
+    this.pendingTranscriptions = new Map(); // cleanUrl -> {status, timestamp, messageId}
+    this.completedTranscriptions = new Map(); // cleanUrl -> {text, timestamp, messageId}
+    this.audioUrlsToMessages = new Map(); // cleanUrl -> messageId
+    this.messageIdsToAudioUrls = new Map(); // messageId -> cleanUrl
+    this.messageIdToTimestamp = new Map(); // messageId -> timestamp
+    this.listenerAttached = new Set(); // Elementos con listeners
+
+    // Estado para asociación por clic
+    this.expectingAudioForMessageId = null;
+    this.expectingAudioTimestamp = 0;
+
     this.observer = null;
     this.initialized = false;
-    this.transcriptionPromises = new Map(); // URL -> Promise
   }
 
   /**
@@ -25,17 +45,37 @@ class AudioTranscriber {
    */
   async initialize() {
     if (this.initialized) return true;
-    
+
     try {
+      this.debugLog('Inicializando AudioTranscriber...');
+
       // Cargar transcripciones en caché desde localStorage
       this.loadCache();
-      
+
       // Iniciar observer para detectar nuevos audios
       this.setupObserver();
-      
+
+      // Iniciar polling periódico
+      this.debugLog(`Iniciando detección de recursos de audio cada ${this.POLLING_INTERVAL_MS}ms.`);
+      this.pollingInterval = setInterval(() => this.checkForAudioResources(), this.POLLING_INTERVAL_MS);
+
       // Escaneo inicial
       this.checkForAudioResources();
-      
+
+      // Integración con ScrollManager - suscribirse a eventos
+      if (window.scrollManager) {
+        this.debugLog('Integrando con ScrollManager');
+        window.scrollManager.on('afterScroll', (data) => {
+          // Detectar audios después de cada scroll
+          this.checkForAudioResources();
+        });
+      }
+
+      // Integración con EventCoordinator
+      if (window.eventCoordinator) {
+        this.debugLog('Integrando con EventCoordinator');
+      }
+
       this.initialized = true;
       logger.log('AudioTranscriber initialized successfully');
       return true;
@@ -44,223 +84,463 @@ class AudioTranscriber {
       return false;
     }
   }
-  
+
   /**
    * Configura un MutationObserver para detectar nuevos audios
    * @private
    */
   setupObserver() {
-    if (this.observer) return;
-    
-    this.observer = new MutationObserver(() => {
-      this.checkForAudioResources();
-    });
-    
-    // Observar cambios en el DOM
-    this.observer.observe(document.body, { 
-      childList: true, 
-      subtree: true 
-    });
-    
-    logger.debug('AudioTranscriber observer setup complete');
-  }
+    // Primero encontrar el contenedor de mensajes
+    const messageWrapper = document.querySelector(this.MESSAGE_WRAPPER_SELECTOR);
 
-  /**
-   * Escanea el DOM en busca de elementos de audio
-   * @param {boolean} processImmediately - Si debe iniciar el procesamiento inmediatamente
-   * @returns {number} Número de nuevos audios encontrados
-   */
-  checkForAudioResources(processImmediately = true) {
-    console.log(`[AudioTranscriber][DEBUG] Buscando recursos de audio en la página`);
-    const audioElements = document.querySelectorAll(this.AUDIO_SELECTOR);
-    console.log(`[AudioTranscriber][DEBUG] Encontrados ${audioElements.length} elementos de audio en el DOM`);
-    
-    let newAudiosFound = 0;
-    const newAudioUrls = [];
-    
-    audioElements.forEach(audioEl => {
-      const audioUrl = audioEl.src;
-      if (!audioUrl || this.processedAudios.has(audioUrl)) return;
-      
-      // Encontrar el mensaje al que pertenece este audio
-      const row = audioEl.closest(this.MESSAGE_ROW_SELECTOR);
-      const messageId = row?.dataset?.messageId || null;
-      
-      // Marcar como visto
-      this.processedAudios.add(audioUrl);
-      newAudiosFound++;
-      newAudioUrls.push(audioUrl);
-      
-      console.log(`[AudioTranscriber][DEBUG] Nuevo audio encontrado: ${audioUrl}, messageId asociado: ${messageId || 'ninguno'}`);
-      
-      // Obtener el blob solo si se requiere procesamiento inmediato
-      if (processImmediately && !this.audioCache.has(audioUrl) && !this.processingQueue.has(audioUrl)) {
-        console.log(`[AudioTranscriber][DEBUG] Audio no está en caché ni en cola, obteniendo blob para: ${audioUrl}`);
-        this.getAudioBlob(audioUrl).then(audioBlob => {
-          if (audioBlob) {
-            console.log(`[AudioTranscriber][DEBUG] Blob obtenido correctamente para: ${audioUrl}, tamaño: ${audioBlob.size} bytes`);
-            this.queueTranscription(audioUrl, audioBlob, messageId);
-          }
-        }).catch(error => {
-          console.error(`[AudioTranscriber][ERROR] Error obteniendo blob para audio ${audioUrl}:`, error);
-          logger.debug(`Error extracting audio blob: ${error.message}`);
-        });
-      } else {
-        console.log(`[AudioTranscriber][DEBUG] Audio ${audioUrl} ya está en caché o en cola de procesamiento. Saltando.`);
-      }
-    });
-    
-    if (newAudiosFound > 0) {
-      console.log(`[AudioTranscriber][INFO] Encontrados ${newAudiosFound} nuevos recursos de audio para procesar`);
-      logger.debug(`AudioTranscriber: Found ${newAudiosFound} new audio resources`);
-      
-      // Emitir evento para notificar a otros componentes
-      const event = new CustomEvent('audio-resources-found', {
-        detail: {
-          count: newAudiosFound,
-          urls: newAudioUrls,
-          timestamp: Date.now()
-        }
-      });
-      document.dispatchEvent(event);
-    }
-    
-    return newAudiosFound;
-  }
-
-  /**
-   * Obtiene el blob de un audio
-   * @param {string} audioUrl - URL del audio
-   * @returns {Promise<Blob>} Blob de audio
-   * @private
-   */
-  async getAudioBlob(audioUrl) {
-    if (audioUrl.startsWith('blob:')) {
-      const audioEl = document.querySelector(`${this.AUDIO_SELECTOR}[src="${audioUrl}"]`);
-      if (audioEl?.srcObject) return audioEl.srcObject;
-    }
-    
-    try {
-      const resp = await fetch(audioUrl);
-      if (!resp.ok) throw new Error(`Failed to fetch audio: ${resp.status}`);
-      return await resp.blob();
-    } catch (error) {
-      logger.warn(`Error fetching audio from ${audioUrl}: ${error.message}`);
-      throw error;
-    }
-  }
-
-  /**
-   * Pone en cola una transcripción para ser procesada
-   * @param {string} audioUrl - URL del audio
-   * @param {Blob} audioBlob - Blob del audio
-   * @param {string|null} messageId - ID del mensaje (opcional)
-   * @private
-   */
-  queueTranscription(audioUrl, audioBlob, messageId = null) {
-    if (this.processingQueue.has(audioUrl)) {
-      console.log(`[AudioTranscriber][DEBUG] Audio ${audioUrl} ya está en la cola de procesamiento`);
+    if (!messageWrapper) {
+      this.debugLog('No se encontró el contenedor de mensajes para configurar el observer');
+      // Intentar más tarde
+      setTimeout(() => this.setupObserver(), 2000);
       return;
     }
-    
-    console.log(`[AudioTranscriber][INFO] Añadiendo a cola de transcripción: ${audioUrl}, messageId: ${messageId || 'ninguno'}`);
-    this.processingQueue.add(audioUrl);
-    
-    // Crear promesa de transcripción
-    const transcriptionPromise = this.transcribeAudio(audioBlob)
-      .then(transcription => {
-        // Guardar en caché
-        this.audioCache.set(audioUrl, transcription);
-        this.saveCache();
-        
-        // Notificar éxito
-        console.log(`[AudioTranscriber][SUCCESS] Transcripción completada para ${audioUrl}: "${transcription.substring(0, 50)}${transcription.length > 50 ? '...' : ''}"`);
-        logger.debug(`Transcription complete for ${audioUrl}: ${transcription.substring(0, 50)}...`);
-        
-        // Remover de la cola de procesamiento
-        this.processingQueue.delete(audioUrl);
-        console.log(`[AudioTranscriber][DEBUG] Audio ${audioUrl} eliminado de la cola de procesamiento`);
-        
-        return transcription;
-      })
-      .catch(error => {
-        console.error(`[AudioTranscriber][ERROR] Transcripción fallida para ${audioUrl}:`, error);
-        logger.warn(`Transcription failed for ${audioUrl}: ${error.message}`);
-        this.processingQueue.delete(audioUrl);
-        throw error;
-      });
-    
-    // Almacenar promesa para acceso externo
-    this.transcriptionPromises.set(audioUrl, transcriptionPromise);
-    
-    return transcriptionPromise;
+
+    this.debugLog('Observer activado para nuevos mensajes.');
+
+    if (this.observer) return;
+
+    this.observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.addedNodes.length > 0) {
+          mutation.addedNodes.forEach(node => {
+            this.processNode(node);
+          });
+        }
+      }
+    });
+
+    // Observar cambios en el contenedor de mensajes
+    this.observer.observe(messageWrapper, {
+      childList: true,
+      subtree: true
+    });
   }
 
   /**
-   * Transcribe un audio usando la API
-   * @param {Blob} audioBlob - Blob del audio
-   * @returns {Promise<string>} Transcripción del audio
-   * @private
+   * Procesa un nodo DOM para buscar botones de audio
+   * @param {Node} node - El nodo a procesar
    */
-  async transcribeAudio(audioBlob) {
-    console.log(`[AudioTranscriber][DEBUG] Iniciando transcripción para blob de ${audioBlob.size} bytes, tipo: ${audioBlob.type}`);
-    
-    if (!window.apiClient || typeof window.apiClient.transcribeAudio !== 'function') {
-      console.error(`[AudioTranscriber][ERROR] No hay API client disponible para transcripción`);
-      throw new Error('API client not available for transcription');
-    }
-    
-    try {
-      console.log(`[AudioTranscriber][DEBUG] Llamando a apiClient.transcribeAudio()`);
-      const transcription = await window.apiClient.transcribeAudio(audioBlob);
-      console.log(`[AudioTranscriber][DEBUG] Transcripción exitosa, resultado: "${transcription.substring(0, 50)}${transcription.length > 50 ? '...' : ''}"`);
-      return transcription;
-    } catch (error) {
-      console.error(`[AudioTranscriber][ERROR] Error en transcripción de audio:`, error);
-      logger.error('Error in audio transcription:', error);
-      throw error;
-    }
+  processNode(node) {
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+    // Asegurarse de que el nodo es un elemento antes de usar querySelectorAll
+    if (typeof node.querySelectorAll !== 'function') return;
+
+    // Buscar botones de reproducción de audio
+    node.querySelectorAll(this.AUDIO_PLAY_BUTTON_SELECTOR_IN_ROW).forEach(playButton => {
+      // Verificar si ya se agregó un listener
+      if (this.listenerAttached.has(playButton)) return;
+
+      // Obtener messageRow
+      const messageRow = playButton.closest(this.MESSAGE_ROW_SELECTOR);
+      if (!messageRow) return;
+
+      // Si el messageRow no tiene ID, generarle uno
+      let messageId = messageRow.dataset.messageId;
+      if (!messageId) {
+        messageId = this.generateMessageId(messageRow);
+        messageRow.dataset.messageId = messageId;
+        this.debugLog(`Observer: ID asignado: ${messageId}. Timestamp generado: ${Date.now()}`);
+      }
+
+      // Añadir listener al botón de audio
+      this.debugLog(`Observer: Añadiendo listener a botón de audio ${messageId}.`);
+      playButton.addEventListener('click', this.handleAudioPlayClick.bind(this));
+      this.listenerAttached.add(playButton);
+    });
   }
 
   /**
-   * Obtiene una transcripción de la caché o espera a que se complete
-   * @param {string} audioUrl - URL del audio
-   * @returns {string|null} Transcripción o null si no existe
+   * Maneja el clic en un botón de reproducción de audio
+   * @param {Event} event - El evento de clic
    */
-  getTranscription(audioUrl) {
-    // Comprobar caché primero
-    if (this.audioCache.has(audioUrl)) {
-      console.log(`[AudioTranscriber][DEBUG] Transcripción encontrada en caché para ${audioUrl}`);
-      return this.audioCache.get(audioUrl);
-    }
-    
-    if (this.processingQueue.has(audioUrl)) {
-      console.log(`[AudioTranscriber][DEBUG] Audio ${audioUrl} en proceso de transcripción, aún no disponible`);
+  handleAudioPlayClick(event) {
+    const audioElement = event.currentTarget;
+    const messageRow = audioElement.closest(this.MESSAGE_ROW_SELECTOR);
+    if (!messageRow) return;
+
+    let messageId = messageRow.dataset.messageId;
+    let timestamp = null;
+
+    if (messageId) {
+      // Extraer timestamp del messageId si está disponible
+      timestamp = this.extractTimestampFromId(messageId);
     } else {
-      console.log(`[AudioTranscriber][DEBUG] No hay transcripción disponible para ${audioUrl}`);
+      // Generar un ID si no existe
+      messageId = this.generateMessageId(messageRow);
+      messageRow.dataset.messageId = messageId;
+      timestamp = Date.now(); // Usar timestamp actual
     }
-    
-    // Si está en proceso, devolver null (el llamador deberá intentar más tarde)
+
+    // Si no se pudo obtener timestamp ni del ID existente ni del generado, usar Date.now()
+    if (messageId && !this.messageIdToTimestamp.has(messageId)) {
+      this.messageIdToTimestamp.set(messageId, timestamp || Date.now());
+    }
+
+    // Verificar si ya tiene URL asociada
+    const cleanUrl = this.messageIdsToAudioUrls.get(messageId);
+    if (cleanUrl) {
+      // Ya tenemos la URL asociada, mostrar transcripción si está disponible
+      if (this.completedTranscriptions.has(cleanUrl)) {
+        const transcription = this.completedTranscriptions.get(cleanUrl);
+        this.debugLog(`Transcripción recuperada de caché para ${messageId}: "${transcription.text}"`);
+
+        // Notificar a través del EventCoordinator
+        if (window.eventCoordinator) {
+          window.eventCoordinator.emit('audioTranscriptionRetrieved', {
+            messageId,
+            audioUrl: cleanUrl,
+            transcription: transcription.text
+          });
+        }
+      }
+    } else {
+      // Guardar expectativa de audio para asociar con próxima URL detectada
+      this.expectingAudioForMessageId = messageId;
+      this.expectingAudioTimestamp = Date.now();
+      this.debugLog(`Esperando detección de audio para mensaje ${messageId}`);
+
+      // Forzar un chequeo inmediato
+      this.checkForAudioResources();
+    }
+  }
+
+  /**
+   * Genera un ID único para un mensaje
+   * @param {Element} element - Elemento del mensaje
+   * @returns {string} ID generado
+   */
+  generateMessageId(element) {
+    const timestamp = Date.now();
+    const randomPart = Math.random().toString(36).substring(2, 10);
+    const textContent = element.textContent?.trim().substring(0, 20) || '';
+    const cleanText = textContent.replace(/[^a-zA-Z0-9]/g, '_');
+
+    return `msg_${randomPart}_${cleanText}_${timestamp}`;
+  }
+
+  /**
+   * Extrae un timestamp de un ID de mensaje
+   * @param {string} messageId - ID del mensaje
+   * @returns {number|null} Timestamp extraído o null
+   */
+  extractTimestampFromId(messageId) {
+    if (!messageId || typeof messageId !== 'string') return null;
+
+    // Intentar extraer el timestamp del ID del mensaje
+    const timestampMatch = messageId.match(/_(\d{13,})(?:_|$)/);
+    if (timestampMatch && timestampMatch[1]) {
+      const timestamp = parseInt(timestampMatch[1], 10);
+      if (!isNaN(timestamp) && timestamp > 1600000000000) { // > 2020
+        return timestamp;
+      }
+    }
+
     return null;
   }
 
   /**
-   * Obtiene una promesa para una transcripción (para espera asíncrona)
-   * @param {string} audioUrl - URL del audio
-   * @returns {Promise<string>|null} Promesa de transcripción o null
+   * Escanea el DOM en busca de elementos de audio y usa la API de Performance
+   * @returns {number} Número de nuevos audios encontrados
    */
-  getTranscriptionPromise(audioUrl) {
-    return this.transcriptionPromises.get(audioUrl) || null;
+  checkForAudioResources() {
+    this.debugLog("Buscando recursos de audio en la página");
+
+    // 1. Buscar audios en el DOM (implementación actual)
+    const audioElements = document.querySelectorAll('audio[src]');
+    this.debugLog(`Encontrados ${audioElements.length} elementos de audio en el DOM`);
+
+    // 2. Buscar audios con la API de Performance (método del POC)
+    const performanceUrls = this.detectAudioUrlsWithPerformanceAPI();
+    this.debugLog(`Buscando recursos de audio con Performance API`);
+    this.debugLog(`Encontrados ${performanceUrls.length} URLs de audio con Performance API`);
+
+    let newAudiosFound = 0;
+    const newAudioUrls = [];
+
+    // Procesar audios del DOM
+    audioElements.forEach(audioEl => {
+      const audioUrl = audioEl.src;
+      if (!audioUrl || this.processedMediaUrls.has(audioUrl)) return;
+
+      // Encontrar el mensaje al que pertenece este audio
+      const row = audioEl.closest(this.MESSAGE_ROW_SELECTOR);
+      const messageId = row?.dataset?.messageId || null;
+
+      // Marcar como visto
+      this.processedMediaUrls.add(audioUrl);
+      newAudiosFound++;
+      newAudioUrls.push(audioUrl);
+
+      this.debugLog(`Nuevo audio encontrado en DOM: ${audioUrl}, messageId: ${messageId || 'ninguno'}`);
+
+      // Procesar inmediatamente
+      if (!this.pendingTranscriptions.has(audioUrl) && !this.completedTranscriptions.has(audioUrl)) {
+        this.processAudioUrl(audioUrl, messageId);
+      }
+    });
+
+    // Procesar audios de Performance API (enfoque del POC)
+    performanceUrls.forEach(audioUrl => {
+      // Usamos cleanUrl solo para verificar si ya fue procesada
+      const cleanUrl = audioUrl.split('?')[0];
+      if (this.processedMediaUrls.has(cleanUrl)) return;
+
+      this.processedMediaUrls.add(cleanUrl);
+      newAudiosFound++;
+      newAudioUrls.push(audioUrl);
+
+      // Asociar con messageId esperando (si existe)
+      let messageIdToUse = null;
+      if (this.expectingAudioForMessageId &&
+        (Date.now() - this.expectingAudioTimestamp) < this.CLICK_ASSOCIATION_WINDOW_MS) {
+        messageIdToUse = this.expectingAudioForMessageId;
+        this.debugLog(`Asociando audio ${cleanUrl} con mensaje esperado ${messageIdToUse}`);
+
+        // Registrar asociación usando cleanUrl para el mapeo
+        this.audioUrlsToMessages.set(cleanUrl, messageIdToUse);
+        this.messageIdsToAudioUrls.set(messageIdToUse, cleanUrl);
+
+        // Limpiar expectativa
+        this.expectingAudioForMessageId = null;
+        this.expectingAudioTimestamp = 0;
+      }
+
+      this.debugLog(`Procesando audio encontrado con Performance API: ${audioUrl}`);
+
+      // Procesar inmediatamente con la URL COMPLETA 
+      if (!this.pendingTranscriptions.has(cleanUrl) && !this.completedTranscriptions.has(cleanUrl)) {
+        this.processAudioUrl(audioUrl, messageIdToUse); // Pasar la URL completa
+      }
+    });
+
+    if (newAudiosFound > 0) {
+      this.debugLog(`Se encontraron ${newAudiosFound} nuevos audios.`);
+      logger.debug(`AudioTranscriber: Found ${newAudiosFound} new audio resources`);
+
+      // Emitir evento para notificar a otros componentes
+      if (window.eventCoordinator) {
+        window.eventCoordinator.emit('audioResourcesFound', {
+          count: newAudiosFound,
+          urls: newAudioUrls
+        });
+      }
+    }
+
+    return newAudiosFound;
   }
 
   /**
-   * Añade una transcripción a la caché
-   * @param {string} audioUrl - URL del audio
-   * @param {string} transcription - Texto de la transcripción
+   * Detecta URLs de audio mediante la API de Performance
+   * @returns {Array<string>} URLs de audio encontradas
    */
-  addTranscription(audioUrl, transcription) {
-    this.audioCache.set(audioUrl, transcription);
-    this.saveCache();
+  detectAudioUrlsWithPerformanceAPI() {
+    if (!window.performance || !window.performance.getEntriesByType) return [];
+
+    try {
+      // Obtener entradas de recursos (red)
+      const resources = window.performance.getEntriesByType('resource') || [];
+
+      // Filtrar URLs de audio - IMPORTANTE: NO eliminamos los parámetros de consulta aquí
+      return resources
+        .map(entry => entry.name)
+        .filter(url => this.isAudioUrl(url));
+    } catch (error) {
+      this.debugLog(`Error accediendo a Performance API: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Verifica si una URL corresponde a un audio válido
+   * @param {string} url - URL a verificar
+   * @returns {boolean} True si la URL corresponde a un audio
+   */
+  isAudioUrl(url) {
+    const audioUrlPattern = /https:\/\/cdn\.fbsbx\.com\/v\/t\d+\.\d+-\d+\/.*?\.(mp4|m4a|aac|wav|ogg|opus)/i;
+    const voiceClipPattern = /https:\/\/cdn\.fbsbx\.com\/v\/.*?\/audioclip-\d+.*?\.(mp4|m4a|aac|wav|ogg|opus)/i;
+
+    return audioUrlPattern.test(url) || voiceClipPattern.test(url);
+  }
+  /**
+   * Procesa una URL de audio: descarga y transcribe
+   * @param {string} audioUrl - URL del audio
+   * @param {string|null} messageId - ID del mensaje asociado
+   * @returns {Promise<string|null>} Transcripción o null si falla
+   */
+  async processAudioUrl(audioUrl, messageId = null) {
+    // Usamos la URL completa para la descarga
+    // Pero generamos un ID limpio para el mapeo interno
+    const cleanUrl = audioUrl.split('?')[0];
+
+    if (this.pendingTranscriptions.has(cleanUrl) || this.completedTranscriptions.has(cleanUrl)) {
+      this.debugLog(`Audio ${cleanUrl} ya está siendo procesado o completado`);
+      return this.getTranscription(cleanUrl);
+    }
+
+    // Registrar como pendiente usando el cleanUrl para el mapeo interno
+    this.pendingTranscriptions.set(cleanUrl, {
+      status: 'pending',
+      timestamp: Date.now(),
+      messageId
+    });
+
+    this.debugLog(`Procesando URL de audio: ${audioUrl}${messageId ? ` (asociado a ${messageId})` : ''}`);
+
+    try {
+      // Obtener blob de audio USANDO LA URL COMPLETA
+      const audioBlob = await this.getAudioBlob(audioUrl); // Pasamos la URL completa
+      if (!audioBlob) {
+        throw new Error('Failed to obtain audio blob');
+      }
+
+      // Transcribir usando ApiClient si está disponible, o nuestro método
+      let transcription;
+      if (window.apiClient && typeof window.apiClient.transcribeAudio === 'function') {
+        // Usar ApiClient para transcribir (método preferido)
+        transcription = await window.apiClient.transcribeAudio(audioBlob);
+      } else {
+        // Fallback a nuestro método de transcripción
+        transcription = await this.transcribeAudio(audioBlob);
+      }
+
+      if (!transcription) {
+        throw new Error('Transcription failed or returned empty');
+      }
+
+      // Actualizar a completado
+      const currentEntry = this.pendingTranscriptions.get(cleanUrl);
+      this.pendingTranscriptions.delete(cleanUrl);
+
+      // Guardar en caché con messageId si existe
+      this.completedTranscriptions.set(cleanUrl, {
+        text: transcription,
+        timestamp: Date.now(),
+        messageId: currentEntry?.messageId || messageId
+      });
+
+      // Actualizar asociaciones si hay messageId
+      const associatedMessageId = currentEntry?.messageId || messageId;
+      if (associatedMessageId) {
+        this.audioUrlsToMessages.set(cleanUrl, associatedMessageId);
+        this.messageIdsToAudioUrls.set(associatedMessageId, cleanUrl);
+      }
+
+      // Guardar en localStorage
+      this.saveCache();
+
+      // Emitir evento de transcripción completada
+      if (window.eventCoordinator) {
+        window.eventCoordinator.emit('audioTranscribed', {
+          audioUrl: cleanUrl,
+          messageId: associatedMessageId,
+          transcription
+        });
+      }
+
+      this.debugLog(`Transcripción completada para ${cleanUrl}: "${transcription}"`);
+      return transcription;
+
+    } catch (error) {
+      this.debugLog(`Error al procesar audio ${audioUrl}: ${error.message}`);
+      logger.error('Failed to transcribe audio', { audioUrl }, error);
+
+      // Marcar como error
+      this.pendingTranscriptions.delete(cleanUrl);
+      return null;
+    }
+  }
+
+  /**
+   * Obtiene el blob de un audio usando GM_xmlhttpRequest para evitar CORS
+   * @param {string} audioUrl - URL completa del audio (con parámetros)
+   * @returns {Promise<Blob>} Blob de audio
+   */
+  async getAudioBlob(audioUrl) {
+    this.debugLog(`Iniciando descarga de audio: ${audioUrl}`);
+
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: audioUrl,  // Usar URL completa con todos los parámetros
+        responseType: 'blob',
+        timeout: 45000,
+        headers: { 'Range': 'bytes=0-' }, // HEADER CRUCIAL
+        onload: function (response) {
+          if (response.status === 200 || response.status === 206) {
+            resolve(response.response);
+          } else {
+            reject(new Error(`Error descargando audio: ${response.status}`));
+          }
+        },
+        onerror: function (error) {
+          reject(new Error("Error de red al descargar audio"));
+        },
+        ontimeout: function () {
+          reject(new Error('Tiempo de espera agotado al descargar audio'));
+        }
+      });
+    });
+  }
+
+  /**
+   * Transcribe un audio usando la API de Whisper
+   * @param {Blob} audioBlob - Blob del audio
+   * @returns {Promise<string>} Transcripción del audio
+   */
+  async transcribeAudio(audioBlob) {
+    if (!window.apiClient || typeof window.apiClient.transcribeAudio !== 'function') {
+      // Implementación de respaldo si no está disponible ApiClient
+      const formData = new FormData();
+      formData.append('file', audioBlob, 'audio.mp4');
+      formData.append('model', 'whisper-1');
+      formData.append('language', 'es');
+
+      const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${CONFIG.AI.apiKey}`
+        },
+        body: formData
+      });
+
+      if (!response.ok) {
+        throw new Error(`OpenAI API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      return data.text;
+    } else {
+      // Usar ApiClient si está disponible
+      return await window.apiClient.transcribeAudio(audioBlob);
+    }
+  }
+
+  /**
+   * Obtiene una transcripción de la caché
+   * @param {string} audioUrl - URL del audio
+   * @returns {string|null} Transcripción o null si no existe
+   */
+  getTranscription(audioUrl) {
+    const cleanUrl = audioUrl.split('?')[0];
+
+    // Verificar en transcripciones completadas
+    if (this.completedTranscriptions.has(cleanUrl)) {
+      const transcriptionData = this.completedTranscriptions.get(cleanUrl);
+      return transcriptionData.text;
+    }
+
+    // Si está pendiente, devolver null o placeholder
+    if (this.pendingTranscriptions.has(cleanUrl)) {
+      return '[Transcription Pending]';
+    }
+
+    return null;
   }
 
   /**
@@ -269,17 +549,16 @@ class AudioTranscriber {
    */
   saveCache() {
     try {
-      // Limitar tamaño de caché a 100 entradas para evitar problemas de almacenamiento
-      if (this.audioCache.size > 100) {
-        const entriesToDelete = [...this.audioCache.keys()].slice(0, this.audioCache.size - 100);
-        entriesToDelete.forEach(key => this.audioCache.delete(key));
-      }
-      
-      // Convertir Map a Object para almacenamiento
-      const cacheObject = Object.fromEntries(this.audioCache);
-      localStorage.setItem('FB_CHAT_MONITOR_AUDIO_CACHE', JSON.stringify(cacheObject));
+      // Convertir Map a objeto para localStorage
+      const cache = {};
+      this.completedTranscriptions.forEach((value, key) => {
+        cache[key] = value;
+      });
+
+      localStorage.setItem('FB_CHAT_MONITOR_AUDIO_CACHE', JSON.stringify(cache));
+      this.debugLog(`Caché guardada: ${this.completedTranscriptions.size} transcripciones`);
     } catch (error) {
-      logger.warn('Failed to save audio cache:', error);
+      console.error('[AudioTranscriber][ERROR] Error guardando caché:', error);
     }
   }
 
@@ -289,33 +568,27 @@ class AudioTranscriber {
    */
   loadCache() {
     try {
-      const cached = localStorage.getItem('FB_CHAT_MONITOR_AUDIO_CACHE');
-      if (cached) {
-        const cacheObject = JSON.parse(cached);
-        this.audioCache = new Map(Object.entries(cacheObject));
-        console.log(`[AudioTranscriber][INFO] Cargadas ${this.audioCache.size} transcripciones de caché con tamaños:`);
-        
-        // Mostrar estadísticas sobre las transcripciones en caché
-        let totalSize = 0;
-        let minLength = Infinity;
-        let maxLength = 0;
-        
-        this.audioCache.forEach((transcription, url) => {
-          const length = transcription.length;
-          totalSize += length;
-          minLength = Math.min(minLength, length);
-          maxLength = Math.max(maxLength, length);
-        });
-        
-        console.log(`[AudioTranscriber][DEBUG] Estadísticas de caché: Min=${minLength}, Max=${maxLength}, Promedio=${totalSize/Math.max(1, this.audioCache.size)}`);
-        
-        logger.debug(`Loaded ${this.audioCache.size} cached transcriptions`);
-      } else {
-        console.log(`[AudioTranscriber][DEBUG] No se encontraron transcripciones en caché`);
+      const cache = localStorage.getItem('FB_CHAT_MONITOR_AUDIO_CACHE');
+      if (!cache) {
+        this.debugLog('No se encontraron transcripciones en caché');
+        return;
       }
+
+      const parsedCache = JSON.parse(cache);
+      Object.entries(parsedCache).forEach(([key, value]) => {
+        this.completedTranscriptions.set(key, value);
+        this.processedMediaUrls.add(key);
+
+        // Recuperar asociaciones messageId -> audioUrl
+        if (value.messageId) {
+          this.audioUrlsToMessages.set(key, value.messageId);
+          this.messageIdsToAudioUrls.set(value.messageId, key);
+        }
+      });
+
+      this.debugLog(`Caché cargada: ${this.completedTranscriptions.size} transcripciones`);
     } catch (error) {
-      console.error(`[AudioTranscriber][ERROR] Error cargando caché de audio:`, error);
-      logger.warn('Failed to load audio cache:', error);
+      console.error('[AudioTranscriber][ERROR] Error cargando caché:', error);
     }
   }
 
@@ -325,90 +598,181 @@ class AudioTranscriber {
    * @returns {Promise<Array>} Mensajes con transcripciones
    */
   async processMessagesTranscriptions(messages) {
-    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+    if (!messages || !Array.isArray(messages)) {
       return messages;
     }
-    
-    const audioMessages = messages.filter(msg => 
-      msg.content?.hasAudio && msg.content.audioUrl
+
+    // Encontrar mensajes que tienen audio pero no transcripción
+    const messagesToProcess = messages.filter(msg =>
+      msg.content?.hasAudio &&
+      msg.content.audioUrl &&
+      (!msg.content.transcribedAudio || msg.content.transcribedAudio === '[Transcription Pending]')
     );
-    
-    if (audioMessages.length === 0) {
-      console.log(`[AudioTranscriber][DEBUG] No hay mensajes de audio para procesar en este lote`);
+
+    if (messagesToProcess.length === 0) {
       return messages;
     }
-    
-    console.log(`[AudioTranscriber][INFO] Procesando transcripciones para ${audioMessages.length} mensajes con audio`);
-    logger.debug(`Processing transcriptions for ${audioMessages.length} audio messages`);
-    
-    // Registrar las URLs de los audios para debug
-    const audioUrls = audioMessages.map(msg => msg.content.audioUrl);
-    console.log(`[AudioTranscriber][DEBUG] URLs de audio a procesar:`, audioUrls);
-    
-    // Procesar transcripciones en paralelo
-    const transcriptionTasks = audioMessages.map(async message => {
-      const audioUrl = message.content.audioUrl;
-      
-      // Check cache first
-      if (this.audioCache.has(audioUrl)) {
-        return {
-          messageId: message.id,
-          audioUrl,
-          transcription: this.audioCache.get(audioUrl)
-        };
-      }
-      
-      // Check if already being transcribed
-      if (this.transcriptionPromises.has(audioUrl)) {
+
+    this.debugLog(`Procesando transcripciones para ${messagesToProcess.length} mensajes`);
+
+    // Procesar en paralelo con un límite de concurrencia
+    const concurrencyLimit = 3;
+    const processBatch = async (batch) => {
+      return Promise.all(batch.map(async (msg) => {
         try {
-          const transcription = await this.transcriptionPromises.get(audioUrl);
-          return { messageId: message.id, audioUrl, transcription };
-        } catch (error) {
-          return { messageId: message.id, audioUrl, error };
-        }
-      }
-      
-      // Get the blob and queue for transcription
-      try {
-        const audioBlob = message.content.audioBlob || await this.getAudioBlob(audioUrl);
-        if (audioBlob) {
-          this.queueTranscription(audioUrl, audioBlob, message.id);
-          const transcription = await this.transcriptionPromises.get(audioUrl);
-          return { messageId: message.id, audioUrl, transcription };
-        }
-      } catch (error) {
-        return { messageId: message.id, audioUrl, error };
-      }
-      
-      return { messageId: message.id, audioUrl };
-    });
-    
-    // Esperar a que todas las tareas terminen
-    const results = await Promise.allSettled(transcriptionTasks);
-    
-    // Aplicar transcripciones a los mensajes originales
-    return messages.map(message => {
-      if (!message.content?.hasAudio || !message.content.audioUrl) return message;
-      
-      const resultObj = results
-        .filter(r => r.status === 'fulfilled' && r.value?.messageId === message.id)
-        .map(r => r.value)[0];
-      
-      if (resultObj?.transcription) {
-        return {
-          ...message,
-          content: {
-            ...message.content,
-            transcribedAudio: resultObj.transcription,
-            text: message.content.text ?
-              `${message.content.text}\n[Audio Transcription: ${resultObj.transcription}]` :
-              `[Audio Transcription: ${resultObj.transcription}]`
+          const transcription = await this.processAudioUrl(msg.content.audioUrl, msg.id);
+          if (transcription) {
+            msg.content.transcribedAudio = transcription;
           }
-        };
+        } catch (error) {
+          logger.error('Error transcribing audio in batch', {}, error);
+        }
+        return msg;
+      }));
+    };
+
+    // Dividir en batches para limitar concurrencia
+    const batches = [];
+    for (let i = 0; i < messagesToProcess.length; i += concurrencyLimit) {
+      batches.push(messagesToProcess.slice(i, i + concurrencyLimit));
+    }
+
+    // Procesar batches en serie para limitar concurrencia
+    for (const batch of batches) {
+      await processBatch(batch);
+    }
+
+    // Actualizar los mensajes originales con las transcripciones
+    return messages.map(msg => {
+      if (msg.content?.hasAudio && msg.content.audioUrl) {
+        const transcription = this.getTranscription(msg.content.audioUrl);
+        if (transcription && transcription !== '[Transcription Pending]') {
+          msg.content.transcribedAudio = transcription;
+        }
       }
-      
-      return message;
+      return msg;
     });
+  }
+
+  /**
+   * Asocia transcripciones con mensajes basado en timestamps
+   * @returns {Promise<Object>} Resultados de la asociación
+   */
+  async associateTranscriptionsWithMessages() {
+    console.log('[Media] Iniciando asociación basada en timestamps...');
+
+    // 1. Obtener mensajes con audio SIN URL asociada aún y con timestamp
+    const messagesToAssign = [];
+    const messageWrapperElement = document.querySelector(this.MESSAGE_WRAPPER_SELECTOR);
+
+    if (messageWrapperElement) {
+      // Buscar todos los mensajes con botones de audio
+      messageWrapperElement.querySelectorAll(`${this.MESSAGE_ROW_SELECTOR} ${this.AUDIO_PLAY_BUTTON_SELECTOR_IN_ROW}`).forEach(playButton => {
+        const messageRow = playButton.closest(this.MESSAGE_ROW_SELECTOR);
+        if (!messageRow) return;
+
+        const messageId = messageRow.dataset.messageId;
+        if (!messageId) return;
+
+        // Verificar si ya tiene una URL de audio asociada
+        if (this.messageIdsToAudioUrls.has(messageId)) return;
+
+        // Obtener timestamp del ID o mensaje
+        let timestamp = this.messageIdToTimestamp.get(messageId) ||
+          this.extractTimestampFromId(messageId) ||
+          Date.now();
+
+        messagesToAssign.push({ messageId, timestamp, element: messageRow });
+      });
+    } else {
+      console.log('[Media Assoc] No se encontró el contenedor de mensajes.');
+    }
+
+    // Ordenar mensajes por timestamp (ascendente)
+    messagesToAssign.sort((a, b) => a.timestamp - b.timestamp);
+
+    console.log(`[Media Assoc] ${messagesToAssign.length} mensajes necesitan asignación (ordenados por timestamp).`);
+
+    // 2. Obtener transcripciones completadas SIN messageId asignado y ordenarlas
+    const unassignedTranscriptions = Array.from(this.completedTranscriptions.entries())
+      .filter(([, data]) => data.messageId === null)
+      .map(([url, data]) => ({
+        url,
+        timestamp: data.timestamp,
+        text: data.text
+      }))
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    console.log(`[Media Assoc] ${unassignedTranscriptions.length} transcripciones sin asignar (ordenadas por timestamp).`);
+
+    // 3. Asociar por proximidad temporal
+    let assignedCount = 0;
+    const maxIndex = Math.min(messagesToAssign.length, unassignedTranscriptions.length);
+
+    for (let i = 0; i < maxIndex; i++) {
+      const message = messagesToAssign[i];
+      const transcription = unassignedTranscriptions[i];
+
+      // Limpiar URL
+      const cleanUrl = transcription.url.split('?')[0];
+
+      // Registrar asociación en todas direcciones
+      const transcriptionData = this.completedTranscriptions.get(cleanUrl);
+      if (transcriptionData) {
+        transcriptionData.messageId = message.messageId;
+        this.completedTranscriptions.set(cleanUrl, transcriptionData);
+      }
+
+      this.audioUrlsToMessages.set(cleanUrl, message.messageId);
+      this.messageIdsToAudioUrls.set(message.messageId, cleanUrl);
+
+      console.log(`[Media Assoc] Asociación realizada: Mensaje ${message.messageId} ↔ Audio ${cleanUrl}`);
+
+      // Actualizar contador
+      assignedCount++;
+
+      // Notificar con EventCoordinator
+      if (window.eventCoordinator) {
+        window.eventCoordinator.emit('audioTranscriptionAssociated', {
+          messageId: message.messageId,
+          audioUrl: cleanUrl,
+          transcription: transcriptionData.text
+        });
+      }
+    }
+
+    // Guardar caché actualizada
+    if (assignedCount > 0) {
+      this.saveCache();
+    }
+
+    // Emitir evento general de asociación completada
+    if (window.eventCoordinator) {
+      window.eventCoordinator.emit('audioTranscriptionsAssociated', {
+        totalAssigned: assignedCount,
+        pendingMessages: messagesToAssign.length - assignedCount,
+        pendingTranscriptions: unassignedTranscriptions.length - assignedCount
+      });
+    }
+
+    console.log(`[Media] Asociación por Timestamp completada. ${assignedCount} nuevas asignaciones realizadas.`);
+
+    return {
+      assigned: assignedCount,
+      pendingMessages: messagesToAssign.length - assignedCount,
+      pendingTranscriptions: unassignedTranscriptions.length - assignedCount
+    };
+  }
+
+  /**
+   * Debug log con prefijo y formato consistente
+   * @param {string} message - Mensaje a registrar
+   * @private
+   */
+  debugLog(message) {
+    if (this.DEBUG_MODE) {
+      console.log(`[AudioTranscriber][DEBUG] ${message}`);
+    }
   }
 }
 
