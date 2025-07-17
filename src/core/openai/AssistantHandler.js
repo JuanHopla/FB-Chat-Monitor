@@ -137,26 +137,18 @@ class AssistantHandler {
     console.log('[AssistantHandler] Step 4.2: Preparing messages for new thread...');
 
     // 1. Attach product info to messages if available
-    console.log(`[AssistantHandler][DEBUG] Adjuntando información de producto: ${!!productData}`);
-    const messagesWithProduct = window.messagePreprocessor.attachProductInfo(allMessages, productData);
-    console.log('[AssistantHandler] [DEBUG] After attachProductInfo:', messagesWithProduct);
-
-    // 2. Process transcriptions (in parallel with other operations)
     console.log(`[AssistantHandler][DEBUG] Procesando transcripciones de audio`);
-    let messagesWithTranscriptions;
-    if (window.messagePreprocessor.attachTranscriptions.constructor.name === 'AsyncFunction') {
-      messagesWithTranscriptions = await window.messagePreprocessor.attachTranscriptions(messagesWithProduct);
-    } else {
-      messagesWithTranscriptions = window.messagePreprocessor.attachTranscriptions(messagesWithProduct);
-    }
+    const messagesWithTranscriptions = await window.messagePreprocessor.attachTranscriptions(allMessages);
     console.log('[AssistantHandler] [DEBUG] After attachTranscriptions:', messagesWithTranscriptions);
 
-    // 3. Format messages for OpenAI (limit to recent messages for new threads)
+    // 2. Formatear mensajes para OpenAI, pasando los detalles del producto directamente.
+    //    Esta función ahora se encarga de añadir el mensaje del producto al principio.
     console.log(`[AssistantHandler][DEBUG] Formateando mensajes para OpenAI (limitando a los ${Math.min(messagesWithTranscriptions.length, 50)} más recientes)`);
-    const openAIMessages = window.messagePreprocessor.formatMessagesForOpenAI(
-      messagesWithTranscriptions.slice(-50)
+    const openAIMessages = await window.messagePreprocessor.formatMessagesForOpenAI(
+      messagesWithTranscriptions.slice(-50),
+      productData
     );
-
+    
     // Filter and validate messages
     console.log(`[AssistantHandler][DEBUG] Validando mensajes: ${openAIMessages.length} grupos de mensajes`);
     const validatedMessages = this.validateMessages(openAIMessages);
@@ -263,7 +255,7 @@ class AssistantHandler {
 
     // Formatear mensajes para OpenAI
     console.log(`[AssistantHandler][DEBUG] Formateando ${messagesWithTranscriptions.length} mensajes nuevos para OpenAI`);
-    const openAIMessages = window.messagePreprocessor.formatMessagesForOpenAI(messagesWithTranscriptions);
+    const openAIMessages = await window.messagePreprocessor.formatMessagesForOpenAI(messagesWithTranscriptions);
     console.log('[AssistantHandler][DEBUG] New messages for OpenAI:', openAIMessages);
 
     // Filter and validate messages

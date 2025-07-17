@@ -405,11 +405,15 @@ class MessagePreprocessor {
    * @param {Object} product - Detalles del producto
    * @returns {Object|null} Mensaje OpenAI o null si no hay producto
    */
-  buildProductDetailMessage(product) {
-    if (!product) return null;
+  async buildProductDetailMessage(product) { // <-- CORRECCIÓN: Ya no se necesita assistantId aquí
+    if (!product) {
+      return null;
+    }
     const content = [];
 
-    // Resumen textual
+    // --- INICIO DE LA CORRECCIÓN ---
+
+    // 1. Obtener el resumen textual del producto primero.
     let summary = '';
     if (window.productExtractor && typeof window.productExtractor.getRelevantProductSummary === 'function') {
       summary = window.productExtractor.getRelevantProductSummary(product);
@@ -424,21 +428,35 @@ class MessagePreprocessor {
     }
     content.push({ type: "text", text: "PRODUCT DETAILS:\n" + summary });
 
-    // Imágenes (allImages preferido, fallback a images)
-    let images = [];
+    // 2. Obtener las URLs de las imágenes originales.
+    let originalImageUrls = [];
     if (Array.isArray(product.allImages) && product.allImages.length > 0) {
-      images = product.allImages;
+      originalImageUrls = product.allImages;
     } else if (Array.isArray(product.images) && product.images.length > 0) {
-      images = product.images;
+      originalImageUrls = product.images;
     }
-    if (window.ImageFilterUtils) {
-      images = window.ImageFilterUtils.filterImageUrls(images);
+
+    // 3. Procesar las URLs a través de nuestro nuevo proxy de Cloudflare.
+    let processedImageUrls = [];
+    if (window.ImageFilterUtils && originalImageUrls.length > 0) {
+      // La nueva función solo necesita las URLs.
+      processedImageUrls = await window.ImageFilterUtils.processImageUrls(originalImageUrls);
     }
-    for (const imgUrl of images.slice(0, 6)) {
+
+    // 4. Añadir las URLs procesadas (limpias) al mensaje.
+    const maxImages = CONFIG.threadSystem?.newThreads?.maxProductImages || 5;
+    for (const imgUrl of processedImageUrls.slice(0, maxImages)) {
       if (!imgUrl || typeof imgUrl !== 'string' || imgUrl.trim() === '') continue;
-      if (window.ImageFilterUtils && window.ImageFilterUtils.isProblematicFacebookImage(imgUrl)) continue;
-      content.push({ type: "image_url", image_url: { url: imgUrl } });
+      content.push({
+        type: "image_url",
+        image_url: {
+          url: imgUrl,
+          detail: CONFIG.threadSystem?.newThreads?.imageDetail || "auto"
+        }
+      });
     }
+
+    // --- FIN DE LA CORRECCIÓN ---
 
     return {
       role: "user",
@@ -446,52 +464,87 @@ class MessagePreprocessor {
     };
   }
 
+  //===================================================================
+  // FORMATEO PARA OPENAI
+  //===================================================================
+
   /**
-   * Formatea mensajes para OpenAI, agregando detalles de producto como primer mensaje si corresponde,
-   * asegurando roles explícitos, chunking de máximo 10 elementos por mensaje e incluyendo transcripciones.
+   * Formatea mensajes para OpenAI, agregando detalles de producto si corresponde,
+   * asegurando roles explícitos, chunking de máximo 10 elementos por mensaje 
+   * e incluyendo transcripciones.
    * @param {Array} messages - Mensajes del chat
    * @param {Object} [productDetails] - Detalles del producto (opcional)
    * @returns {Array} Mensajes formateados para OpenAI
    */
-  formatMessagesForOpenAI(messages, productDetails = null) {
-    if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      console.log(`[MessagePreprocessor][DEBUG] No hay mensajes para formatear para OpenAI`);
+  async formatMessagesForOpenAI(messages, productDetails = null) {
+    if (!messages || !Array.isArray(messages)) {
+      logger.warn('[MessagePreprocessor] Se proporcionó un array de mensajes inválido para formatear.');
       return [];
     }
 
-    console.log(`[MessagePreprocessor][DEBUG] Formateando ${messages.length} mensajes para OpenAI, producto: ${!!productDetails}`);
+    logger.debug(`[MessagePreprocessor][DEBUG] Formateando ${messages.length} mensajes para OpenAI, producto: ${!!productDetails}`);
 
     const formattedGroups = [];
 
+    // --- INICIO DE LA CORRECCIÓN ---
     // 1. Agrega el mensaje de producto como primer mensaje si hay detalles
     if (productDetails) {
-      const productMsg = this.buildProductDetailMessage(productDetails);
+      const productMsg = await this.buildProductDetailMessage(productDetails);
       if (productMsg) {
-        for (let i = 0; i < productMsg.content.length; i += 10) {
-          formattedGroups.push({
-            role: "user",
-            content: productMsg.content.slice(i, i + 10)
-          });
-        }
+        formattedGroups.push(productMsg);
       }
     }
+    // --- FIN DE LA CORRECCIÓN ---
 
     // 2. Agrupa mensajes por remitente
     const grouped = this.groupMessagesByRole(messages);
 
     // 3. Procesa cada grupo con transcripciones
     for (const group of grouped) {
-      const formatted = this.convertMessageGroupToOpenAIFormat(group);
-      // 4. Chunking de máximo 10 elementos por mensaje
-      for (let i = 0; i < formatted.content.length; i += 10) {
-        formattedGroups.push({
-          role: formatted.role,
-          content: formatted.content.slice(i, i + 10)
-        });
+      const formatted = await this.convertMessageGroupToOpenAIFormat(group);
+
+      // 4. Chunking mejorado con indicadores de contexto
+      if (formatted.content.length > 10) {
+        for (let i = 0; i < formatted.content.length; i += 10) {
+          const chunk = formatted.content.slice(i, Math.min(i + 10, formatted.content.length));
+          const isFirstChunk = i === 0;
+          const isLastChunk = i + 10 >= formatted.content.length;
+
+          // Agregar indicador de continuación para chunks no iniciales
+          if (!isFirstChunk && chunk[0].type === 'text') {
+            chunk[0] = {
+              ...chunk[0],
+              text: '[Continuación] ' + chunk[0].text
+            };
+          }
+
+          // Agregar indicador de continuación para chunks no finales
+          if (!isLastChunk) {
+            const lastTextIndex = [...chunk].reverse().findIndex(item => item.type === 'text');
+            if (lastTextIndex >= 0) {
+              const actualIndex = chunk.length - 1 - lastTextIndex;
+              chunk[actualIndex] = {
+                ...chunk[actualIndex],
+                text: chunk[actualIndex].text + ' [Continúa...]'
+              };
+            }
+          }
+
+          formattedGroups.push({
+            role: formatted.role,
+            content: chunk
+          });
+        }
+      } else {
+        // Si no excede los 10 elementos, agregar como un solo mensaje
+        formattedGroups.push(formatted);
       }
     }
 
-    console.log(`[MessagePreprocessor][DEBUG] Formateados ${formattedGroups.length} grupos de mensajes para OpenAI`);
+    // NUEVO: Log detallado del payload completo
+    console.log(`[MessagePreprocessor][PAYLOAD] Contenido completo a enviar:`,
+      JSON.parse(JSON.stringify(formattedGroups)));
+
     return formattedGroups;
   }
 
@@ -500,7 +553,7 @@ class MessagePreprocessor {
    * @param {Array} messageGroup - Grupo de mensajes del mismo remitente
    * @returns {Object} Mensaje formateado para OpenAI
    */
-  convertMessageGroupToOpenAIFormat(messageGroup) {
+  async convertMessageGroupToOpenAIFormat(messageGroup) {
     const isSentByUs = messageGroup[0].sentByUs;
     const role = isSentByUs ? 'user' : 'assistant';
     const content = [];
@@ -510,8 +563,8 @@ class MessagePreprocessor {
 
       // NUEVO: Si hay transcripción de audio, añadirla
       if (message.content?.hasAudio &&
-          message.content.transcribedAudio &&
-          message.content.transcribedAudio !== '[Transcription Pending]') {
+        message.content.transcribedAudio &&
+        message.content.transcribedAudio !== '[Transcription Pending]') {
         textContent += `\n[Audio transcription: "${message.content.transcribedAudio.trim()}"]`;
       }
 
@@ -524,12 +577,15 @@ class MessagePreprocessor {
 
       // Imágenes si existen
       if (message.content?.images && message.content.images.length > 0) {
-        for (const imageUrl of message.content.images) {
-          if (!imageUrl) continue;
-          content.push({
-            type: "image_url",
-            image_url: { url: imageUrl }
-          });
+        let images = message.content.images;
+        if (window.ImageFilterUtils) {
+          // El nuevo método es asíncrono
+          images = await window.ImageFilterUtils.processImageUrls(images);
+        }
+        for (const imgUrl of images) {
+          if (imgUrl) {
+            content.push({ type: "image_url", image_url: { url: imgUrl } });
+          }
         }
       }
     }
@@ -592,26 +648,6 @@ class MessagePreprocessor {
 
     // Otherwise use timestamp property or current time
     return message.timestamp || Date.now();
-  }
-
-  /**
-   * Adjunta la información del producto como el primer mensaje del usuario.
-   * @param {Array} messages - Lista de mensajes
-   * @param {Object} product - Detalles del producto
-   * @returns {Array} Mensajes con el bloque de producto al inicio (si aplica)
-   */
-  attachProductInfo(messages, product) {
-    if (!messages || !Array.isArray(messages)) {
-      return [];
-    }
-    if (!product) {
-      return messages;
-    }
-    // Construye el mensaje de producto usando el formato OpenAI
-    const productMsg = this.buildProductDetailMessage(product);
-    if (!productMsg) return messages;
-    // Inserta el mensaje de producto como primer mensaje
-    return [productMsg, ...messages];
   }
 }
 
