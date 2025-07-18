@@ -555,7 +555,7 @@ class MessagePreprocessor {
    */
   async convertMessageGroupToOpenAIFormat(messageGroup) {
     const isSentByUs = messageGroup[0].sentByUs;
-    const role = isSentByUs ? 'user' : 'assistant';
+    const role = isSentByUs ? 'assistant' : 'user';
     const content = [];
 
     for (const message of messageGroup) {

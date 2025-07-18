@@ -97,7 +97,9 @@ class AssistantHandler {
   }
 
   /**
-   * Handles a new thread that doesn't exist yet
+   * Handles a new thread.
+   * This now includes logic to handle manual follow-up requests if the last message
+   * in the initial set was from the assistant.
    * @param {string} fbThreadId - Facebook thread ID
    * @param {Array} allMessages - All messages in the chat
    * @param {string} chatRole - Role (seller or buyer)
@@ -107,104 +109,96 @@ class AssistantHandler {
    */
   async handleNewThread(fbThreadId, allMessages, chatRole, productData) {
     console.log(`[AssistantHandler][DEBUG] handleNewThread - fbThreadId: ${fbThreadId}, messages: ${allMessages.length}, role: ${chatRole}`);
+
+    // --- LÓGICA DE SEGUIMIENTO PARA NUEVOS HILOS ---
+    const lastMessage = allMessages.length > 0 ? allMessages[allMessages.length - 1] : null;
+    let isFollowUpRequest = false;
+
+    if (lastMessage && lastMessage.sentByUs) {
+      console.log('[AssistantHandler] Detectada solicitud de seguimiento manual en un hilo nuevo.');
+      if (!this._canPerformFollowUp(allMessages)) {
+        console.warn('[AssistantHandler] Límite de seguimiento alcanzado para este nuevo hilo. No se creará el hilo para evitar spam.');
+        alert('Max follow-ups reached (3). The other user must respond to continue.');
+        return ''; // Detener ejecución
+      }
+      console.log('[AssistantHandler] Verificación de seguimiento pasada. Se añadirá instrucción de seguimiento.');
+      isFollowUpRequest = true;
+    }
+    // --- FIN DE LA LÓGICA DE SEGUIMIENTO ---
+
     console.log('No existing thread found, creating new one');
     console.log('[AssistantHandler] Processing new thread flow...');
 
-    // Verificar nuevamente con recarga forzada antes de crear el thread
-    // Para asegurar que no se haya creado por otra operación en paralelo
     if (window.threadStore) {
-      const threadInfoCheck = window.threadStore.getThreadInfo(fbThreadId, true); // Forzar recarga
+      const threadInfoCheck = window.threadStore.getThreadInfo(fbThreadId, true);
       if (threadInfoCheck) {
         console.log(`[AssistantHandler][DEBUG] Thread encontrado en verificación final, usando existente en lugar de crear nuevo`);
         return await this.handleExistingThread(fbThreadId, allMessages, chatRole, threadInfoCheck);
       }
     }
 
-    // Crear nuevo thread solo si realmente no existe después de la verificación final
     console.log(`[AssistantHandler][DEBUG] Creando nuevo thread en OpenAI para ${fbThreadId}`);
     const threadInfo = await this.createNewThread(fbThreadId, chatRole);
 
-    // Get assistant ID for the role
-    console.log(`[AssistantHandler][DEBUG] Obteniendo ID de asistente para role: ${chatRole}`);
     const assistantId = this.getAssistantIdForRole(chatRole);
     if (!assistantId) {
-      console.log(`[AssistantHandler][ERROR] No se encontró ID de asistente para role: ${chatRole}`);
       throw new Error(`No assistant ID configured for role: ${chatRole}`);
     }
     console.log(`[AssistantHandler][DEBUG] ID de asistente obtenido: ${assistantId}`);
 
-    // Prepare messages with product info and transcriptions
     console.log('[AssistantHandler] Step 4.2: Preparing messages for new thread...');
-
-    // 1. Attach product info to messages if available
-    console.log(`[AssistantHandler][DEBUG] Procesando transcripciones de audio`);
     const messagesWithTranscriptions = await window.messagePreprocessor.attachTranscriptions(allMessages);
-    console.log('[AssistantHandler] [DEBUG] After attachTranscriptions:', messagesWithTranscriptions);
-
-    // 2. Formatear mensajes para OpenAI, pasando los detalles del producto directamente.
-    //    Esta función ahora se encarga de añadir el mensaje del producto al principio.
-    console.log(`[AssistantHandler][DEBUG] Formateando mensajes para OpenAI (limitando a los ${Math.min(messagesWithTranscriptions.length, 50)} más recientes)`);
     const openAIMessages = await window.messagePreprocessor.formatMessagesForOpenAI(
       messagesWithTranscriptions.slice(-50),
       productData
     );
-    
-    // Filter and validate messages
-    console.log(`[AssistantHandler][DEBUG] Validando mensajes: ${openAIMessages.length} grupos de mensajes`);
-    const validatedMessages = this.validateMessages(openAIMessages);
-    console.log(`[AssistantHandler][DEBUG] Mensajes validados: ${validatedMessages.length} grupos`);
 
+    const validatedMessages = this.validateMessages(openAIMessages);
     if (!validatedMessages.length) {
-      console.log(`[AssistantHandler][WARN] No hay mensajes válidos para procesar en este nuevo thread`);
       logger.warn('No valid messages to process for new thread');
       return '';
     }
 
-    // 4. Add messages to the OpenAI thread
     console.log(`[AssistantHandler][DEBUG] Agregando ${validatedMessages.length} mensajes al hilo ${threadInfo.openaiThreadId}`);
     for (const message of validatedMessages) {
       await window.apiClient.addMessage(threadInfo.openaiThreadId, message);
     }
 
-    // 5. Create a run with the appropriate assistant
+    // Si es una solicitud de seguimiento, añadir la instrucción especial ahora
+    if (isFollowUpRequest) {
+      const followUpInstruction = {
+        role: 'user',
+        content: '[System Instruction] The user has not responded to your last message. Please generate a brief, friendly follow-up message to re-engage them.'
+      };
+      await window.apiClient.addMessage(threadInfo.openaiThreadId, followUpInstruction);
+    }
+
     console.log(`[AssistantHandler][DEBUG] Creando run con assistant ${assistantId}`);
     const { runId } = await window.apiClient.createRun(threadInfo.openaiThreadId, assistantId);
     console.log(`[AssistantHandler][DEBUG] Run creado: ${runId}`);
 
-    // 6. Wait for completion and process response
     console.log(`[AssistantHandler][DEBUG] Esperando completación del run ${runId}`);
-    const runResult = await window.apiClient.waitForRunCompletion(
-      threadInfo.openaiThreadId,
-      runId,
-      this.maxWaitTime
-    );
+    const runResult = await window.apiClient.waitForRunCompletion(threadInfo.openaiThreadId, runId, this.maxWaitTime);
     console.log(`[AssistantHandler][DEBUG] Run completado con status: ${runResult.status}`);
 
-    // 7. Process results
     if (runResult.status === 'completed' && runResult.output) {
-      // Update thread info with latest message ID
       if (allMessages.length > 0) {
-        const lastMessage = allMessages[allMessages.length - 1];
-        const messageId = lastMessage.id || window.messagePreprocessor.generateMessageId(lastMessage.content?.text, Date.now());
-        console.log(`[AssistantHandler][DEBUG] Actualizando lastMessageId a ${messageId}`);
+        const lastMsg = allMessages[allMessages.length - 1];
+        const messageId = lastMsg.id || window.messagePreprocessor.generateMessageId(lastMsg.content?.text, Date.now());
         window.threadStore.updateLastMessage(fbThreadId, messageId, Date.now());
       }
-
-      console.log(`[AssistantHandler][DEBUG] Procesando respuesta del run completado`);
-      const response = this.processResponse(runResult.output);
-      console.log(`[AssistantHandler][DEBUG] Respuesta procesada: "${response.substring(0, 50)}${response.length > 50 ? '...' : ''}"`);
-      return response;
-    } else if (runResult.status === 'failed') {
-      console.log(`[AssistantHandler][ERROR] Run falló: ${runResult.error?.message || 'Unknown error'}`);
-      throw new Error(`Run failed: ${runResult.error?.message || 'Unknown error'}`);
+      return this.processResponse(runResult.output);
     } else {
-      console.log(`[AssistantHandler][ERROR] Run no completó: ${runResult.status}`);
-      throw new Error(`Run did not complete: ${runResult.status}`);
+      const errorMsg = `Run did not complete: ${runResult.status}. Error: ${runResult.error?.message || 'Unknown'}`;
+      console.log(`[AssistantHandler][ERROR] ${errorMsg}`);
+      throw new Error(errorMsg);
     }
   }
 
   /**
-   * Handles an existing thread that already has history
+   * Handles an existing thread.
+   * This function decides whether to respond to new user messages or to generate a manual follow-up.
+   * It includes a "3-strike" rule to prevent excessive follow-ups on unresponsive chats.
    * @param {string} fbThreadId - Facebook thread ID
    * @param {Array} allMessages - All messages in the chat
    * @param {string} chatRole - Role (seller or buyer)
@@ -214,102 +208,98 @@ class AssistantHandler {
    */
   async handleExistingThread(fbThreadId, allMessages, chatRole, threadInfo) {
     console.log(`[AssistantHandler][DEBUG] handleExistingThread - fbThreadId: ${fbThreadId}, messages: ${allMessages.length}, role: ${chatRole}`);
+    const { openaiThreadId, lastMessageId } = threadInfo;
 
-    // Caso especial: thread existe pero sin lastMessageId
-    if (!threadInfo.lastMessageId) {
-      console.log(`[AssistantHandler][DEBUG] Thread existe pero tiene lastMessageId nulo. Procesando como primera interacción real.`);
-      console.log(`Thread exists but has null lastMessageId. Processing as first real interaction.`);
-      console.log('[AssistantHandler] Processing existing thread with first-time flow...');
-    } else {
-      console.log(`[AssistantHandler][DEBUG] Procesando thread existente con lastMessageId: ${threadInfo.lastMessageId}`);
-      console.log(`Processing existing thread with last message ID: ${threadInfo.lastMessageId}`);
-      console.log('[AssistantHandler] Processing existing thread flow...');
-    }
-
-    // Get assistant ID for the role
-    console.log(`[AssistantHandler][DEBUG] Obteniendo ID de asistente para role: ${chatRole}`);
     const assistantId = this.getAssistantIdForRole(chatRole);
     if (!assistantId) {
-      console.log(`[AssistantHandler][ERROR] No se encontró ID de asistente para role: ${chatRole}`);
       throw new Error(`No assistant ID configured for role: ${chatRole}`);
     }
     console.log(`[AssistantHandler][DEBUG] ID de asistente obtenido: ${assistantId}`);
 
-    // MODIFICACIÓN: Primero obtener los nuevos mensajes sin transcripción
-    console.log(`[AssistantHandler][DEBUG] Obteniendo nuevos mensajes desde el último procesado: ${threadInfo.lastMessageId}`);
-    const newMessages = window.messagePreprocessor.getNewMessagesSinceNoFormat(
-      allMessages,
-      threadInfo.lastMessageId
-    );
-    console.log(`[AssistantHandler][DEBUG] Encontrados ${newMessages.length} mensajes nuevos`);
+    const newMessages = window.messagePreprocessor.getNewMessagesSinceNoFormat(allMessages, lastMessageId);
+    console.log(`[AssistantHandler][DEBUG] Encontrados ${newMessages.length} mensajes nuevos desde el preprocesador.`);
 
-    // MODIFICACIÓN: Procesar transcripciones SOLO para los nuevos mensajes
-    console.log(`[AssistantHandler][DEBUG] Procesando transcripciones solo para los ${newMessages.length} mensajes nuevos`);
-    let messagesWithTranscriptions;
-    if (window.messagePreprocessor.attachTranscriptions.constructor.name === 'AsyncFunction') {
-      messagesWithTranscriptions = await window.messagePreprocessor.attachTranscriptions(newMessages);
+    let actionTaken = false;
+    const hasTrulyNewMessages = newMessages.length > 0 && newMessages[0].id !== lastMessageId;
+
+    if (hasTrulyNewMessages) {
+      // --- ACTION A: Respond to new user messages ---
+      console.log(`[AssistantHandler] Se encontraron ${newMessages.length} mensajes nuevos del usuario. Procesando para responder.`);
+      const messagesWithTranscriptions = await window.messagePreprocessor.attachTranscriptions(newMessages);
+      const openAIMessages = await window.messagePreprocessor.formatMessagesForOpenAI(messagesWithTranscriptions);
+      const validatedMessages = this.validateMessages(openAIMessages);
+
+      if (validatedMessages.length > 0) {
+        actionTaken = true;
+        console.log(`[AssistantHandler][DEBUG] Agregando ${validatedMessages.length} nuevos grupos de mensajes al hilo.`);
+        for (const message of validatedMessages) {
+          await window.apiClient.addMessage(openaiThreadId, message);
+        }
+      } else {
+        console.warn('[AssistantHandler] Los mensajes nuevos estaban vacíos después del formato. No se requiere acción.');
+      }
     } else {
-      messagesWithTranscriptions = window.messagePreprocessor.attachTranscriptions(newMessages);
+      // --- ACTION B: User manually requested a follow-up ---
+      console.log('[AssistantHandler] No hay mensajes nuevos. El usuario ha solicitado un seguimiento manual.');
+      if (this._canPerformFollowUp(allMessages)) {
+        console.log('[AssistantHandler] Verificación pasada: Menos de 3 respuestas consecutivas del asistente. Generando seguimiento.');
+        actionTaken = true;
+        const followUpInstruction = {
+          role: 'user',
+          content: '[System Instruction] The user has not responded to your last message. Please generate a brief, friendly follow-up message to re-engage them.'
+        };
+        await window.apiClient.addMessage(openaiThreadId, followUpInstruction);
+      } else {
+        console.warn('[AssistantHandler] Límite de seguimiento alcanzado. No se generará una nueva respuesta.');
+        alert('Max follow-ups reached (3). The other user must respond to continue.');
+      }
     }
-    console.log('[AssistantHandler][DEBUG] After attachTranscriptions:', messagesWithTranscriptions);
 
-    // Formatear mensajes para OpenAI
-    console.log(`[AssistantHandler][DEBUG] Formateando ${messagesWithTranscriptions.length} mensajes nuevos para OpenAI`);
-    const openAIMessages = await window.messagePreprocessor.formatMessagesForOpenAI(messagesWithTranscriptions);
-    console.log('[AssistantHandler][DEBUG] New messages for OpenAI:', openAIMessages);
-
-    // Filter and validate messages
-    console.log(`[AssistantHandler][DEBUG] Validando mensajes: ${openAIMessages.length} grupos de mensajes`);
-    const validatedMessages = this.validateMessages(openAIMessages);
-    console.log(`[AssistantHandler][DEBUG] Mensajes validados: ${validatedMessages.length} grupos`);
-
-    if (!validatedMessages.length) {
-      console.log(`[AssistantHandler][WARN] No hay mensajes nuevos válidos para procesar en este thread existente`);
-      logger.warn('No new valid messages to process for existing thread');
+    if (!actionTaken) {
+      console.log('[AssistantHandler] No se tomó ninguna acción. Finalizando el proceso.');
       return '';
     }
 
-    // Add new messages to the OpenAI thread
-    console.log(`[AssistantHandler][DEBUG] Agregando ${validatedMessages.length} mensajes al hilo ${threadInfo.openaiThreadId}`);
-    for (const message of validatedMessages) {
-      await window.apiClient.addMessage(threadInfo.openaiThreadId, message);
-    }
-
-    // Create a run with the appropriate assistant
     console.log(`[AssistantHandler][DEBUG] Creando run con assistant ${assistantId}`);
-    const { runId } = await window.apiClient.createRun(threadInfo.openaiThreadId, assistantId);
+    const { runId } = await window.apiClient.createRun(openaiThreadId, assistantId);
     console.log(`[AssistantHandler][DEBUG] Run creado: ${runId}`);
 
-    // Wait for completion and process response
     console.log(`[AssistantHandler][DEBUG] Esperando completación del run ${runId}`);
-    const runResult = await window.apiClient.waitForRunCompletion(
-      threadInfo.openaiThreadId,
-      runId,
-      this.maxWaitTime
-    );
+    const runResult = await window.apiClient.waitForRunCompletion(openaiThreadId, runId, this.maxWaitTime);
     console.log(`[AssistantHandler][DEBUG] Run completado con status: ${runResult.status}`);
 
-    // Process results
     if (runResult.status === 'completed' && runResult.output) {
-      // Update thread info with latest message ID
       if (allMessages.length > 0) {
-        const lastMessage = allMessages[allMessages.length - 1];
-        const messageId = lastMessage.id || window.messagePreprocessor.generateMessageId(lastMessage.content?.text, Date.now());
-        console.log(`[AssistantHandler][DEBUG] Actualizando lastMessageId a ${messageId}`);
+        const lastMsg = allMessages[allMessages.length - 1];
+        const messageId = lastMsg.id || window.messagePreprocessor.generateMessageId(lastMsg.content?.text, Date.now());
         window.threadStore.updateLastMessage(fbThreadId, messageId, Date.now());
       }
-
-      console.log(`[AssistantHandler][DEBUG] Procesando respuesta del run completado`);
-      const response = this.processResponse(runResult.output);
-      console.log(`[AssistantHandler][DEBUG] Respuesta procesada: "${response.substring(0, 50)}${response.length > 50 ? '...' : ''}"`);
-      return response;
-    } else if (runResult.status === 'failed') {
-      console.log(`[AssistantHandler][ERROR] Run falló: ${runResult.error?.message || 'Unknown error'}`);
-      throw new Error(`Run failed: ${runResult.error?.message || 'Unknown error'}`);
+      return this.processResponse(runResult.output);
     } else {
-      console.log(`[AssistantHandler][ERROR] Run no completó: ${runResult.status}`);
-      throw new Error(`Run did not complete: ${runResult.status}`);
+      const errorMsg = `Run did not complete: ${runResult.status}. Error: ${runResult.error?.message || 'Unknown'}`;
+      console.log(`[AssistantHandler][ERROR] ${errorMsg}`);
+      throw new Error(errorMsg);
     }
+  }
+
+  /**
+   * Checks if a follow-up is allowed based on the "3-strike" rule.
+   * A follow-up is not allowed if the last 3 messages were all sent by us (assistant).
+   * @param {Array} allMessages - The entire message history of the chat.
+   * @returns {boolean} True if a follow-up is allowed, false otherwise.
+   * @private
+   */
+  _canPerformFollowUp(allMessages) {
+    if (allMessages.length < 3) {
+      return true;
+    }
+    const lastThreeMessages = allMessages.slice(-3);
+    const allFromAssistant = lastThreeMessages.every(msg => msg.sentByUs === true);
+    if (allFromAssistant) {
+      console.log('[AssistantHandler] Verificación de seguimiento fallida: Las últimas 3 respuestas fueron del asistente.');
+      return false;
+    }
+    return true;
   }
 
   /**
