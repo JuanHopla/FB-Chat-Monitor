@@ -549,48 +549,66 @@ class MessagePreprocessor {
   }
 
   /**
-   * Convierte un grupo de mensajes al formato de OpenAI incluyendo transcripciones
-   * @param {Array} messageGroup - Grupo de mensajes del mismo remitente
-   * @returns {Object} Mensaje formateado para OpenAI
-   */
+     * Convierte un grupo de mensajes al formato de OpenAI, manejando correctamente
+     * texto, transcripciones de audio e imágenes a través del proxy personalizado.
+     * @param {Array} messageGroup - Grupo de mensajes del mismo remitente.
+     * @returns {Promise<Object|null>} Mensaje formateado para OpenAI o null si está vacío.
+     */
   async convertMessageGroupToOpenAIFormat(messageGroup) {
     const isSentByUs = messageGroup[0].sentByUs;
     const role = isSentByUs ? 'assistant' : 'user';
-    const content = [];
+    const contentParts = [];
+    let combinedText = '';
+    const workerUrl = 'https://fb-image-proxy.juandavid.workers.dev';
 
     for (const message of messageGroup) {
-      let textContent = message.content?.text || '';
-
-      // NUEVO: Si hay transcripción de audio, añadirla
+      // 1. Acumular todo el contenido de texto y transcripciones.
+      if (message.content?.text) {
+        combinedText += message.content.text + '\n';
+      }
       if (message.content?.hasAudio &&
         message.content.transcribedAudio &&
         message.content.transcribedAudio !== '[Transcription Pending]') {
-        textContent += `\n[Audio transcription: "${message.content.transcribedAudio.trim()}"]`;
+        combinedText += `\n[Audio transcription: "${message.content.transcribedAudio.trim()}"]\n`;
       }
 
-      if (textContent) {
-        content.push({
-          type: "text",
-          text: this.sanitizeText(textContent)
-        });
-      }
-
-      // Imágenes si existen
-      if (message.content?.images && message.content.images.length > 0) {
-        let images = message.content.images;
-        if (window.ImageFilterUtils) {
-          // El nuevo método es asíncrono
-          images = await window.ImageFilterUtils.processImageUrls(images);
-        }
-        for (const imgUrl of images) {
-          if (imgUrl) {
-            content.push({ type: "image_url", image_url: { url: imgUrl } });
+      // 2. Procesar las imágenes encontradas en el historial del chat.
+      // Usa la ruta correcta: message.content.media.images
+      if (message.content?.media?.images && message.content.media.images.length > 0) {
+        for (const image of message.content.media.images) {
+          if (image.url) {
+            // Construir la URL del proxy con tu worker de Cloudflare.
+            const proxyUrl = `${workerUrl}?url=${encodeURIComponent(image.url)}`;
+            contentParts.push({
+              type: "image_url",
+              image_url: {
+                url: proxyUrl,
+              },
+            });
+            console.log(`[MessagePreprocessor] Imagen del chat añadida al payload vía proxy: ${proxyUrl}`);
           }
         }
       }
     }
 
-    return { role, content };
+    // 3. Limpiar y añadir el bloque de texto combinado al principio del contenido.
+    const sanitizedText = this.sanitizeText(combinedText.trim());
+    if (sanitizedText) {
+      contentParts.unshift({
+        type: "text",
+        text: sanitizedText,
+      });
+    }
+
+    // Si después de todo el proceso no hay contenido, ignorar este grupo.
+    if (contentParts.length === 0) {
+      return null;
+    }
+
+    return {
+      role: role,
+      content: contentParts,
+    };
   }
 
   /**
