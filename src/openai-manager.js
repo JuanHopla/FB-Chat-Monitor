@@ -109,15 +109,59 @@ class OpenAIManager {
    */
   async generateResponse(context) {
     if (!this.isReady()) throw new Error('OpenAI API not ready');
-    console.log('[OpenAIManager] Step 3.1: Received context for response generation:', context);
-    // Log before delegating to AssistantHandler
+
+    // Verificar estructura del contexto
+    if (!context || typeof context !== 'object') {
+      throw new Error('Invalid context object provided');
+    }
+
+    // Extraer los mensajes, soportando tanto el formato antiguo (array) como el nuevo (objeto)
+    let messagesArray;
+
+    if (Array.isArray(context.messages)) {
+      // Formato antiguo: context.messages es directamente un array
+      messagesArray = context.messages;
+      console.log('[OpenAIManager] Detectado formato antiguo de mensajes (array directo)');
+    } else if (context.messages && Array.isArray(context.messages.messages)) {
+      // Nuevo formato: context.messages es un objeto {messages: [...], timeBlocks: [...]}
+      messagesArray = context.messages.messages;
+      console.log('[OpenAIManager] Detectado nuevo formato de mensajes (objeto con messages y timeBlocks)');
+    } else {
+      console.error('[OpenAIManager] Formato de mensajes inválido:', context.messages);
+      throw new Error('Invalid message format in context');
+    }
+
+    // NUEVO: Primero aplicamos transcripciones a los mensajes
+    if (window.messagePreprocessor && typeof window.messagePreprocessor.attachTranscriptions === 'function') {
+      console.log('[OpenAIManager] Aplicando transcripciones a mensajes del contexto...');
+      messagesArray = await window.messagePreprocessor.attachTranscriptions(messagesArray);
+    }
+
+    // NUEVO: Log del array completo sin filtrar
+    console.log('==================== ARRAY COMPLETO DE MENSAJES CON TRANSCRIPCIONES ====================');
+    console.log('[OpenAIManager] Array completo con transcripciones:', JSON.parse(JSON.stringify(messagesArray)));
+    console.log('=================================================================================');
+
+    // Logs originales
+    console.log('[OpenAIManager] Step 3.1: Received context for response generation:', {
+      ...context,
+      messages: messagesArray // Reemplazar con el array procesado
+    });
     console.log('[OpenAIManager] Step 3.2: Calling assistantHandler.generateResponse...');
+
+    // Actualizar el contexto con el array procesado
+    const contextToSend = {
+      ...context,
+      messages: messagesArray
+    };
+
     const result = await this.assistantHandler.generateResponse(
-      context.chatId,
-      context.messages,
-      context.role,
-      context.productDetails
+      contextToSend.chatId,
+      messagesArray,  // Este array ya tiene las transcripciones aplicadas
+      contextToSend.role,
+      contextToSend.productDetails
     );
+
     console.log('[OpenAIManager] Step 3.3: assistantHandler.generateResponse completed. Response:', result);
     return result;
   }
@@ -148,10 +192,23 @@ class OpenAIManager {
       productData = null,
       forceNewThread = false
     } = options;
-    
-    console.log(`[OpenAIManager][DEBUG] generateAssistantResponse - threadId: ${fbThreadId}, role: ${role}, messages: ${messages.length}, hasProduct: ${!!productData}`);
-    
+
+    console.log(`[OpenAIManager][DEBUG] generateAssistantResponse - threadId: ${fbThreadId}, role: ${role}, hasMessages: ${!!messages}, hasProduct: ${!!productData}`);
+
     try {
+      // Extraer los mensajes, soportando tanto el formato antiguo (array) como el nuevo (objeto)
+      let messagesArray;
+
+      if (Array.isArray(messages)) {
+        // Formato antiguo: messages es directamente un array
+        messagesArray = messages;
+      } else if (messages && Array.isArray(messages.messages)) {
+        // Nuevo formato: messages es un objeto {messages: [...], timeBlocks: [...]}
+        messagesArray = messages.messages;
+      } else {
+        console.error('[OpenAIManager][ERROR] Formato de mensajes inválido:', messages);
+        throw new Error('Invalid message format');
+      }
       // 1. Ensure required components are initialized
       console.log(`[OpenAIManager][DEBUG] Verificando inicialización de componentes`);
       if (!window.assistantHandler || !window.assistantHandler.initialized) {
@@ -163,27 +220,27 @@ class OpenAIManager {
           throw new Error('AssistantHandler not available');
         }
       }
-      
+
       // Initialize AudioTranscriber to enable parallel transcription
-      if (window.audioTranscriber && typeof window.audioTranscriber.initialize === 'function' 
-          && !window.audioTranscriber.initialized) {
+      if (window.audioTranscriber && typeof window.audioTranscriber.initialize === 'function'
+        && !window.audioTranscriber.initialized) {
         console.log(`[OpenAIManager][DEBUG] Inicializando AudioTranscriber`);
         await window.audioTranscriber.initialize();
       }
-      
+
       // 2. If forceNewThread, delete any existing thread
       if (forceNewThread && window.threadStore && window.threadStore.hasThread(fbThreadId)) {
         console.log(`[OpenAIManager][DEBUG] Forzando nuevo thread para ${fbThreadId}`);
         logger.debug(`Forcing new thread for ${fbThreadId}`);
         // Get the existing thread info before deletion
         const existingThread = window.threadStore.getThreadInfo(fbThreadId);
-        
+
         // Delete from thread store
         window.threadStore.threads.delete(fbThreadId);
         window.threadStore.saveThreads();
         console.log(`[OpenAIManager][DEBUG] Thread antiguo eliminado del ThreadStore`);
       }
-      
+
       // 3. Generate response using AssistantHandler
       console.log(`[OpenAIManager][DEBUG] Llamando a assistantHandler.generateResponse`);
       const response = await window.assistantHandler.generateResponse(
@@ -192,7 +249,7 @@ class OpenAIManager {
         role,
         productData
       );
-      
+
       console.log(`[OpenAIManager][DEBUG] Respuesta generada: "${response.substring(0, 50)}${response.length > 50 ? '...' : ''}"`);
       return response;
     } catch (error) {

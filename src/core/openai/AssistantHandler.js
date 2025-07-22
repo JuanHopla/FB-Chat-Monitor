@@ -147,7 +147,54 @@ class AssistantHandler {
     console.log(`[AssistantHandler][DEBUG] ID de asistente obtenido: ${assistantId}`);
 
     console.log('[AssistantHandler] Step 4.2: Preparing messages for new thread...');
+
+    // NUEVO: Esperar explícitamente por transcripciones pendientes
+    if (window.audioTranscriber && window.audioTranscriber.pendingTranscriptions.size > 0) {
+      const pendingCount = window.audioTranscriber.pendingTranscriptions.size;
+      console.log(`[AssistantHandler][DEBUG] Esperando por ${pendingCount} transcripciones pendientes...`);
+
+      // Esperar hasta 5 segundos para transcripciones pendientes
+      const maxWaitTime = 5000;
+      const startTime = Date.now();
+
+      while (Date.now() - startTime < maxWaitTime && window.audioTranscriber.pendingTranscriptions.size > 0) {
+        await new Promise(resolve => setTimeout(resolve, 500)); // Esperar 500ms entre verificaciones
+
+        // Verificar cuántas siguen pendientes
+        const currentPending = window.audioTranscriber.pendingTranscriptions.size;
+        if (currentPending < pendingCount) {
+          console.log(`[AssistantHandler][DEBUG] Progreso: ${pendingCount - currentPending} transcripciones completadas, ${currentPending} pendientes`);
+        }
+      }
+
+      // Si después de esperar todavía hay pendientes, ejecutar asociación FIFO
+      if (window.audioTranscriber.pendingTranscriptions.size > 0) {
+        console.log(`[AssistantHandler][DEBUG] Algunas transcripciones siguen pendientes. Aplicando asociación FIFO...`);
+        await window.audioTranscriber.associateTranscriptionsWithMessagesFIFO(allMessages);
+      } else {
+        console.log(`[AssistantHandler][DEBUG] Todas las transcripciones completadas con éxito`);
+      }
+    }
+
     const messagesWithTranscriptions = await window.messagePreprocessor.attachTranscriptions(allMessages);
+
+    // NUEVO: Añadir este log completo:
+    console.log('==================== ARRAY COMPLETO DE MENSAJES CON TRANSCRIPCIONES ====================');
+    console.log('[AssistantHandler] [DEBUG] After attachTranscriptions:', JSON.parse(JSON.stringify(messagesWithTranscriptions)));
+
+    // NUEVO: Log adicional para visualizar específicamente los mensajes con audio y sus transcripciones
+    const audioMessages = messagesWithTranscriptions.filter(msg => msg.content?.hasAudio);
+    console.log(`[AssistantHandler] [DEBUG] ${audioMessages.length} mensajes con audio encontrados:`);
+    audioMessages.forEach((msg, idx) => {
+      console.log(`[${idx}] Mensaje ID: ${msg.id}`);
+      console.log(`    - audioUrl: ${msg.content.audioUrl ? 'Disponible' : 'No disponible'}`);
+      console.log(`    - transcripción: ${msg.content.transcribedAudio || 'No disponible'}`);
+      if (msg.content.transcribedAudio) {
+        console.log(`    - texto completo: "${msg.content.transcribedAudio}"`);
+      }
+    });
+    console.log('===================================================================================');
+
     const openAIMessages = await window.messagePreprocessor.formatMessagesForOpenAI(
       messagesWithTranscriptions.slice(-50),
       productData
@@ -194,7 +241,6 @@ class AssistantHandler {
       throw new Error(errorMsg);
     }
   }
-
   /**
    * Handles an existing thread.
    * This function decides whether to respond to new user messages or to generate a manual follow-up.
@@ -225,7 +271,60 @@ class AssistantHandler {
     if (hasTrulyNewMessages) {
       // --- ACTION A: Respond to new user messages ---
       console.log(`[AssistantHandler] Se encontraron ${newMessages.length} mensajes nuevos del usuario. Procesando para responder.`);
+
+      // NUEVO: Verificar si hay mensajes de audio que necesitan transcripción
+      const audioMessages = newMessages.filter(m => m.content?.hasAudio);
+      if (audioMessages.length > 0) {
+        console.log(`[AssistantHandler][DEBUG] Se encontraron ${audioMessages.length} mensajes de audio entre los nuevos mensajes`);
+
+        // NUEVO: Esperar explícitamente por transcripciones pendientes
+        if (window.audioTranscriber && window.audioTranscriber.pendingTranscriptions.size > 0) {
+          const pendingCount = window.audioTranscriber.pendingTranscriptions.size;
+          console.log(`[AssistantHandler][DEBUG] Esperando por ${pendingCount} transcripciones pendientes...`);
+
+          // Esperar hasta 5 segundos para transcripciones pendientes
+          const maxWaitTime = 5000;
+          const startTime = Date.now();
+
+          while (Date.now() - startTime < maxWaitTime && window.audioTranscriber.pendingTranscriptions.size > 0) {
+            await new Promise(resolve => setTimeout(resolve, 500)); // Esperar 500ms entre verificaciones
+
+            // Verificar cuántas siguen pendientes
+            const currentPending = window.audioTranscriber.pendingTranscriptions.size;
+            if (currentPending < pendingCount) {
+              console.log(`[AssistantHandler][DEBUG] Progreso: ${pendingCount - currentPending} transcripciones completadas, ${currentPending} pendientes`);
+            }
+          }
+
+          // Si después de esperar todavía hay pendientes, ejecutar asociación FIFO
+          if (window.audioTranscriber.pendingTranscriptions.size > 0) {
+            console.log(`[AssistantHandler][DEBUG] Algunas transcripciones siguen pendientes. Aplicando asociación FIFO...`);
+            await window.audioTranscriber.associateTranscriptionsWithMessagesFIFO(newMessages);
+          } else {
+            console.log(`[AssistantHandler][DEBUG] Todas las transcripciones completadas con éxito`);
+          }
+        }
+      }
+
       const messagesWithTranscriptions = await window.messagePreprocessor.attachTranscriptions(newMessages);
+
+      // NUEVO: Añadir este log completo:
+      console.log('==================== ARRAY COMPLETO DE MENSAJES NUEVOS CON TRANSCRIPCIONES ====================');
+      console.log('[AssistantHandler] [DEBUG] After attachTranscriptions (newMessages):', JSON.parse(JSON.stringify(messagesWithTranscriptions)));
+
+      // NUEVO: Log adicional para visualizar específicamente los mensajes con audio y sus transcripciones
+      const audioMessage = messagesWithTranscriptions.filter(msg => msg.content?.hasAudio);
+      console.log(`[AssistantHandler] [DEBUG] ${audioMessage.length} mensajes nuevos con audio encontrados:`);
+      audioMessage.forEach((msg, idx) => {
+        console.log(`[${idx}] Mensaje ID: ${msg.id}`);
+        console.log(`    - audioUrl: ${msg.content.audioUrl ? 'Disponible' : 'No disponible'}`);
+        console.log(`    - transcripción: ${msg.content.transcribedAudio || 'No disponible'}`);
+        if (msg.content.transcribedAudio) {
+          console.log(`    - texto completo: "${msg.content.transcribedAudio}"`);
+        }
+      });
+      console.log('===================================================================================');
+
       const openAIMessages = await window.messagePreprocessor.formatMessagesForOpenAI(messagesWithTranscriptions);
       const validatedMessages = this.validateMessages(openAIMessages);
 

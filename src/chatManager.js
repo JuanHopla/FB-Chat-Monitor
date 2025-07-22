@@ -60,21 +60,25 @@ class ChatManager {
    * @private
    * @param {string} url - The new URL
    */
+  // En el método que maneja cambios de chat (_handleUrlChange o similar)
   _handleUrlChange(url) {
     try {
-      // Extract chat ID from messenger URL in marketplace
-      // Format: https://www.messenger.com/marketplace/t/1234567890/
-      const marketplaceMatch = url.match(/\/marketplace\/t\/(\d+)/);
+      const oldChatId = this.currentChatId;
 
-      if (marketplaceMatch && marketplaceMatch[1]) {
-        const chatId = marketplaceMatch[1];
+      // Extraer nuevo chatId de la URL
+      const chatIdMatch = url.match(/\/t\/(\d+)/);
+      if (chatIdMatch && chatIdMatch[1]) {
+        const newChatId = chatIdMatch[1];
 
-        // Update only if different from current
-        if (chatId !== this.currentChatId) {
-          logger.debug(`Manual chat change detected to ID: ${chatId}`);
-          this.currentChatId = chatId;
+        // Si es un cambio real de chat
+        if (newChatId !== oldChatId) {
+          this.currentChatId = newChatId;
+          console.log(`[ChatManager] Cambio de chat detectado: ${oldChatId} -> ${newChatId}`);
 
-          logger.debug('Chat ID updated. The chat will be processed when Generate Response is clicked.');
+          // NUEVO: Resetear estado de transcripciones para el nuevo chat
+          if (window.audioTranscriber && typeof window.audioTranscriber.resetForNewChat === 'function') {
+            window.audioTranscriber.resetForNewChat(newChatId);
+          }
         }
       }
     } catch (error) {
@@ -851,46 +855,171 @@ class ChatManager {
   }
 
   /**
-   * Extracts the full chat history - PHASE 2: Improved timestamp validation and message structure
-   * @param {HTMLElement} messagesWrapper - Message container
-   * @returns {Promise<Array>} Array of extracted messages
+ * Busca separadores de fecha/hora en el DOM usando múltiples métodos
+ * @returns {Array<Object>} Array de separadores encontrados
+ */
+  findDateSeparators() {
+    const separators = [];
+
+    try {
+      // Array de selectores a probar en orden de prioridad
+      const selectors = [
+        'div[data-scope="date_break"]',           // Selector específico de FB Messenger
+        'span.x186z157.xk50ysn',                  // Selector alternativo identificado
+        'h4 span.xdj266r',                        // Selector para encabezados
+        'div[role="row"] div[aria-hidden="true"]', // Posible selector para separadores
+        'div[role="separator"]',                  // Selector genérico para separadores
+        'h4'                                      // Encabezados de sección (podría contener fechas)
+      ];
+
+      // Intentar cada selector
+      let elementsFound = [];
+      let successfulSelector = null;
+
+      for (const selector of selectors) {
+        const elements = document.querySelectorAll(selector);
+        if (elements.length > 0) {
+          elementsFound = Array.from(elements);
+          successfulSelector = selector;
+          logger.debug(`Encontrados ${elements.length} posibles separadores de fecha usando ${selector}`);
+          break;
+        }
+      }
+
+      // Si no encontramos nada con selectores, intentar búsqueda por contenido
+      if (elementsFound.length === 0) {
+        // Buscar elementos que podrían contener textos de fecha (patrones como "10/8/24" o "Today")
+        const datePatterns = [
+          /\d{1,2}\/\d{1,2}\/\d{2,4}/,          // 10/8/24, 01/15/2024
+          /^(Today|Yesterday|Ayer|Hoy)/i,        // Today, Yesterday, etc
+          /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i // Jan 15, Oct 8, etc
+        ];
+
+        // Buscar span o div con textos que coincidan con estos patrones
+        const allTextElements = document.querySelectorAll('span, div[role="row"]');
+
+        elementsFound = Array.from(allTextElements).filter(el => {
+          const text = el.textContent.trim();
+          return datePatterns.some(pattern => pattern.test(text)) && text.length < 50; // Evitar textos largos
+        });
+
+        if (elementsFound.length > 0) {
+          logger.debug(`Encontrados ${elementsFound.length} posibles separadores de fecha por patrón de texto`);
+          successfulSelector = 'content-pattern';
+        }
+      }
+
+      // Procesar los elementos encontrados
+      elementsFound.forEach((element, index) => {
+        try {
+          // Obtener el texto
+          const dateText = element.textContent.trim();
+
+          // Ignorar si no parece una fecha
+          if (!dateText || dateText.length < 5) return;
+
+          // Verificar si contiene un patrón de fecha
+          const hasDatePattern = /\d{1,2}\/\d{1,2}\/\d{2,4}|\d{1,2}:\d{2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i.test(dateText);
+          if (!hasDatePattern) return;
+
+          // Intentar parsear la fecha
+          const timestamp = this.parseDateString(dateText);
+          if (!timestamp) return;
+
+          // Encontrar el elemento padre (fila) si existe
+          const parentRow = element.closest('div[role="row"]');
+
+          separators.push({
+            element: parentRow || element,
+            timestamp,
+            text: dateText,
+            index
+          });
+
+          logger.debug(`Separador de fecha #${index + 1}: "${dateText}" (${new Date(timestamp).toLocaleString()})`);
+        } catch (e) {
+          logger.warn(`Error procesando posible separador de fecha: ${e.message}`);
+        }
+      });
+
+      // Ordenar por timestamp
+      separators.sort((a, b) => a.timestamp - b.timestamp);
+
+      logger.log(`Se encontraron ${separators.length} bloques temporales usando ${successfulSelector || 'ningún selector'}`);
+      return separators;
+    } catch (error) {
+      logger.error(`Error buscando separadores de fecha: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Extrae el historial de chat completo - VERSIÓN MEJORADA con soporte para bloques temporales
+   * @param {HTMLElement} messagesWrapper - Contenedor de mensajes
+   * @returns {Promise<Array>} Array de mensajes extraídos
    */
   async extractChatHistory(messagesWrapper) {
     if (this.isProcessingChat) {
-      logger.warn('Chat history extraction already in progress. Skipping.');
+      logger.warn('Extracción de historial ya en progreso. Omitiendo.');
       return [];
     }
     if (!messagesWrapper) {
-      logger.error('messagesWrapper element not provided to extractChatHistory.');
+      logger.error('No se proporcionó elemento messagesWrapper a extractChatHistory.');
       return [];
     }
 
     this.isProcessingChat = true;
-    logger.debug('Starting chat history extraction (simplified)…');
+    logger.debug('Iniciando extracción del historial de chat...');
 
     const messages = [];
+    const timeBlocks = []; // Array para registrar bloques de tiempo
+    let currentTimeBlock = null; // Bloque de tiempo actual
     let messageElements = [];
 
     try {
-      // 1) Get selectors from CONFIG or use fallback
+      // 1) Obtener selectores desde CONFIG o usar fallback
       const selectors = window.CONFIG?.selectors?.activeChat || {
         messageWrapper: 'div.x4k7w5x > div > div > div, div[role="main"] > div > div > div:last-child > div',
         messageRow: 'div[role="row"]',
         senderAvatar: 'img.x1rg5ohu[alt]:not([alt="Open photo"])'
       };
 
-      // 2) Retrieve message rows
+      // 2) Obtener todas las filas de mensajes
       messageElements = domUtils.findAllElements(selectors.messageRow, messagesWrapper);
-      logger.log(`Analyzing ${messageElements.length} messages in the current DOM`);
+      logger.log(`Analizando ${messageElements.length} mensajes en el DOM actual`);
 
       if (messageElements.length === 0) {
-        logger.warn('No message rows found with selector:', selectors.messageRow);
+        logger.warn('No se encontraron filas de mensajes con selector:', selectors.messageRow);
         return [];
       }
 
-      // 3) Process each row
+      // NUEVO: Buscar separadores de fecha antes de procesar mensajes
+      const dateSeparators = this.findDateSeparators();
+
+      // Convertir separadores a bloques temporales
+      dateSeparators.forEach((separator, idx) => {
+        timeBlocks.push({
+          timestamp: separator.timestamp,
+          element: separator.element,
+          text: separator.text,
+          index: idx,
+          messages: [] // Se llenarán durante el procesamiento
+        });
+      });
+
+      // Para debugging
+      if (timeBlocks.length > 0) {
+        logger.debug('Bloques temporales encontrados:');
+        timeBlocks.forEach((block, idx) => {
+          logger.debug(`  Bloque #${idx + 1}: ${block.text} (${new Date(block.timestamp).toLocaleString()})`);
+        });
+      }
+
+      // 3) Procesar cada fila de mensaje
+      let currentBlockIndex = 0; // Para seguimiento del bloque actual mientras procesamos mensajes
+
       messageElements.forEach((el, idx) => {
-        // Extract and clean unique text
+        // Extraer y limpiar texto único
         const nodes = Array.from(el.querySelectorAll('span[dir="auto"], div[dir="auto"]'));
         const texts = [...new Set(
           nodes.map(n => n.textContent.trim())
@@ -898,12 +1027,24 @@ class ChatManager {
         )];
         const text = texts.join(' ').trim();
 
-        // Determine special types
+        // Determinar tipos especiales
         const isDiv = this.isDividerElement(el);
         const isSys = !isDiv && this.isSystemMessage(text);
         const isReply = !isDiv && !isSys && !!this.detectQuotedMessage(el);
 
-        // Determine sender
+        // --- ACTUALIZADO: Manejo de bloques temporales ---
+        // Si tenemos bloques temporales y este elemento es un separador
+        if (timeBlocks.length > 0 && isDiv) {
+          // Ver si este elemento coincide con alguno de nuestros separadores
+          for (let i = 0; i < timeBlocks.length; i++) {
+            if (timeBlocks[i].element === el || el.contains(timeBlocks[i].element) || timeBlocks[i].element.contains(el)) {
+              currentBlockIndex = i; // Actualizar el índice del bloque actual
+              break;
+            }
+          }
+        }
+
+        // Determinar remitente
         let sentByUs = false, type = 'UNKNOWN';
         if (isDiv) type = 'DIVIDER 📅';
         else if (isSys) type = 'SYSTEM 🤖';
@@ -915,7 +1056,7 @@ class ChatManager {
           type = sentByUs ? 'OWN ✅' : 'EXTERNAL ❌';
         }
 
-        // SKIP if it is a divider or system message
+        // OMITIR si es separador o mensaje del sistema
         if (!isDiv && !isSys) {
           const messageData = {
             id: `msg_${this.currentChatId}_${idx}`,
@@ -924,7 +1065,9 @@ class ChatManager {
               text,
               type: "unknown",
               media: {}
-            }
+            },
+            // ACTUALIZADO: Asignar el índice del bloque temporal actual
+            timeBlockIndex: timeBlocks.length > 0 ? currentBlockIndex : null
           };
 
           // Detectar y añadir contenido multimedia
@@ -935,14 +1078,20 @@ class ChatManager {
           this.detectAndAddLocationContent(el, messageData);
 
           messages.push(messageData);
+
+          // Agregar también al array del bloque temporal si existe
+          if (timeBlocks.length > 0 && currentBlockIndex < timeBlocks.length) {
+            timeBlocks[currentBlockIndex].messages.push(messageData);
+          }
+
           logger.debug(`#${idx + 1}: ${messageData.content.type} – ${text.substring(0, 30)}${text.length > 30 ? '…' : ''}`);
         } else {
-          logger.debug(`#${idx + 1}: Skipped ${isDiv ? 'DIVIDER' : 'SYSTEM'} message`);
+          logger.debug(`#${idx + 1}: Omitido mensaje ${isDiv ? 'SEPARADOR' : 'SISTEMA'}`);
         }
       });
 
       this.lastProcessedMessageCount = messages.length;
-      logger.log(`Extraction completed: ${messages.length} messages found`);
+      logger.log(`Extracción completada: ${messages.length} mensajes encontrados en ${timeBlocks.length} bloques temporales`);
 
       // Contar mensajes de audio y transcripciones
       const messagesWithAudio = messages.filter(m => m.content?.hasAudio).length;
@@ -954,13 +1103,61 @@ class ChatManager {
 
       logger.debug(`Extracción completa: ${messages.length} mensajes (${messagesWithAudio} con audio, ${messagesWithTranscription} con transcripción)`);
 
+      // Emitir evento de extracción completada con los bloques temporales
+      const result = {
+        messages: messages,
+        timeBlocks: timeBlocks
+      };
+
+      if (window.eventCoordinator) {
+        window.eventCoordinator.emit('chatHistoryExtracted', result);
+      }
+
+      return result;
+
     } catch (error) {
-      logger.error('Error during chat history extraction:', {}, error);
+      logger.error('Error durante la extracción del historial del chat:', {}, error);
     } finally {
       this.isProcessingChat = false;
     }
 
-    return messages;
+    return { messages: messages, timeBlocks: timeBlocks };
+  }
+
+  /**
+   * Parsea una cadena de fecha de Messenger a timestamp
+   * @param {string} dateText - Texto de fecha a parsear
+   * @returns {number|null} Timestamp o null si no es válido
+   */
+  parseDateString(dateText) {
+    if (!dateText) return null;
+
+    try {
+      // Formato de Facebook: "10/8/24, 12:23 AM"
+      const dateTimeMatch = dateText.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:,\s*(\d{1,2}):(\d{2})(?:\s*(AM|PM))?)?/i);
+
+      if (dateTimeMatch) {
+        const [, month, day, yearShort, hour = '0', minute = '0', ampm = ''] = dateTimeMatch;
+
+        // Convertir año de 2 dígitos a 4 dígitos
+        const year = yearShort.length === 2 ? 2000 + parseInt(yearShort, 10) : parseInt(yearShort, 10);
+
+        // Convertir hora al formato 24h si es necesario
+        let hours = parseInt(hour, 10);
+        if (ampm.toUpperCase() === 'PM' && hours < 12) hours += 12;
+        if (ampm.toUpperCase() === 'AM' && hours === 12) hours = 0;
+
+        // Crear fecha
+        const date = new Date(year, parseInt(month, 10) - 1, parseInt(day, 10), hours, parseInt(minute, 10));
+        return date.getTime();
+      }
+
+      // Intentar con el formato "October 8, 2024"
+      return new Date(dateText).getTime();
+    } catch (error) {
+      logger.debug(`Error parseando fecha: ${dateText} - ${error.message}`);
+      return null;
+    }
   }
 
   /**

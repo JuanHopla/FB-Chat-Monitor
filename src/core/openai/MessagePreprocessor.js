@@ -312,7 +312,7 @@ class MessagePreprocessor {
       await window.audioTranscriber.initialize();
     }
 
-    // MEJORADO: Encontrar mensajes que necesitan transcripción Y también aquellos con hasAudio=true
+    // Encontrar mensajes que necesitan transcripción
     const messagesToTranscribe = messages.filter(message =>
     (message.content?.hasAudio &&
       (!message.content.transcribedAudio || message.content.transcribedAudio === '[Transcription Pending]'))
@@ -320,54 +320,60 @@ class MessagePreprocessor {
 
     console.log(`[MessagePreprocessor][DEBUG] attachTranscriptions - Encontrados ${messagesToTranscribe.length} mensajes que necesitan transcripción`);
 
-    // Si no hay mensajes para transcribir, devolver los originales
     if (messagesToTranscribe.length === 0) {
-      return messages;
+      return messages; // No hay mensajes para transcribir
     }
 
+    // NUEVO: Esperar brevemente para permitir que algunas transcripciones se completen
+    console.log("[MessagePreprocessor][DEBUG] Esperando brevemente para permitir transcripciones en proceso...");
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
     try {
-      // Primero intentar con URLs directas si existen
+      // PASO 1: Intentar con URLs directas primero (más preciso)
       for (const message of messagesToTranscribe) {
-        // Si el mensaje tiene URL directa, intentar obtener transcripción
         if (message.content.audioUrl) {
           const cleanUrl = message.content.audioUrl.split('?')[0];
-          const transcription = window.audioTranscriber.getTranscription(cleanUrl);
+          const transcription = window.audioTranscriber?.getTranscription(cleanUrl);
 
-          if (transcription) {
+          if (transcription && transcription !== '[Transcription Pending]') {
             message.content.transcribedAudio = transcription;
-            console.log(`[MessagePreprocessor][DEBUG] Transcripción adjuntada a mensaje con URL directa: ${message.id}`);
           }
         }
       }
 
-      // NUEVO: Para los mensajes sin URL directa pero con hasAudio=true, buscar en transcripciones completadas
-      // usando timestamp de proximidad para asociarlos
+      // PASO 2: Para mensajes restantes, intentar con audioMarkerId
       const remainingMessages = messagesToTranscribe.filter(m =>
         !m.content.transcribedAudio || m.content.transcribedAudio === '[Transcription Pending]'
       );
 
       if (remainingMessages.length > 0 && window.audioTranscriber.completedTranscriptions.size > 0) {
-        console.log(`[MessagePreprocessor][DEBUG] Intentando asociar ${remainingMessages.length} mensajes con transcripciones por timestamp`);
+        console.log(`[MessagePreprocessor][DEBUG] Intentando asociar ${remainingMessages.length} mensajes pendientes por audioMarkerId...`);
 
-        // Obtener todas las transcripciones completadas y ordenarlas por timestamp
-        const transcriptions = Array.from(window.audioTranscriber.completedTranscriptions.entries())
-          .filter(([, data]) => data.text && data.text.trim() !== '') // Solo considerar transcripciones no vacías
-          .map(([url, data]) => ({
-            url,
-            text: data.text,
-            timestamp: data.timestamp
-          }))
-          .sort((a, b) => a.timestamp - b.timestamp);
+        for (const message of remainingMessages) {
+          if (message.content.audioMarkerId) {
+            // Buscar por audioMarkerId en las transcripciones completadas
+            for (const [url, data] of window.audioTranscriber.completedTranscriptions.entries()) {
+              if (data.text && data.messageId === message.content.audioMarkerId) {
+                message.content.transcribedAudio = data.text;
+                break;
+              }
+            }
+          }
+        }
+      }
 
-        // Ordenar mensajes por timestamp
-        remainingMessages.sort((a, b) => a.timestamp - b.timestamp);
+      // PASO 3: Último recurso - asociación FIFO basada en posición en conversación
+      const stillRemaining = messagesToTranscribe.filter(m =>
+        !m.content.transcribedAudio || m.content.transcribedAudio === '[Transcription Pending]'
+      );
 
-        // Asociar por orden de aparición si hay un número similar
-        const limit = Math.min(remainingMessages.length, transcriptions.length);
+      if (stillRemaining.length > 0 && window.audioTranscriber.completedTranscriptions.size > 0) {
+        console.log(`[MessagePreprocessor][DEBUG] Intentando asociar ${stillRemaining.length} mensajes restantes por timestamp...`);
 
-        for (let i = 0; i < limit; i++) {
-          remainingMessages[i].content.transcribedAudio = transcriptions[i].text;
-          console.log(`[MessagePreprocessor][DEBUG] Asociada transcripción por orden: "${transcriptions[i].text.substring(0, 20)}..." a mensaje ${remainingMessages[i].id}`);
+        // MODIFICADO: Pasar los mensajes completos para preservar el orden original
+        if (typeof window.audioTranscriber.associateTranscriptionsWithMessagesFIFO === 'function') {
+          const result = await window.audioTranscriber.associateTranscriptionsWithMessagesFIFO(messages);
+          console.log(`[MessagePreprocessor][DEBUG] Asociación FIFO completada: ${result.assigned} asociaciones realizadas`);
         }
       }
 
@@ -469,83 +475,127 @@ class MessagePreprocessor {
   //===================================================================
 
   /**
-   * Formatea mensajes para OpenAI, agregando detalles de producto si corresponde,
-   * asegurando roles explícitos, chunking de máximo 10 elementos por mensaje 
-   * e incluyendo transcripciones.
+   * Formatea mensajes para OpenAI
    * @param {Array} messages - Mensajes del chat
-   * @param {Object} [productDetails] - Detalles del producto (opcional)
+   * @param {Object} productDetails - Detalles del producto (opcional)
    * @returns {Array} Mensajes formateados para OpenAI
    */
   async formatMessagesForOpenAI(messages, productDetails = null) {
     if (!messages || !Array.isArray(messages)) {
-      logger.warn('[MessagePreprocessor] Se proporcionó un array de mensajes inválido para formatear.');
+      console.warn('[MessagePreprocessor][WARN] No valid messages to format');
       return [];
     }
 
-    logger.debug(`[MessagePreprocessor][DEBUG] Formateando ${messages.length} mensajes para OpenAI, producto: ${!!productDetails}`);
+    // NUEVO: Log para diagnóstico
+    console.log(`[MessagePreprocessor][DEBUG] formatMessagesForOpenAI recibió ${messages.length} mensajes`);
 
-    const formattedGroups = [];
+    // Array para mensajes OpenAI
+    const openaiMessages = [];
 
-    // --- INICIO DE LA CORRECCIÓN ---
-    // 1. Agrega el mensaje de producto como primer mensaje si hay detalles
+    // Añadir detalles del producto si están disponibles
     if (productDetails) {
-      const productMsg = await this.buildProductDetailMessage(productDetails);
-      if (productMsg) {
-        formattedGroups.push(productMsg);
-      }
-    }
-    // --- FIN DE LA CORRECCIÓN ---
-
-    // 2. Agrupa mensajes por remitente
-    const grouped = this.groupMessagesByRole(messages);
-
-    // 3. Procesa cada grupo con transcripciones
-    for (const group of grouped) {
-      const formatted = await this.convertMessageGroupToOpenAIFormat(group);
-
-      // 4. Chunking mejorado con indicadores de contexto
-      if (formatted.content.length > 10) {
-        for (let i = 0; i < formatted.content.length; i += 10) {
-          const chunk = formatted.content.slice(i, Math.min(i + 10, formatted.content.length));
-          const isFirstChunk = i === 0;
-          const isLastChunk = i + 10 >= formatted.content.length;
-
-          // Agregar indicador de continuación para chunks no iniciales
-          if (!isFirstChunk && chunk[0].type === 'text') {
-            chunk[0] = {
-              ...chunk[0],
-              text: '[Continuación] ' + chunk[0].text
-            };
-          }
-
-          // Agregar indicador de continuación para chunks no finales
-          if (!isLastChunk) {
-            const lastTextIndex = [...chunk].reverse().findIndex(item => item.type === 'text');
-            if (lastTextIndex >= 0) {
-              const actualIndex = chunk.length - 1 - lastTextIndex;
-              chunk[actualIndex] = {
-                ...chunk[actualIndex],
-                text: chunk[actualIndex].text + ' [Continúa...]'
-              };
-            }
-          }
-
-          formattedGroups.push({
-            role: formatted.role,
-            content: chunk
-          });
+      try {
+        const productMessage = await this.buildProductDetailMessage(productDetails);
+        if (productMessage) {
+          openaiMessages.push(productMessage);
         }
-      } else {
-        // Si no excede los 10 elementos, agregar como un solo mensaje
-        formattedGroups.push(formatted);
+      } catch (error) {
+        console.error('[MessagePreprocessor][ERROR] Error al construir mensaje de producto:', error);
       }
     }
 
-    // NUEVO: Log detallado del payload completo
-    console.log(`[MessagePreprocessor][PAYLOAD] Contenido completo a enviar:`,
-      JSON.parse(JSON.stringify(formattedGroups)));
+    // MODIFICADO: Agrupar mensajes pero preservando elementos importantes
+    const messageGroups = this.groupMessagesByRoleImproved(messages);
 
-    return formattedGroups;
+    // NUEVO: Log para diagnóstico de grupos
+    console.log(`[MessagePreprocessor][DEBUG] Mensajes agrupados en ${messageGroups.length} grupos`);
+    messageGroups.forEach((group, index) => {
+      console.log(`[MessagePreprocessor][DEBUG] Grupo ${index + 1}: ${group.length} mensajes, sentByUs=${group[0]?.sentByUs}`);
+    });
+
+    // Convertir grupos a formato OpenAI
+    for (const messageGroup of messageGroups) {
+      if (messageGroup.length === 0) continue;
+
+      const openAIMessage = await this.convertMessageGroupToOpenAIFormat(messageGroup);
+      if (openAIMessage) {
+        openaiMessages.push(openAIMessage);
+      }
+    }
+
+    // NUEVO: Log detallado del resultado final
+    console.log(`[MessagePreprocessor][PAYLOAD] Contenido completo a enviar: `, JSON.parse(JSON.stringify(openaiMessages)));
+
+    return openaiMessages;
+  }
+
+  /**
+   * Versión mejorada que agrupa por remitente pero preserva elementos importantes como audios
+   * @param {Array} messages - Mensajes a agrupar
+   * @returns {Array<Array>} Mensajes agrupados
+   */
+  groupMessagesByRoleImproved(messages) {
+    if (!messages || !Array.isArray(messages)) {
+      return [];
+    }
+
+    const groups = [];
+    let currentGroup = [];
+    let currentSender = null;
+
+    // NUEVO: Log para diagnóstico
+    console.log(`[MessagePreprocessor][DEBUG] groupMessagesByRole: Procesando ${messages.length} mensajes`);
+
+    for (let i = 0; i < messages.length; i++) {
+      const message = messages[i];
+      const isSentByUs = message.sentByUs;
+
+      // MODIFICADO: Iniciar un nuevo grupo si:
+      // 1. Es el primer mensaje
+      // 2. El remitente cambió
+      // 3. El mensaje actual tiene contenido multimedia (audio, imagen, etc.)
+      // 4. El mensaje anterior tenía contenido multimedia
+      const hasMultimedia =
+        message.content?.hasAudio ||
+        message.content?.type === 'image' ||
+        message.content?.type === 'video';
+
+      const prevMessage = i > 0 ? messages[i - 1] : null;
+      const prevHasMultimedia =
+        prevMessage && (
+          prevMessage.content?.hasAudio ||
+          prevMessage.content?.type === 'image' ||
+          prevMessage.content?.type === 'video'
+        );
+
+      const shouldStartNewGroup =
+        i === 0 ||
+        isSentByUs !== currentSender ||
+        hasMultimedia ||
+        prevHasMultimedia;
+
+      if (shouldStartNewGroup) {
+        // Guardar grupo anterior si existe
+        if (currentGroup.length > 0) {
+          groups.push([...currentGroup]);
+          currentGroup = [];
+        }
+        currentSender = isSentByUs;
+      }
+
+      // Añadir mensaje al grupo actual
+      currentGroup.push(message);
+    }
+
+    // No olvidar el último grupo
+    if (currentGroup.length > 0) {
+      groups.push([...currentGroup]);
+    }
+
+    // NUEVO: Log para diagnóstico
+    console.log(`[MessagePreprocessor][DEBUG] groupMessagesByRole: Generados ${groups.length} grupos`);
+
+    return groups;
   }
 
   /**
@@ -562,17 +612,49 @@ class MessagePreprocessor {
     const workerUrl = 'https://fb-image-proxy.juandavid.workers.dev';
 
     for (const message of messageGroup) {
-      // 1. Acumular todo el contenido de texto y transcripciones.
+      // 1. Texto del mensaje - sanitizamos y combinamos
       if (message.content?.text) {
-        combinedText += message.content.text + '\n';
-      }
-      if (message.content?.hasAudio &&
-        message.content.transcribedAudio &&
-        message.content.transcribedAudio !== '[Transcription Pending]') {
-        combinedText += `\n[Audio transcription: "${message.content.transcribedAudio.trim()}"]\n`;
+        combinedText += `${message.content.text}\n`;
       }
 
-      // 2. Procesar las imágenes encontradas en el historial del chat.
+      // 2. Transcripción de audio - MEJORADO con múltiples intentos
+      if (message.content?.hasAudio) {
+        let audioTranscription = null;
+
+        // Opción 1: Ya tiene transcripción asignada
+        if (message.content.transcribedAudio &&
+          message.content.transcribedAudio !== '[Transcription Pending]') {
+          audioTranscription = message.content.transcribedAudio;
+          console.log(`[MessagePreprocessor][DEBUG] Añadiendo transcripción: "${audioTranscription.substring(0, 30)}..."`);
+        }
+        // Opción 2: Tiene URL de audio, intentar obtener transcripción directamente
+        else if (message.content.audioUrl) {
+          const cleanUrl = message.content.audioUrl.split('?')[0];
+          audioTranscription = window.audioTranscriber?.getTranscription(cleanUrl);
+          if (audioTranscription) {
+            console.log(`[MessagePreprocessor][DEBUG] Añadiendo transcripción de URL: "${audioTranscription.substring(0, 30)}..."`);
+          }
+        }
+        // Opción 3: Tiene audioMarkerId, buscar en completedTranscriptions
+        else if (message.content.audioMarkerId && window.audioTranscriber?.completedTranscriptions) {
+          for (const [url, data] of window.audioTranscriber.completedTranscriptions.entries()) {
+            if (data.messageId === message.content.audioMarkerId) {
+              audioTranscription = data.text;
+              console.log(`[MessagePreprocessor][DEBUG] Añadiendo transcripción por markerId: "${audioTranscription.substring(0, 30)}..."`);
+              break;
+            }
+          }
+        }
+
+        // Añadir transcripción al texto si está disponible
+        if (audioTranscription && audioTranscription !== '[Transcription Pending]') {
+          combinedText += `\n[Audio transcription: "${audioTranscription.trim()}"]\n`;
+        } else {
+          // No hay transcripción disponible
+          combinedText += '\n[Audio message - no transcription available]\n';
+        }
+      }
+      // 3. Procesar las imágenes encontradas en el historial del chat.
       // Usa la ruta correcta: message.content.media.images
       if (message.content?.media?.images && message.content.media.images.length > 0) {
         for (const image of message.content.media.images) {
@@ -596,7 +678,7 @@ class MessagePreprocessor {
     if (sanitizedText) {
       contentParts.unshift({
         type: "text",
-        text: sanitizedText,
+        text: sanitizedText
       });
     }
 
