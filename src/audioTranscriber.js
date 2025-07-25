@@ -239,16 +239,14 @@ class AudioTranscriber {
    * @returns {number|null} Timestamp extraído o null
    */
   extractTimestampFromId(messageId) {
-    if (!messageId || typeof messageId !== 'string') {
-      return null;
-    }
+    if (!messageId || typeof messageId !== 'string') return null;
 
     // Buscar patrones comunes en IDs de mensajes
     // 1. Patrón msg_XXXX_TIMESTAMP
     const endMatch = messageId.match(/_(\d{13,})$/);
     if (endMatch && endMatch[1]) {
       const timestamp = parseInt(endMatch[1], 10);
-      if (!isNaN(timestamp) && timestamp > 1000000000000) { // Asegurar que es un timestamp válido (post-2001)
+      if (!isNaN(timestamp) && timestamp > 0) {
         return timestamp;
       }
     }
@@ -256,10 +254,9 @@ class AudioTranscriber {
     // 2. Patrón msg_THREADID_MESSAGENUMBER
     const parts = messageId.split('_');
     if (parts.length >= 3) {
-      const lastPart = parts[parts.length - 1];
-      if (/^\d+$/.test(lastPart)) {
-        // Usar posición numérica como pseudo-timestamp (más bajo = más antiguo)
-        return parseInt(lastPart, 10);
+      const potentialTimestamp = parseInt(parts[parts.length - 1], 10);
+      if (!isNaN(potentialTimestamp) && potentialTimestamp > 0) {
+        return potentialTimestamp;
       }
     }
 
@@ -881,20 +878,34 @@ class AudioTranscriber {
   }
 
   /**
-   * Asocia transcripciones con mensajes usando bloques temporales y FIFO inteligente
-   * @param {Object} messageData - Objeto con mensajes y bloques temporales
+   * Asocia transcripciones con mensajes usando ordenamiento por timestamp de URL
+   * @param {Object|Array} messageData - Objeto con mensajes y bloques temporales o array de mensajes
    * @returns {Promise<Object>} Resultados de la asociación
    */
   async associateTranscriptionsWithMessagesFIFO(messageData) {
-    // Compatibilidad con versiones anteriores
-    let messages = Array.isArray(messageData) ? messageData : messageData?.messages;
-    const timeBlocks = messageData?.timeBlocks || [];
+    // Compatibilidad con versiones anteriores y extracción de datos mejorada
+    let messages = null;
+    let timeBlocks = [];
 
-    // Debug - Añadir esta línea para diagnosticar
-    this.debugLog(`Recibido messageData con ${messages?.length || 0} mensajes y ${timeBlocks?.length || 0} bloques temporales`);
+    // Determinar formato de entrada y extraer datos adecuadamente
+    if (Array.isArray(messageData)) {
+      messages = messageData;
+      if (window.logger) window.logger.process('ASSOCIATION', `Procesando array directo con ${messages.length} mensajes`);
+      else this.debugLog(`Recibido messageData como array con ${messages.length} mensajes`);
+    } else if (messageData && messageData.messages) {
+      messages = messageData.messages;
+      timeBlocks = messageData.timeBlocks || [];
+      if (window.logger) window.logger.process('ASSOCIATION', `Procesando objeto con ${messages.length} mensajes y ${timeBlocks.length} bloques temporales`);
+      else this.debugLog(`Recibido messageData con ${messages?.length || 0} mensajes y ${timeBlocks?.length || 0} bloques temporales`);
+    } else {
+      if (window.logger) window.logger.error('Formato de messageData no reconocido', messageData);
+      else this.debugLog("[ERROR] Formato de messageData no reconocido");
+      return { assigned: 0, remaining: 0 };
+    }
 
     if (!messages || !Array.isArray(messages)) {
-      this.debugLog("[ERROR] Array de mensajes inválido proporcionado");
+      if (window.logger) window.logger.error('Array de mensajes inválido', messageData);
+      else this.debugLog("[ERROR] Array de mensajes inválido proporcionado");
       return { assigned: 0, remaining: 0 };
     }
 
@@ -909,8 +920,32 @@ class AudioTranscriber {
     );
 
     if (messagesToAssign.length === 0) {
-      this.debugLog("No hay mensajes que necesiten transcripción");
+      if (window.logger) window.logger.process('ASSOCIATION', "No hay mensajes que necesiten transcripción");
+      else this.debugLog("No hay mensajes que necesiten transcripción");
       return { assigned: 0, remaining: 0 };
+    }
+
+    // NUEVO: Esperar brevemente para permitir que las transcripciones pendientes se completen
+    const pendingCount = this.pendingTranscriptions.size;
+    if (pendingCount > 0) {
+      if (window.logger) window.logger.process('ASSOCIATION', `Esperando a que terminen ${pendingCount} transcripciones pendientes...`);
+      else this.debugLog(`Esperando a que terminen ${pendingCount} transcripciones pendientes...`);
+
+      // Esperar hasta 5 segundos para que las transcripciones pendientes se completen
+      const startTime = Date.now();
+      const maxWaitTime = 5000; // 5 segundos máximo
+
+      while (Date.now() - startTime < maxWaitTime && this.pendingTranscriptions.size > 0) {
+        await new Promise(resolve => setTimeout(resolve, 500)); // Esperar 500ms entre verificaciones
+      }
+
+      if (this.pendingTranscriptions.size > 0) {
+        if (window.logger) window.logger.process('ASSOCIATION', `Después de esperar, aún quedan ${this.pendingTranscriptions.size} transcripciones pendientes`);
+        else this.debugLog(`Después de esperar, aún quedan ${this.pendingTranscriptions.size} transcripciones pendientes`);
+      } else {
+        if (window.logger) window.logger.process('ASSOCIATION', `Todas las transcripciones pendientes completadas`);
+        else this.debugLog(`Todas las transcripciones pendientes completadas`);
+      }
     }
 
     // Obtener transcripciones sin asignar
@@ -924,240 +959,139 @@ class AudioTranscriber {
       }));
 
     if (unassignedTranscriptions.length === 0) {
-      this.debugLog("No hay transcripciones disponibles para asignar");
+      if (window.logger) window.logger.process('ASSOCIATION', "No hay transcripciones disponibles para asignar");
+      else this.debugLog("No hay transcripciones disponibles para asignar");
       return { assigned: 0, remaining: messagesToAssign.length };
     }
 
-    this.debugLog(`Asociando ${messagesToAssign.length} mensajes con ${unassignedTranscriptions.length} transcripciones`);
-
-    // ----- NUEVA VERIFICACIÓN DE BLOQUES TEMPORALES -----
-    // Mejorar la verificación para depurar el estado actual
-    const useTimeBlocks = Array.isArray(timeBlocks) && timeBlocks.length > 0;
-
-    if (useTimeBlocks) {
-      this.debugLog(`Usando ${timeBlocks.length} bloques temporales para la asociación`);
-
-      // Información de debug sobre bloques
-      timeBlocks.forEach((block, idx) => {
-        const messagesInBlock = messagesToAssign.filter(msg => msg.timeBlockIndex === block.index);
-        this.debugLog(`Bloque #${idx + 1} "${block.text}": contiene ${messagesInBlock.length} mensajes con audio`);
-      });
+    if (window.logger) {
+      window.logger.process('ASSOCIATION', `Asociando ${messagesToAssign.length} mensajes con ${unassignedTranscriptions.length} transcripciones`);
     } else {
-      this.debugLog("No se encontraron bloques temporales, usando FIFO tradicional");
+      this.debugLog(`Asociando ${messagesToAssign.length} mensajes con ${unassignedTranscriptions.length} transcripciones`);
     }
 
+    // MODIFICACIÓN IMPORTANTE: Ordenar siempre por timestamp
+    // Ordenar transcripciones por timestamp extraído de URL (crucial)
+    unassignedTranscriptions.sort((a, b) => {
+      // Priorizar transcripciones con timestamp extraído de URL
+      if (a.urlTimestamp && b.urlTimestamp) return a.urlTimestamp - b.urlTimestamp;
+      if (a.urlTimestamp) return -1;  // Si solo a tiene timestamp, colocarlo primero
+      if (b.urlTimestamp) return 1;   // Si solo b tiene timestamp, colocarlo primero
+      // Usar el timestamp de creación como respaldo si no hay timestamp en URL
+      return a.timestamp - b.timestamp;
+    });
+
+    if (window.logger) {
+      window.logger.substep('ASSOCIATION', 'ORDERING',
+        `Transcripciones ordenadas por timestamp de URL: ${unassignedTranscriptions.map(t => t.urlTimestamp || 'sin timestamp').join(', ')}`);
+    }
+
+    // Ordenar mensajes por datos adicionales que podrían indicar orden (como ID o timestamp)
+    messagesToAssign.forEach(msg => {
+      if (msg.id) {
+        const timestampFromId = this.extractTimestampFromId(msg.id);
+        if (timestampFromId) msg._extractedTimestamp = timestampFromId;
+      }
+
+      // Si hay datos de timestamp directamente en el mensaje, usarlos
+      if (msg.timestamp) msg._extractedTimestamp = msg.timestamp;
+    });
+
+    messagesToAssign.sort((a, b) => {
+      // Si ambos tienen timestamp extraído, usarlo
+      if (a._extractedTimestamp && b._extractedTimestamp) return a._extractedTimestamp - b._extractedTimestamp;
+      // Si solo uno tiene timestamp extraído
+      if (a._extractedTimestamp) return -1;
+      if (b._extractedTimestamp) return 1;
+
+      // Por posición en el DOM como respaldo (usando timeBlockIndex si está disponible)
+      if (a.timeBlockIndex !== undefined && b.timeBlockIndex !== undefined)
+        return a.timeBlockIndex - b.timeBlockIndex;
+
+      // Por posición numérica en el ID como último recurso
+      const getNumericPart = (id) => {
+        if (!id) return 0;
+        const matches = id.match(/(\d+)/g);
+        return matches ? parseInt(matches[matches.length - 1]) : 0;
+      };
+      return getNumericPart(a.id) - getNumericPart(b.id);
+    });
+
+    if (window.logger) {
+      window.logger.substep('ASSOCIATION', 'ORDERING',
+        `Mensajes ordenados: ${messagesToAssign.map(m => m._extractedTimestamp || 'sin timestamp').join(', ')}`);
+    }
+
+    // Asociación usando el orden cronológico determinado
     let assignedCount = 0;
     const assignedMessages = new Set();
     const assignedTranscriptions = new Set();
 
-    // Si tenemos bloques temporales, asociar por bloques
-    if (useTimeBlocks) {
-      // Ordenar transcripciones por timestamp extraído de URL
-      unassignedTranscriptions.sort((a, b) => {
-        // Priorizar transcripciones con timestamp extraído de URL
-        if (a.urlTimestamp && b.urlTimestamp) return a.urlTimestamp - b.urlTimestamp;
-        if (a.urlTimestamp) return -1;
-        if (b.urlTimestamp) return 1;
-        // Usar el timestamp de creación como respaldo
-        return a.timestamp - b.timestamp;
-      });
+    if (window.logger) window.logger.process('ASSOCIATION', "Utilizando asociación basada en timestamps");
+    else this.debugLog("Utilizando asociación basada en timestamps");
 
-      // Para cada bloque temporal
-      for (let i = 0; i < timeBlocks.length; i++) {
-        const currentBlock = timeBlocks[i];
-        const nextBlock = timeBlocks[i + 1];
+    // Asociar mensajes y transcripciones en el orden determinado
+    const assignableCount = Math.min(messagesToAssign.length, unassignedTranscriptions.length);
 
-        // Encontrar mensajes en este bloque
-        const messagesInBlock = messagesToAssign.filter(
-          msg => msg.timeBlockIndex === currentBlock.index && !assignedMessages.has(msg.id)
-        );
+    if (window.logger) window.logger.substep('ASSOCIATION', 'ASSIGNING', `Asignando ${assignableCount} transcripciones por orden cronológico`);
+    else this.debugLog(`Asignando ${assignableCount} transcripciones por orden cronológico`);
 
-        if (messagesInBlock.length === 0) continue;
+    for (let i = 0; i < assignableCount; i++) {
+      const message = messagesToAssign[i];
+      const transcriptionData = unassignedTranscriptions[i];
 
-        this.debugLog(`Bloque #${i + 1}: "${currentBlock.text}" contiene ${messagesInBlock.length} mensajes con audio sin asignar`);
+      // Realizar la asociación
+      message.content.transcribedAudio = transcriptionData.text;
 
-        // Encontrar transcripciones que podrían pertenecer a este bloque
-        let transcriptionsForBlock = unassignedTranscriptions.filter(
-          t => !assignedTranscriptions.has(t.url)
-        );
-
-        // Filtrar transcripciones por timestamp si es posible
-        if (currentBlock.timestamp && nextBlock?.timestamp) {
-          const potentialMatches = transcriptionsForBlock.filter(t =>
-            t.urlTimestamp &&
-            t.urlTimestamp >= currentBlock.timestamp &&
-            t.urlTimestamp < nextBlock.timestamp
-          );
-
-          // Solo usar esta lista si encontramos coincidencias
-          if (potentialMatches.length > 0) {
-            transcriptionsForBlock = potentialMatches;
-            this.debugLog(`Bloque #${i + 1}: Encontradas ${potentialMatches.length} transcripciones por timestamp`);
-          }
-        }
-
-        // Si no hay transcripciones específicas, usar las primeras disponibles
-        if (transcriptionsForBlock.length === 0) {
-          transcriptionsForBlock = unassignedTranscriptions.filter(
-            t => !assignedTranscriptions.has(t.url)
-          ).slice(0, messagesInBlock.length);
-
-          this.debugLog(`Bloque #${i + 1}: Usando las primeras ${transcriptionsForBlock.length} transcripciones disponibles`);
-        }
-
-        // Asociar dentro del bloque usando FIFO
-        const assignableCount = Math.min(messagesInBlock.length, transcriptionsForBlock.length);
-        this.debugLog(`Bloque #${i + 1}: Asignando ${assignableCount} transcripciones`);
-
-        for (let j = 0; j < assignableCount; j++) {
-          const message = messagesInBlock[j];
-          const transcriptionData = transcriptionsForBlock[j];
-
-          // Realizar la asociación
-          message.content.transcribedAudio = transcriptionData.text;
-
-          // Si el mensaje no tiene URL de audio, asignarle la de la transcripción
-          if (!message.content.audioUrl) {
-            message.content.audioUrl = transcriptionData.url;
-          }
-
-          // Actualizar registro en completedTranscriptions
-          const cleanUrl = transcriptionData.url.split('?')[0];
-          const transcriptionEntry = this.completedTranscriptions.get(cleanUrl);
-          if (transcriptionEntry) {
-            transcriptionEntry.messageId = message.id;
-            this.completedTranscriptions.set(cleanUrl, transcriptionEntry);
-          }
-
-          // Establecer relaciones bidireccionales
-          this.audioUrlsToMessages.set(cleanUrl, message.id);
-          this.messageIdsToAudioUrls.set(message.id, cleanUrl);
-
-          // Marcar como asignados
-          assignedMessages.add(message.id);
-          assignedTranscriptions.add(transcriptionData.url);
-
-          assignedCount++;
-
-          // Log detallado para debugging
-          this.debugLog(`Asociado: Mensaje ${message.id} con transcripción "${transcriptionData.text.substring(0, 30)}..."`);
-        }
+      // Si el mensaje no tiene URL de audio, asignarle la de la transcripción
+      if (!message.content.audioUrl) {
+        message.content.audioUrl = transcriptionData.url;
       }
 
-      // Para los mensajes que no estén en ningún bloque o no se hayan asignado aún
-      const remainingMessages = messagesToAssign.filter(msg => !assignedMessages.has(msg.id));
-      const remainingTranscriptions = unassignedTranscriptions.filter(t => !assignedTranscriptions.has(t.url));
-
-      if (remainingMessages.length > 0 && remainingTranscriptions.length > 0) {
-        this.debugLog(`Asignando ${Math.min(remainingMessages.length, remainingTranscriptions.length)} mensajes restantes con FIFO tradicional`);
-
-        // Usar algoritmo FIFO para el resto
-        const assignableCount = Math.min(remainingMessages.length, remainingTranscriptions.length);
-        for (let i = 0; i < assignableCount; i++) {
-          const message = remainingMessages[i];
-          const transcriptionData = remainingTranscriptions[i];
-
-          // Realizar la asociación
-          message.content.transcribedAudio = transcriptionData.text;
-
-          // Actualizar registro
-          const cleanUrl = transcriptionData.url.split('?')[0];
-          const transcriptionEntry = this.completedTranscriptions.get(cleanUrl);
-          if (transcriptionEntry) {
-            transcriptionEntry.messageId = message.id;
-            this.completedTranscriptions.set(cleanUrl, transcriptionEntry);
-          }
-
-          // Establecer relaciones bidireccionales
-          this.audioUrlsToMessages.set(cleanUrl, message.id);
-          this.messageIdsToAudioUrls.set(message.id, cleanUrl);
-
-          assignedCount++;
-        }
+      // Actualizar registro en completedTranscriptions
+      const cleanUrl = transcriptionData.url.split('?')[0];
+      const transcriptionEntry = this.completedTranscriptions.get(cleanUrl);
+      if (transcriptionEntry) {
+        transcriptionEntry.messageId = message.id;
+        this.completedTranscriptions.set(cleanUrl, transcriptionEntry);
       }
-    }
-    // Fallback al método FIFO tradicional si no hay bloques temporales
-    else {
-      this.debugLog("No se encontraron bloques temporales, usando FIFO tradicional");
 
-      // Ordenar mensajes por timestamp extraído del ID
-      messagesToAssign.forEach(msg => {
-        if (msg.id) {
-          const timestampFromId = this.extractTimestampFromId(msg.id);
-          if (timestampFromId) msg._extractedTimestamp = timestampFromId;
-        }
-      });
+      // Establecer relaciones bidireccionales
+      this.audioUrlsToMessages.set(cleanUrl, message.id);
+      this.messageIdsToAudioUrls.set(message.id, cleanUrl);
 
-      messagesToAssign.sort((a, b) => {
-        if (a._extractedTimestamp && b._extractedTimestamp) return a._extractedTimestamp - b._extractedTimestamp;
-        if (a._extractedTimestamp) return -1;
-        if (b._extractedTimestamp) return 1;
+      // Marcar como asignados
+      assignedMessages.add(message.id);
+      assignedTranscriptions.add(transcriptionData.url);
 
-        // Por posición numérica en el ID como fallback
-        const getNumericPart = (id) => {
-          if (!id) return 0;
-          const matches = id.match(/(\d+)/g);
-          return matches ? parseInt(matches[matches.length - 1]) : 0;
-        };
-        return getNumericPart(a.id) - getNumericPart(b.id);
-      });
+      assignedCount++;
 
-      // Ordenar transcripciones por timestamp
-      unassignedTranscriptions.sort((a, b) => {
-        if (a.urlTimestamp && b.urlTimestamp) return a.urlTimestamp - b.urlTimestamp;
-        if (a.urlTimestamp) return -1;
-        if (b.urlTimestamp) return 1;
-        return a.timestamp - b.timestamp;
-      });
-
-      // Asociación tradicional
-      const assignableCount = Math.min(messagesToAssign.length, unassignedTranscriptions.length);
-
-      for (let i = 0; i < assignableCount; i++) {
-        const message = messagesToAssign[i];
-        const transcriptionData = unassignedTranscriptions[i];
-
-        message.content.transcribedAudio = transcriptionData.text;
-
-        const transcriptionEntry = this.completedTranscriptions.get(transcriptionData.url);
-        if (transcriptionEntry) {
-          transcriptionEntry.messageId = message.id;
-          this.completedTranscriptions.set(transcriptionData.url, transcriptionEntry);
-        }
-
-        const cleanUrl = transcriptionData.url.split('?')[0];
-        this.audioUrlsToMessages.set(cleanUrl, message.id);
-        this.messageIdsToAudioUrls.set(message.id, cleanUrl);
-
-        assignedCount++;
+      // Log detallado para debugging
+      if (window.logger) {
+        window.logger.substep('ASSOCIATION', 'ASSIGNED',
+          `Mensaje ${message.id} asociado con "${transcriptionData.text.substring(0, 30)}..."`,
+          {
+            messageId: message.id,
+            urlTimestamp: transcriptionData.urlTimestamp,
+            messageTimestamp: message._extractedTimestamp || 'N/A'
+          });
+      } else {
+        this.debugLog(`Asociado: Mensaje ${message.id} con transcripción "${transcriptionData.text.substring(0, 30)}..."`);
       }
     }
 
-    // NUEVA SECCIÓN: Mostrar información de debug detallada
-    console.log("==================== ARRAY COMPLETO DESPUÉS DE ASOCIACIÓN FIFO ====================");
-    console.log("[AudioTranscriber] [DEBUG] Array completo después de FIFO:", JSON.parse(JSON.stringify(messages)));
-    console.log("[AudioTranscriber] [REPORT] Mensajes con audio:", messages.filter(m => m.content?.hasAudio).length);
-
-    messages.filter(m => m.content?.hasAudio).forEach((msg, idx) => {
-      console.log(`[AudioTranscriber] [REPORT] #${idx + 1} ID=${msg.id}`);
-      console.log(`  - Tipo: ${msg.content.type}`);
-      console.log(`  - Transcripción: ${msg.content.transcribedAudio?.substring(0, 60)}${msg.content.transcribedAudio?.length > 60 ? '...' : ''}`);
-
-      // Información adicional
-      if (msg.content.audioUrl) {
-        console.log(`  - URL: ${msg.content.audioUrl.substring(0, 30)}...`);
-      } else if (msg.content.audioMarker) {
-        console.log(`  - Marker: ${msg.content.audioMarker}`);
-      }
-    });
-
-    console.log("=================================================================================");
+    // NUEVO: Generar reporte detallado de la asociación
+    this._generateAssociationReport(messages);
 
     // Guardar caché actualizada
     this.saveCache();
 
     // Mostrar resultado
-    this.debugLog(`Asociación completada: ${assignedCount} de ${messagesToAssign.length} mensajes asociados`);
+    if (window.logger) {
+      window.logger.process('ASSOCIATION', `Asociación completada: ${assignedCount} de ${messagesToAssign.length} mensajes asociados`);
+    } else {
+      this.debugLog(`Asociación completada: ${assignedCount} de ${messagesToAssign.length} mensajes asociados`);
+    }
 
     return {
       assigned: assignedCount,
@@ -1166,18 +1100,18 @@ class AudioTranscriber {
   }
 
   /**
-   * Extrae timestamp de una URL de audio
+   * Extrae el timestamp de una URL de audio
    * @param {string} url - URL del audio
    * @returns {number|null} Timestamp extraído o null
    */
   extractTimestampFromAudioUrl(url) {
-    if (!url) return null;
+    if (!url || typeof url !== 'string') return null;
 
     // Patrón para audioclip-TIMESTAMP-XXXX.mp4
     const match = url.match(/audioclip-(\d+)/);
     if (match && match[1]) {
       const timestamp = parseInt(match[1], 10);
-      if (!isNaN(timestamp)) {
+      if (!isNaN(timestamp) && timestamp > 0) {
         return timestamp;
       }
     }
@@ -1186,32 +1120,36 @@ class AudioTranscriber {
   }
 
   /**
-   * Genera informe detallado de asociaciones
-   * @param {Array} messages - Array completo de mensajes
+   * Genera un informe detallado de la asociación de transcripciones
+   * @param {Array} messages - Mensajes procesados
+   * @private
    */
   _generateAssociationReport(messages) {
     console.log('==================== ARRAY COMPLETO DESPUÉS DE ASOCIACIÓN FIFO ====================');
     console.log('[AudioTranscriber] [DEBUG] Array completo después de FIFO:', JSON.parse(JSON.stringify(messages)));
 
-    // Información detallada de mensajes con audio
+    // Filtrar y mostrar solo los mensajes con audio
     const audioMessages = messages.filter(msg => msg.content?.hasAudio);
     console.log(`[AudioTranscriber] [REPORT] Mensajes con audio: ${audioMessages.length}`);
 
     audioMessages.forEach((msg, idx) => {
       console.log(`[AudioTranscriber] [REPORT] #${idx + 1} ID=${msg.id}`);
-      console.log(`  - Tipo: ${msg.content.type}`);
-      console.log(`  - Transcripción: ${msg.content.transcribedAudio || '[NONE]'}`);
+      console.log(`  - Tipo: ${msg.content.type || 'unknown'}`);
+      console.log(`  - Transcripción: ${msg.content.transcribedAudio || 'No disponible'}`);
 
+      // Mostrar datos adicionales relevantes
       if (msg.content.audioUrl) {
-        const urlShort = msg.content.audioUrl.substring(0, 50) + "...";
-        console.log(`  - URL: ${urlShort}`);
+        console.log(`  - URL: ${msg.content.audioUrl}`);
+        const urlTimestamp = this.extractTimestampFromAudioUrl(msg.content.audioUrl);
+        if (urlTimestamp) {
+          console.log(`  - Timestamp de URL: ${new Date(urlTimestamp).toISOString()}`);
+        }
       }
 
       if (msg.content.audioMarkerId) {
         console.log(`  - Marker: ${msg.content.audioMarkerId}`);
       }
     });
-
     console.log('=================================================================================');
   }
 

@@ -292,19 +292,23 @@ class MessagePreprocessor {
 
   /**
    * Adjunta transcripciones a mensajes de audio usando AudioTranscriber
-   * @param {Array} messages - Mensajes a procesar
+   * @param {Array|Object} messageData - Mensajes o objeto {messages, timeBlocks} a procesar
    * @returns {Promise<Array>} Mensajes con transcripciones adjuntas
    */
-  async attachTranscriptions(messages) {
+  async attachTranscriptions(messageData) {
+    // Compatibilidad con diferentes formatos de entrada
+    let messages = Array.isArray(messageData) ? messageData : messageData?.messages;
+    const timeBlocks = messageData?.timeBlocks || [];
+
     if (!messages || !Array.isArray(messages)) {
       console.log("[MessagePreprocessor][ERROR] Array de mensajes inválido proporcionado a attachTranscriptions");
-      return messages;
+      return messageData;
     }
 
     // Verificar que AudioTranscriber está disponible
     if (!window.audioTranscriber) {
       console.log("[MessagePreprocessor][WARN] AudioTranscriber no disponible para transcripciones");
-      return messages;
+      return messageData;
     }
 
     // Asegurar que AudioTranscriber está inicializado
@@ -318,10 +322,19 @@ class MessagePreprocessor {
       (!message.content.transcribedAudio || message.content.transcribedAudio === '[Transcription Pending]'))
     );
 
-    console.log(`[MessagePreprocessor][DEBUG] attachTranscriptions - Encontrados ${messagesToTranscribe.length} mensajes que necesitan transcripción`);
+    // Usar logger en lugar de console.log directo
+    if (window.logger && typeof window.logger.debug === 'function') {
+      window.logger.debug(
+        `attachTranscriptions - Encontrados ${messagesToTranscribe.length} mensajes que necesitan transcripción`,
+        {},
+        'MessagePreprocessor'
+      );
+    } else {
+      console.log(`[MessagePreprocessor][DEBUG] attachTranscriptions - Encontrados ${messagesToTranscribe.length} mensajes que necesitan transcripción`);
+    }
 
     if (messagesToTranscribe.length === 0) {
-      return messages; // No hay mensajes para transcribir
+      return messageData; // No hay mensajes para transcribir
     }
 
     // NUEVO: Esperar brevemente para permitir que algunas transcripciones se completen
@@ -329,61 +342,26 @@ class MessagePreprocessor {
     await new Promise(resolve => setTimeout(resolve, 1500));
 
     try {
-      // PASO 1: Intentar con URLs directas primero (más preciso)
-      for (const message of messagesToTranscribe) {
-        if (message.content.audioUrl) {
-          const cleanUrl = message.content.audioUrl.split('?')[0];
-          const transcription = window.audioTranscriber?.getTranscription(cleanUrl);
-
-          if (transcription && transcription !== '[Transcription Pending]') {
-            message.content.transcribedAudio = transcription;
-          }
-        }
+      // MODIFICACIÓN IMPORTANTE: Pasar el objeto completo con timeBlocks
+      if (timeBlocks && timeBlocks.length > 0) {
+        // Crear una nueva estructura para pasar a audioTranscriber
+        const fullMessageData = {
+          messages: messages,
+          timeBlocks: timeBlocks
+        };
+        await window.audioTranscriber.associateTranscriptionsWithMessagesFIFO(fullMessageData);
+      } else {
+        // Mantener compatibilidad con la versión anterior
+        await window.audioTranscriber.associateTranscriptionsWithMessagesFIFO(messages);
       }
 
-      // PASO 2: Para mensajes restantes, intentar con audioMarkerId
-      const remainingMessages = messagesToTranscribe.filter(m =>
-        !m.content.transcribedAudio || m.content.transcribedAudio === '[Transcription Pending]'
-      );
-
-      if (remainingMessages.length > 0 && window.audioTranscriber.completedTranscriptions.size > 0) {
-        console.log(`[MessagePreprocessor][DEBUG] Intentando asociar ${remainingMessages.length} mensajes pendientes por audioMarkerId...`);
-
-        for (const message of remainingMessages) {
-          if (message.content.audioMarkerId) {
-            // Buscar por audioMarkerId en las transcripciones completadas
-            for (const [url, data] of window.audioTranscriber.completedTranscriptions.entries()) {
-              if (data.text && data.messageId === message.content.audioMarkerId) {
-                message.content.transcribedAudio = data.text;
-                break;
-              }
-            }
-          }
-        }
-      }
-
-      // PASO 3: Último recurso - asociación FIFO basada en posición en conversación
-      const stillRemaining = messagesToTranscribe.filter(m =>
-        !m.content.transcribedAudio || m.content.transcribedAudio === '[Transcription Pending]'
-      );
-
-      if (stillRemaining.length > 0 && window.audioTranscriber.completedTranscriptions.size > 0) {
-        console.log(`[MessagePreprocessor][DEBUG] Intentando asociar ${stillRemaining.length} mensajes restantes por timestamp...`);
-
-        // MODIFICADO: Pasar los mensajes completos para preservar el orden original
-        if (typeof window.audioTranscriber.associateTranscriptionsWithMessagesFIFO === 'function') {
-          const result = await window.audioTranscriber.associateTranscriptionsWithMessagesFIFO(messages);
-          console.log(`[MessagePreprocessor][DEBUG] Asociación FIFO completada: ${result.assigned} asociaciones realizadas`);
-        }
-      }
-
+      // El resto del código se mantiene igual...
       return messages;
     } catch (error) {
-      console.error('[MessagePreprocessor][ERROR] Error al adjuntar transcripciones:', error);
+      console.error("[MessagePreprocessor][ERROR] Error al asociar transcripciones:", error);
       return messages;
     }
   }
-
   /**
    * Generates a unique message ID
    * @param {string} text - Message text

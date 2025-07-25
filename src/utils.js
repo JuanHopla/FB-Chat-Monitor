@@ -196,17 +196,92 @@ const logger = (() => {
       console.error('Error clearing logs from localStorage', e);
     }
   }
+  /**
+   * Establece el nivel de detalle de los logs
+   * @param {string} level - Nivel de log ('debug', 'info', 'warn', 'error')
+   * @returns {string} El nivel establecido
+   */
+  function setLogLevel(level) {
+    const validLevels = ['debug', 'info', 'warn', 'error'];
+    const normalizedLevel = level?.toLowerCase();
+
+    if (!normalizedLevel || !validLevels.includes(normalizedLevel)) {
+      warn(`Nivel de log inválido: ${level}. Usando 'info'`);
+      window.CONFIG = window.CONFIG || {};
+      window.CONFIG.logLevel = 'info';
+      window.CONFIG.debug = false;
+      return 'info';
+    }
+
+    // Actualizar configuración
+    window.CONFIG = window.CONFIG || {};
+    window.CONFIG.logLevel = normalizedLevel;
+
+    // Habilitar/deshabilitar modo debug
+    window.CONFIG.debug = normalizedLevel === 'debug';
+
+    log(`Nivel de log establecido a: ${normalizedLevel}`);
+    return normalizedLevel;
+  }
+
+  /**
+   * Registra un paso principal del proceso
+   * @param {string} phase - Fase del proceso (ej: 'EXTRACTION', 'ASSOCIATION')
+   * @param {string} message - Mensaje descriptivo
+   * @param {Object} data - Datos adicionales (opcional)
+   */
+  function process(phase, message, data = {}) {
+    const formattedPhase = phase.toUpperCase();
+    const entry = {
+      type: 'PROCESS',
+      phase: formattedPhase,
+      timestamp: new Date().toISOString(),
+      message,
+      data
+    };
+    _addLog(entry);
+
+    console.log(`[FB-Chat-Monitor][${formattedPhase}] ${message}`, data);
+  }
+
+  /**
+   * Registra un subpaso de un proceso principal
+   * @param {string} phase - Fase principal (ej: 'EXTRACTION', 'ASSOCIATION')
+   * @param {string} step - Identificador del subpaso
+   * @param {string} message - Mensaje descriptivo
+   * @param {Object} data - Datos adicionales (opcional)
+   */
+  function substep(phase, step, message, data = {}) {
+    const formattedPhase = phase.toUpperCase();
+    const formattedStep = step.toUpperCase();
+
+    const entry = {
+      type: 'SUBSTEP',
+      phase: formattedPhase,
+      step: formattedStep,
+      timestamp: new Date().toISOString(),
+      message,
+      data
+    };
+    _addLog(entry);
+
+    console.log(`[FB-Chat-Monitor][${formattedPhase}][${formattedStep}] ${message}`,
+      Object.keys(data).length > 0 ? data : '');
+  }
 
   return {
     log,
     debug,
     error,
     warn,
+    process,  
+    substep,  
     notify,
     loadLogs,
     getAllLogs,
     getLogsByType,
-    clearLogs
+    clearLogs,
+    setLogLevel
   };
 })();
 
