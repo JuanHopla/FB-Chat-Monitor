@@ -1,5 +1,361 @@
 // ----- UTILITIES -----
 
+/**
+ * LogManager - Sistema centralizado para gestión de logs del sistema
+ */
+class LogManager {
+  constructor() {
+    this.phases = {
+      CHAT_DETECTION: 'CHAT_DETECTION',     // Detección de cambios en el chat
+      RESOURCE_DETECTION: 'RESOURCE_DET',   // Detección de recursos (audio/video/imágenes)
+      EXTRACTION: 'EXTRACTION',             // Extracción de contenidos
+      TRANSCRIPTION: 'TRANSCRIPTION',       // Transcripción de audios
+      ASSOCIATION: 'ASSOCIATION',           // Asociación de transcripciones
+      PROCESSING: 'PROCESSING',             // Procesamiento para IA
+      GENERATION: 'GENERATION',             // Generación de respuesta
+      RESPONSE: 'RESPONSE'                  // Envío de respuesta
+    };
+
+    this.collectedData = {
+      audios: [],
+      transcriptions: [],
+      messages: [],
+      associations: []
+    };
+
+    // Configuración
+    this.config = {
+      consoleOutput: true,
+      fileOutput: false,
+      detailLevel: 'normal',  // 'minimal', 'normal', 'detailed', 'debug'
+      showTimestamps: true,
+      useGroups: true,       // Usar console.group para agrupar mensajes relacionados
+      collapseGroups: true   // Colapsar grupos por defecto
+    };
+    
+    // Contador de grupos activos
+    this._activeGroups = 0;
+  }
+
+  /**
+   * Registra un evento principal de una fase
+   * @param {string} phase - Fase del proceso
+   * @param {string} message - Mensaje descriptivo
+   * @param {Object} data - Datos opcionales
+   */
+  phase(phase, message, data = {}) {
+    if (!this.phases[phase]) {
+      phase = 'GENERAL';
+    }
+
+    if (window.logger && typeof window.logger.process === 'function') {
+      window.logger.process(phase, message, data);
+    } else {
+      console.log(`[FB-Chat-Monitor][${phase}] ${message}`,
+        Object.keys(data).length > 0 ? data : '');
+    }
+  }
+
+  /**
+   * Registra un subpaso de una fase
+   * @param {string} phase - Fase principal
+   * @param {string} step - Identificador del paso
+   * @param {string} message - Mensaje descriptivo
+   * @param {Object} data - Datos opcionales
+   */
+  step(phase, step, message, data = {}) {
+    if (!this.phases[phase]) {
+      phase = 'GENERAL';
+    }
+
+    if (window.logger && typeof window.logger.substep === 'function') {
+      window.logger.substep(phase, step, message, data);
+    } else {
+      console.log(`[FB-Chat-Monitor][${phase}][${step}] ${message}`,
+        Object.keys(data).length > 0 ? data : '');
+    }
+  }
+
+  /**
+   * Inicia un grupo de logs relacionados
+   * @param {string} title - Título del grupo
+   * @param {boolean} collapsed - Si el grupo debe estar colapsado
+   */
+  startGroup(title, collapsed = this.config.collapseGroups) {
+    if (!this.config.useGroups) {
+      console.log(`[FB-Chat-Monitor] === ${title} ===`);
+      return;
+    }
+    
+    if (collapsed) {
+      console.groupCollapsed(`[FB-Chat-Monitor] ${title}`);
+    } else {
+      console.group(`[FB-Chat-Monitor] ${title}`);
+    }
+    this._activeGroups++;
+  }
+
+  /**
+   * Finaliza el grupo actual de logs
+   */
+  endGroup() {
+    if (!this.config.useGroups || this._activeGroups <= 0) {
+      return;
+    }
+    
+    console.groupEnd();
+    this._activeGroups--;
+  }
+
+  /**
+   * Registra un conjunto de items relacionados como un grupo
+   * @param {string} title - Título del grupo
+   * @param {Array|Object} items - Items a mostrar
+   * @param {Function} formatter - Función para formatear cada item (opcional)
+   * @param {boolean} collapsed - Si el grupo debe estar colapsado
+   */
+  logGroup(title, items, formatter = null, collapsed = this.config.collapseGroups) {
+    this.startGroup(title, collapsed);
+    
+    if (Array.isArray(items)) {
+      if (formatter && typeof formatter === 'function') {
+        items.forEach((item, index) => {
+          console.log(formatter(item, index));
+        });
+      } else if (items.length > 0) {
+        console.table(items);
+      } else {
+        console.log('No hay elementos para mostrar');
+      }
+    } else if (typeof items === 'object' && items !== null) {
+      console.log(items);
+    } else {
+      console.log('Datos inválidos');
+    }
+    
+    this.endGroup();
+  }
+
+  /**
+   * Registra mensajes de debug estructurados
+   * @param {string} component - Componente o clase que emite el mensaje
+   * @param {string} title - Título o descripción del mensaje
+   * @param {any} data - Datos a mostrar
+   */
+  debugStructured(component, title, data) {
+    if (this.config.detailLevel !== 'detailed' && this.config.detailLevel !== 'debug') {
+      return;
+    }
+    
+    this.startGroup(`[${component}][DEBUG] ${title}`, true);
+    
+    if (Array.isArray(data)) {
+      if (data.length === 0) {
+        console.log('Array vacío');
+      } else if (data.length <= 50) {
+        console.log(data);
+      } else {
+        console.log(`Array con ${data.length} elementos:`, data.slice(0, 10), '...');
+      }
+    } else if (data && typeof data === 'object') {
+      console.log(data);
+    } else {
+      console.log(data);
+    }
+    
+    this.endGroup();
+  }
+  
+  /**
+   * Muestra una tabla formateada con datos estructurados
+   * @param {string} title - Título de la tabla
+   * @param {Array} data - Datos para la tabla
+   * @param {Array} columns - Columnas a mostrar (opcional)
+   */
+  table(title, data, columns = null) {
+    this.startGroup(title);
+    
+    if (columns) {
+      // Filtrar solo las columnas especificadas
+      const filteredData = data.map(item => {
+        const result = {};
+        columns.forEach(col => {
+          result[col] = item[col];
+        });
+        return result;
+      });
+      console.table(filteredData);
+    } else {
+      console.table(data);
+    }
+    
+    this.endGroup();
+  }
+
+  /**
+   * Recolecta datos estructurados para mostrarlos posteriormente
+   * @param {string} category - Categoría de datos ('audios', 'transcriptions', etc.)
+   * @param {Object} item - Datos a almacenar
+   */
+  collect(category, item) {
+    if (!this.collectedData[category]) {
+      this.collectedData[category] = [];
+    }
+
+    this.collectedData[category].push({
+      ...item,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  /**
+   * Muestra los datos recolectados de una categoría específica
+   * @param {string} category - Categoría a mostrar
+   * @param {boolean} clear - Si debe limpiar los datos después de mostrarlos
+   */
+  showCollected(category, clear = false) {
+    if (!this.collectedData[category] || this.collectedData[category].length === 0) {
+      console.log(`[FB-Chat-Monitor][REPORT] No hay datos en la categoría ${category}`);
+      return;
+    }
+
+    this.startGroup(`DATOS RECOLECTADOS: ${category.toUpperCase()}`);
+
+    switch (category) {
+      case 'audios':
+        this._formatAudioData();
+        break;
+      case 'transcriptions':
+        this._formatTranscriptionData();
+        break;
+      case 'associations':
+        this._formatAssociationData();
+        break;
+      default:
+        console.table(this.collectedData[category]);
+    }
+
+    this.endGroup();
+
+    if (clear) {
+      this.collectedData[category] = [];
+    }
+  }
+
+  /**
+   * Formatea y muestra los datos de audio de manera ordenada
+   * @private
+   */
+  _formatAudioData() {
+    // Ordenar por timestamp
+    const sortedAudios = [...this.collectedData.audios].sort((a, b) => {
+      return a.urlTimestamp - b.urlTimestamp;
+    });
+
+    sortedAudios.forEach((audio, idx) => {
+      const timestamp = audio.urlTimestamp ? new Date(audio.urlTimestamp).toLocaleString() : 'Desconocido';
+      console.log(`[${idx + 1}] URL: ${this._truncateUrl(audio.url)}`);
+      console.log(`    Timestamp: ${timestamp}`);
+      console.log(`    Tamaño: ${audio.size || 'N/A'} KB`);
+      console.log(`    Estado: ${audio.status || 'Detectado'}`);
+      if (idx < sortedAudios.length - 1) console.log('');
+    });
+  }
+
+  /**
+   * Formatea y muestra los datos de transcripción de manera ordenada
+   * @private
+   */
+  _formatTranscriptionData() {
+    // Ordenar por timestamp
+    const sortedTranscriptions = [...this.collectedData.transcriptions].sort((a, b) => {
+      return a.urlTimestamp - b.urlTimestamp;
+    });
+
+    sortedTranscriptions.forEach((transcription, idx) => {
+      const timestamp = transcription.urlTimestamp ? new Date(transcription.urlTimestamp).toLocaleString() : 'Desconocido';
+      console.log(`[${idx + 1}] Timestamp: ${timestamp}`);
+      console.log(`    Texto: "${transcription.text.substring(0, 70)}${transcription.text.length > 70 ? '...' : ''}"`);
+      console.log(`    URL: ${this._truncateUrl(transcription.url)}`);
+      console.log(`    Mensaje ID: ${transcription.messageId || 'No asociado'}`);
+      if (idx < sortedTranscriptions.length - 1) console.log('');
+    });
+  }
+
+  /**
+   * Formatea y muestra los datos de asociación de manera ordenada
+   * @private
+   */
+  _formatAssociationData() {
+    // Ordenar por timestamp de URL
+    const sortedAssociations = [...this.collectedData.associations].sort((a, b) => {
+      return (a.urlTimestamp || 0) - (b.urlTimestamp || 0);
+    });
+
+    console.log(`Total asociaciones: ${sortedAssociations.length}`);
+
+    sortedAssociations.forEach((assoc, idx) => {
+      const urlTime = assoc.urlTimestamp ? new Date(assoc.urlTimestamp).toLocaleString() : 'Desconocido';
+      console.log(`[${idx + 1}] Mensaje ID: ${assoc.messageId}`);
+      console.log(`    Timestamp URL: ${urlTime}`);
+      
+      // Proteger contra valores undefined en transcription o text
+      if (assoc.transcription) {
+        console.log(`    Transcripción: "${assoc.transcription.substring(0, 70)}${assoc.transcription.length > 70 ? '...' : ''}"`);
+      } else if (assoc.text) {
+        console.log(`    Texto: "${assoc.text.substring(0, 70)}${assoc.text.length > 70 ? '...' : ''}"`);
+      } else {
+        console.log(`    Texto: "[No disponible]"`);
+      }
+      
+      if (idx < sortedAssociations.length - 1) console.log('');
+    });
+  }
+
+  /**
+   * Acorta una URL para mejor visualización
+   * @param {string} url - URL completa
+   * @returns {string} URL truncada
+   * @private
+   */
+  _truncateUrl(url) {
+    if (!url) return 'N/A';
+
+    // Extraer el nombre del archivo y parámetros importantes
+    const urlObj = new URL(url);
+    const pathParts = urlObj.pathname.split('/');
+    const filename = pathParts[pathParts.length - 1];
+
+    return `.../${filename}${urlObj.search ? '?...' : ''}`;
+  }
+}
+
+// Crear instancia global
+const logManager = new LogManager();
+window.logManager = logManager;
+
+// Exponer también como log para acceso más rápido
+window.log = logManager;
+
+// Para compatibilidad con código existente, añadir métodos de configuración
+window.setLogLevel = function (level) {
+  const levelMap = {
+    'error': 'minimal',
+    'warn': 'minimal',
+    'info': 'normal',
+    'debug': 'detailed'
+  };
+
+  logManager.config.detailLevel = levelMap[level] || 'normal';
+
+  // También configurar el logger existente si está disponible
+  if (window.logger && typeof window.logger.setLogLevel === 'function') {
+    window.logger.setLogLevel(level);
+  }
+
+  return level;
+};
+
 // --- Logger Utility ---
 const logger = (() => {
   const logs = [];
@@ -41,6 +397,107 @@ const logger = (() => {
       const entry = { type: 'DEBUG', timestamp: new Date().toISOString(), message, data };
       _addLog(entry);
       console.log(`[FB-Chat-Monitor][DEBUG] ${message}`, data);
+    }
+  }
+
+  /**
+   * Registra un mensaje de debug con datos estructurados
+   * @param {string} component - Nombre del componente
+   * @param {string} message - Mensaje descriptivo
+   * @param {any} data - Datos estructurados
+   */
+  function debugStructured(component, message, data) {
+    if (!window.CONFIG?.debug) return;
+    
+    const entry = { 
+      type: 'DEBUG_STRUCTURED', 
+      component,
+      timestamp: new Date().toISOString(), 
+      message, 
+      data: typeof data === 'object' ? JSON.stringify(data) : data 
+    };
+    _addLog(entry);
+    
+    // Si logManager está disponible, usar su método estructurado
+    if (window.logManager && typeof window.logManager.debugStructured === 'function') {
+      window.logManager.debugStructured(component, message, data);
+    } else {
+      console.log(`[FB-Chat-Monitor][${component}][DEBUG] ${message}`);
+      console.log(data);
+    }
+  }
+
+  /**
+   * Registra datos de depuración en formato tabla
+   * @param {string} title - Título de la tabla
+   * @param {Array} data - Datos para mostrar en tabla
+   * @param {Array} columns - Columnas a mostrar (opcional)
+   */
+  function debugTable(title, data, columns = null) {
+    if (!window.CONFIG?.debug) return;
+    
+    const entry = {
+      type: 'DEBUG_TABLE',
+      timestamp: new Date().toISOString(),
+      title,
+      data: JSON.stringify(data),
+      columns
+    };
+    _addLog(entry);
+    
+    if (window.logManager && typeof window.logManager.table === 'function') {
+      window.logManager.table(title, data, columns);
+    } else {
+      console.log(`[FB-Chat-Monitor][TABLE] ${title}`);
+      if (columns) {
+        // Filtrar datos para mostrar solo las columnas especificadas
+        const filteredData = data.map(item => {
+          const result = {};
+          columns.forEach(col => {
+            result[col] = item[col];
+          });
+          return result;
+        });
+        console.table(filteredData);
+      } else {
+        console.table(data);
+      }
+    }
+  }
+
+  /**
+   * Agrupa mensajes de log relacionados
+   * @param {string} title - Título del grupo
+   * @param {Function} groupFunction - Función que contiene los logs a agrupar
+   * @param {boolean} collapsed - Si el grupo debe estar colapsado
+   */
+  function group(title, groupFunction, collapsed = true) {
+    if (!window.CONFIG?.debug) {
+      // Ejecutar la función pero sin agrupar
+      if (typeof groupFunction === 'function') groupFunction();
+      return;
+    }
+    
+    const entry = {
+      type: 'GROUP',
+      timestamp: new Date().toISOString(),
+      title
+    };
+    _addLog(entry);
+    
+    if (window.logManager && typeof window.logManager.startGroup === 'function') {
+      window.logManager.startGroup(title, collapsed);
+      if (typeof groupFunction === 'function') groupFunction();
+      window.logManager.endGroup();
+    } else {
+      // Fallback si logManager no está disponible
+      if (collapsed) {
+        console.groupCollapsed(`[FB-Chat-Monitor] ${title}`);
+      } else {
+        console.group(`[FB-Chat-Monitor] ${title}`);
+      }
+      if (typeof groupFunction === 'function') groupFunction();
+      console.groupEnd();
     }
   }
 
@@ -272,10 +729,13 @@ const logger = (() => {
   return {
     log,
     debug,
+    debugStructured,
+    debugTable,
+    group,
     error,
     warn,
-    process,  
-    substep,  
+    process,
+    substep,
     notify,
     loadLogs,
     getAllLogs,

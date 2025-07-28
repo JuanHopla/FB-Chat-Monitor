@@ -47,7 +47,8 @@ class AudioTranscriber {
     if (this.initialized) return true;
 
     try {
-      this.debugLog('Inicializando AudioTranscriber...');
+      // Usar logManager para registrar fase de inicialización
+      window.logManager.phase(window.logManager.phases.RESOURCE_DETECTION, 'Inicializando AudioTranscriber');
 
       // Cargar transcripciones en caché desde localStorage
       this.loadCache();
@@ -56,7 +57,12 @@ class AudioTranscriber {
       this.setupObserver();
 
       // Iniciar polling periódico
-      this.debugLog(`Iniciando detección de recursos de audio cada ${this.POLLING_INTERVAL_MS}ms.`);
+      window.logManager.step(
+        window.logManager.phases.RESOURCE_DETECTION,
+        'POLLING_START',
+        `Iniciando detección de recursos de audio cada ${this.POLLING_INTERVAL_MS}ms`
+      );
+
       this.pollingInterval = setInterval(() => this.checkForAudioResources(), this.POLLING_INTERVAL_MS);
 
       // Escaneo inicial
@@ -64,7 +70,7 @@ class AudioTranscriber {
 
       // Integración con ScrollManager - suscribirse a eventos
       if (window.scrollManager) {
-        this.debugLog('Integrando con ScrollManager');
+        window.logManager.step(window.logManager.phases.RESOURCE_DETECTION, 'INTEGRATION', 'Integrando con ScrollManager');
         window.scrollManager.on('afterScroll', (data) => {
           // Detectar audios después de cada scroll
           this.checkForAudioResources();
@@ -73,12 +79,17 @@ class AudioTranscriber {
 
       // Integración con EventCoordinator
       if (window.eventCoordinator) {
-        this.debugLog('Integrando con EventCoordinator');
+        window.logManager.step(window.logManager.phases.RESOURCE_DETECTION, 'INTEGRATION', 'Integrando con EventCoordinator');
 
         // Suscribirse al evento chatHistoryExtracted para recibir los bloques temporales
         window.eventCoordinator.on('chatHistoryExtracted', async (data) => {
           if (data && data.messages) {
-            this.debugLog(`Recibido historial extraído con ${data.messages.length} mensajes y ${data.timeBlocks?.length || 0} bloques temporales`);
+            window.logManager.step(
+              window.logManager.phases.ASSOCIATION,
+              'HISTORY_RECEIVED',
+              `Recibido historial con ${data.messages.length} mensajes y ${data.timeBlocks?.length || 0} bloques temporales`
+            );
+
             // Asociar transcripciones usando los bloques temporales
             await this.associateTranscriptionsWithMessagesFIFO(data);
           }
@@ -86,10 +97,10 @@ class AudioTranscriber {
       }
 
       this.initialized = true;
-      logger.log('AudioTranscriber initialized successfully');
+      window.logManager.phase(window.logManager.phases.RESOURCE_DETECTION, 'AudioTranscriber inicializado correctamente');
       return true;
     } catch (error) {
-      logger.error('Failed to initialize AudioTranscriber', {}, error);
+      window.logManager.phase(window.logManager.phases.RESOURCE_DETECTION, `Error al inicializar AudioTranscriber: ${error.message}`);
       return false;
     }
   }
@@ -103,13 +114,13 @@ class AudioTranscriber {
     const messageWrapper = document.querySelector(this.MESSAGE_WRAPPER_SELECTOR);
 
     if (!messageWrapper) {
-      this.debugLog('No se encontró el contenedor de mensajes para configurar el observer');
+      window.logManager.step(window.logManager.phases.RESOURCE_DETECTION, 'OBSERVER', 'No se encontró contenedor de mensajes, reintentando más tarde');
       // Intentar más tarde
       setTimeout(() => this.setupObserver(), 2000);
       return;
     }
 
-    this.debugLog('Observer activado para nuevos mensajes.');
+    window.logManager.step(window.logManager.phases.RESOURCE_DETECTION, 'OBSERVER', 'Observer activado para nuevos mensajes');
 
     if (this.observer) return;
 
@@ -191,13 +202,19 @@ class AudioTranscriber {
       this.messageIdToTimestamp.set(messageId, timestamp || Date.now());
     }
 
+    // Registrar evento de clic en audio con logManager
+    window.logManager.step(window.logManager.phases.RESOURCE_DETECTION, 'AUDIO_CLICK',
+      `Usuario hizo clic en audio, messageId: ${messageId}`, { messageId, timestamp });
+
     // Verificar si ya tiene URL asociada
     const cleanUrl = this.messageIdsToAudioUrls.get(messageId);
     if (cleanUrl) {
       // Ya tenemos la URL asociada, mostrar transcripción si está disponible
       if (this.completedTranscriptions.has(cleanUrl)) {
         const transcription = this.completedTranscriptions.get(cleanUrl);
-        this.debugLog(`Transcripción recuperada de caché para ${messageId}: "${transcription.text}"`);
+        window.logManager.step(window.logManager.phases.TRANSCRIPTION, 'CACHE_HIT',
+          `Transcripción recuperada de caché para ${messageId}`,
+          { messageId, audioUrl: cleanUrl, text: transcription.text.substring(0, 50) });
 
         // Notificar a través del EventCoordinator
         if (window.eventCoordinator) {
@@ -212,7 +229,9 @@ class AudioTranscriber {
       // Guardar expectativa de audio para asociar con próxima URL detectada
       this.expectingAudioForMessageId = messageId;
       this.expectingAudioTimestamp = Date.now();
-      this.debugLog(`Esperando detección de audio para mensaje ${messageId}`);
+
+      window.logManager.step(window.logManager.phases.ASSOCIATION, 'EXPECTING',
+        `Esperando detección de audio para mensaje ${messageId}`);
 
       // Forzar un chequeo inmediato
       this.checkForAudioResources();
@@ -264,18 +283,18 @@ class AudioTranscriber {
   }
 
   /**
- * Extrae timestamp de una URL de audio
- * @param {string} url - URL del audio
- * @returns {number|null} Timestamp extraído o null
- */
+   * Extrae timestamp de una URL de audio
+   * @param {string} url - URL del audio
+   * @returns {number|null} Timestamp extraído o null
+   */
   extractTimestampFromAudioUrl(url) {
-    if (!url) return null;
+    if (!url || typeof url !== 'string') return null;
 
     // Patrón para audioclip-TIMESTAMP-XXXX.mp4
     const match = url.match(/audioclip-(\d+)/);
     if (match && match[1]) {
       const timestamp = parseInt(match[1], 10);
-      if (!isNaN(timestamp)) {
+      if (!isNaN(timestamp) && timestamp > 0) {
         return timestamp;
       }
     }
@@ -311,6 +330,15 @@ class AudioTranscriber {
       newAudiosFound++;
       newAudioUrls.push(audioUrl);
 
+      // Recolectar datos para análisis posterior
+      window.logManager.collect('audios', {
+        url: audioUrl,
+        urlTimestamp: this.extractTimestampFromAudioUrl(audioUrl),
+        detectionSource: 'DOM',
+        messageId: messageId,
+        timestamp: Date.now()
+      });
+
       // Procesar inmediatamente
       if (!this.pendingTranscriptions.has(audioUrl) &&
         !this.completedTranscriptions.has(audioUrl)) {
@@ -327,12 +355,25 @@ class AudioTranscriber {
       newAudiosFound++;
       newAudioUrls.push(audioUrl);
 
+      // Recolectar datos para análisis
+      window.logManager.collect('audios', {
+        url: audioUrl,
+        urlTimestamp: this.extractTimestampFromAudioUrl(audioUrl),
+        detectionSource: 'PerformanceAPI',
+        timestamp: Date.now()
+      });
+
       let messageIdToUse = null;
       if (this.expectingAudioForMessageId &&
         (Date.now() - this.expectingAudioTimestamp) < this.CLICK_ASSOCIATION_WINDOW_MS) {
         messageIdToUse = this.expectingAudioForMessageId;
         this.audioUrlsToMessages.set(cleanUrl, messageIdToUse);
         this.messageIdsToAudioUrls.set(messageIdToUse, cleanUrl);
+
+        window.logManager.step(window.logManager.phases.ASSOCIATION, 'AUTO_ASSIGN',
+          `Asociando audio recién detectado con mensaje esperando: ${messageIdToUse}`,
+          { audioUrl: cleanUrl, messageId: messageIdToUse });
+
         this.expectingAudioForMessageId = null;
         this.expectingAudioTimestamp = 0;
       }
@@ -345,12 +386,9 @@ class AudioTranscriber {
 
     // Sólo logueamos si hay nuevos audios
     if (newAudiosFound > 0) {
-      this.debugLog(
-        `Se encontraron ${newAudiosFound} nuevo(s) audio(s) ` +
-        `(DOM: ${domAudioCount}, PerfAPI: ${perfAudioCount})`
-      );
-      this.debugLog(`URLs: ${newAudioUrls.join(', ')}`);
-      logger.debug(`AudioTranscriber: Found ${newAudiosFound} new audio resources`);
+      window.logManager.phase(window.logManager.phases.RESOURCE_DETECTION,
+        `Se encontraron ${newAudiosFound} nuevo(s) audio(s) (DOM: ${domAudioCount}, PerfAPI: ${perfAudioCount})`,
+        { newUrls: newAudioUrls });
 
       if (window.eventCoordinator) {
         window.eventCoordinator.emit('audioResourcesFound', {
@@ -424,7 +462,8 @@ class AudioTranscriber {
     const cleanUrl = audioUrl.split('?')[0];
 
     if (this.pendingTranscriptions.has(cleanUrl) || this.completedTranscriptions.has(cleanUrl)) {
-      this.debugLog(`Audio ${cleanUrl} ya está siendo procesado o completado`);
+      window.logManager.step(window.logManager.phases.TRANSCRIPTION, 'SKIP',
+        `Audio ${cleanUrl} ya está siendo procesado o completado`);
       return this.getTranscription(cleanUrl);
     }
 
@@ -435,67 +474,101 @@ class AudioTranscriber {
       messageId
     });
 
-    this.debugLog(`Procesando URL de audio: ${audioUrl}${messageId ? ` (asociado a ${messageId})` : ''}`);
+    // --- Array para coleccionar logs estructurados de este audio ---
+    const audioLogArray = [];
+
+    // 1. Log de inicio
+    window.logManager.phase(
+      window.logManager.phases.TRANSCRIPTION,
+      `Iniciando transcripción: ${audioUrl.substring(0, 50)}...${messageId ? ` (asociado a ${messageId})` : ''}`,
+      { url: audioUrl, messageId }
+    );
+    audioLogArray.push({ event: 'START', url: audioUrl, messageId, timestamp: Date.now() });
 
     try {
-      // Obtener blob de audio USANDO LA URL COMPLETA
-      const audioBlob = await this.getAudioBlob(audioUrl); // Pasamos la URL completa
-      if (!audioBlob) {
-        throw new Error('Failed to obtain audio blob');
-      }
+      // 2. Descarga
+      window.logManager.step(window.logManager.phases.TRANSCRIPTION, 'DOWNLOAD', 'Descargando audio');
+      audioLogArray.push({ event: 'DOWNLOAD_START', timestamp: Date.now() });
 
-      // Transcribir usando ApiClient si está disponible, o nuestro método
+      const audioBlob = await this.getAudioBlob(audioUrl);
+      if (!audioBlob) throw new Error('Failed to obtain audio blob');
+
+      const sizeKB = Math.round(audioBlob.size / 1024);
+      window.logManager.step(
+        window.logManager.phases.TRANSCRIPTION,
+        'DOWNLOAD_COMPLETE',
+        `Audio descargado: ${sizeKB} KB`
+      );
+      audioLogArray.push({ event: 'DOWNLOAD_COMPLETE', sizeKB, timestamp: Date.now() });
+
+      // 3. Llamada a la API
+      window.logManager.step(window.logManager.phases.TRANSCRIPTION, 'API_CALL', 'Enviando audio a API');
+      audioLogArray.push({ event: 'API_CALL', timestamp: Date.now() });
+
       let transcription;
       if (window.apiClient && typeof window.apiClient.transcribeAudio === 'function') {
-        // Usar ApiClient para transcribir (método preferido)
         transcription = await window.apiClient.transcribeAudio(audioBlob);
       } else {
-        // Fallback a nuestro método de transcripción
         transcription = await this.transcribeAudio(audioBlob);
       }
+      if (!transcription) throw new Error('Transcription failed or returned empty');
 
-      if (!transcription) {
-        throw new Error('Transcription failed or returned empty');
-      }
+      audioLogArray.push({
+        event: 'API_RESPONSE',
+        textSnippet: transcription.substring(0, 50),
+        timestamp: Date.now()
+      });
 
-      // Actualizar a completado
+      // 4. Marcar completado y almacenar
       const currentEntry = this.pendingTranscriptions.get(cleanUrl);
       this.pendingTranscriptions.delete(cleanUrl);
 
-      // Guardar en caché con messageId si existe
       this.completedTranscriptions.set(cleanUrl, {
         text: transcription,
         timestamp: Date.now(),
         messageId: currentEntry?.messageId || messageId
       });
 
-      // Actualizar asociaciones si hay messageId
-      const associatedMessageId = currentEntry?.messageId || messageId;
-      if (associatedMessageId) {
-        this.audioUrlsToMessages.set(cleanUrl, associatedMessageId);
-        this.messageIdsToAudioUrls.set(associatedMessageId, cleanUrl);
-      }
+      audioLogArray.push({
+        event: 'COMPLETE',
+        cleanUrl,
+        messageId: currentEntry?.messageId || messageId,
+        timestamp: Date.now()
+      });
 
-      // Guardar en localStorage
+      // Asociaciones y cache
+      if (currentEntry?.messageId || messageId) {
+        const assocId = currentEntry?.messageId || messageId;
+        this.audioUrlsToMessages.set(cleanUrl, assocId);
+        this.messageIdsToAudioUrls.set(assocId, cleanUrl);
+      }
       this.saveCache();
 
-      // Emitir evento de transcripción completada
       if (window.eventCoordinator) {
         window.eventCoordinator.emit('audioTranscribed', {
           audioUrl: cleanUrl,
-          messageId: associatedMessageId,
+          messageId: currentEntry?.messageId || messageId,
           transcription
         });
       }
 
-      this.debugLog(`Transcripción completada para ${cleanUrl}: "${transcription}"`);
+      // 5. Emitir un solo log estructurado con todo el array
+      window.logManager.phase(
+        window.logManager.phases.TRANSCRIPTION,
+        'STRUCTURED_LOGS',
+        'Historial estructurado de logs de transcripción',
+        audioLogArray
+      );
+
       return transcription;
 
     } catch (error) {
-      this.debugLog(`Error al procesar audio ${audioUrl}: ${error.message}`);
-      logger.error('Failed to transcribe audio', { audioUrl }, error);
-
-      // Marcar como error
+      window.logManager.phase(
+        window.logManager.phases.TRANSCRIPTION,
+        'ERROR',
+        `Error al transcribir audio: ${error.message}`,
+        { url: audioUrl, error }
+      );
       this.pendingTranscriptions.delete(cleanUrl);
       return null;
     }
@@ -890,22 +963,22 @@ class AudioTranscriber {
     // Determinar formato de entrada y extraer datos adecuadamente
     if (Array.isArray(messageData)) {
       messages = messageData;
-      if (window.logger) window.logger.process('ASSOCIATION', `Procesando array directo con ${messages.length} mensajes`);
-      else this.debugLog(`Recibido messageData como array con ${messages.length} mensajes`);
+      window.logManager.phase(window.logManager.phases.ASSOCIATION, 
+        `Procesando array directo con ${messages.length} mensajes`);
     } else if (messageData && messageData.messages) {
       messages = messageData.messages;
       timeBlocks = messageData.timeBlocks || [];
-      if (window.logger) window.logger.process('ASSOCIATION', `Procesando objeto con ${messages.length} mensajes y ${timeBlocks.length} bloques temporales`);
-      else this.debugLog(`Recibido messageData con ${messages?.length || 0} mensajes y ${timeBlocks?.length || 0} bloques temporales`);
+      window.logManager.phase(window.logManager.phases.ASSOCIATION, 
+        `Procesando objeto con ${messages.length} mensajes y ${timeBlocks.length} bloques temporales`);
     } else {
-      if (window.logger) window.logger.error('Formato de messageData no reconocido', messageData);
-      else this.debugLog("[ERROR] Formato de messageData no reconocido");
+      window.logManager.phase(window.logManager.phases.ASSOCIATION, 'ERROR', 
+        'Formato de messageData no reconocido', messageData);
       return { assigned: 0, remaining: 0 };
     }
 
     if (!messages || !Array.isArray(messages)) {
-      if (window.logger) window.logger.error('Array de mensajes inválido', messageData);
-      else this.debugLog("[ERROR] Array de mensajes inválido proporcionado");
+      window.logManager.phase(window.logManager.phases.ASSOCIATION, 'ERROR',
+        'Array de mensajes inválido', messageData);
       return { assigned: 0, remaining: 0 };
     }
 
@@ -920,16 +993,16 @@ class AudioTranscriber {
     );
 
     if (messagesToAssign.length === 0) {
-      if (window.logger) window.logger.process('ASSOCIATION', "No hay mensajes que necesiten transcripción");
-      else this.debugLog("No hay mensajes que necesiten transcripción");
+      window.logManager.phase(window.logManager.phases.ASSOCIATION,
+        "No hay mensajes que necesiten transcripción");
       return { assigned: 0, remaining: 0 };
     }
 
     // NUEVO: Esperar brevemente para permitir que las transcripciones pendientes se completen
     const pendingCount = this.pendingTranscriptions.size;
     if (pendingCount > 0) {
-      if (window.logger) window.logger.process('ASSOCIATION', `Esperando a que terminen ${pendingCount} transcripciones pendientes...`);
-      else this.debugLog(`Esperando a que terminen ${pendingCount} transcripciones pendientes...`);
+      window.logManager.step(window.logManager.phases.ASSOCIATION, 'WAIT',
+        `Esperando a que terminen ${pendingCount} transcripciones pendientes...`);
 
       // Esperar hasta 5 segundos para que las transcripciones pendientes se completen
       const startTime = Date.now();
@@ -940,11 +1013,11 @@ class AudioTranscriber {
       }
 
       if (this.pendingTranscriptions.size > 0) {
-        if (window.logger) window.logger.process('ASSOCIATION', `Después de esperar, aún quedan ${this.pendingTranscriptions.size} transcripciones pendientes`);
-        else this.debugLog(`Después de esperar, aún quedan ${this.pendingTranscriptions.size} transcripciones pendientes`);
+        window.logManager.step(window.logManager.phases.ASSOCIATION, 'WAIT_INCOMPLETE',
+          `Después de esperar, aún quedan ${this.pendingTranscriptions.size} transcripciones pendientes`);
       } else {
-        if (window.logger) window.logger.process('ASSOCIATION', `Todas las transcripciones pendientes completadas`);
-        else this.debugLog(`Todas las transcripciones pendientes completadas`);
+        window.logManager.step(window.logManager.phases.ASSOCIATION, 'WAIT_COMPLETE',
+          `Todas las transcripciones pendientes completadas`);
       }
     }
 
@@ -959,8 +1032,8 @@ class AudioTranscriber {
       }));
 
     if (unassignedTranscriptions.length === 0) {
-      if (window.logger) window.logger.process('ASSOCIATION', "No hay transcripciones disponibles para asignar");
-      else this.debugLog("No hay transcripciones disponibles para asignar");
+      window.logManager.phase(window.logManager.phases.ASSOCIATION,
+        "No hay transcripciones disponibles para asignar");
       return { assigned: 0, remaining: messagesToAssign.length };
     }
 
@@ -1078,19 +1151,31 @@ class AudioTranscriber {
       } else {
         this.debugLog(`Asociado: Mensaje ${message.id} con transcripción "${transcriptionData.text.substring(0, 30)}..."`);
       }
-    }
 
-    // NUEVO: Generar reporte detallado de la asociación
-    this._generateAssociationReport(messages);
+      // Recolectar datos adicionales para análisis en formato estructurado
+      window.logManager.collect('associations', {
+        messageId: message.id,
+        text: transcriptionData.text.substring(0, 100),
+        urlTimestamp: transcriptionData.urlTimestamp,
+        messageTimestamp: message._extractedTimestamp,
+        correlationIndex: i,
+        associationType: 'timestamp-fifo'
+      });
+    }
 
     // Guardar caché actualizada
     this.saveCache();
 
     // Mostrar resultado
-    if (window.logger) {
-      window.logger.process('ASSOCIATION', `Asociación completada: ${assignedCount} de ${messagesToAssign.length} mensajes asociados`);
-    } else {
-      this.debugLog(`Asociación completada: ${assignedCount} de ${messagesToAssign.length} mensajes asociados`);
+    window.logManager.phase(window.logManager.phases.ASSOCIATION,
+      `Asociación completada: ${assignedCount} de ${messagesToAssign.length} mensajes asociados`);
+
+    // Mostrar datos recolectados de forma estructurada pero con protección contra errores
+    try {
+      window.logManager.showCollected('associations', true);
+    } catch (error) {
+      window.logManager.phase(window.logManager.phases.ASSOCIATION, 'WARN',
+        `Error mostrando datos de asociaciones: ${error.message}`);
     }
 
     return {
@@ -1120,40 +1205,6 @@ class AudioTranscriber {
   }
 
   /**
-   * Genera un informe detallado de la asociación de transcripciones
-   * @param {Array} messages - Mensajes procesados
-   * @private
-   */
-  _generateAssociationReport(messages) {
-    console.log('==================== ARRAY COMPLETO DESPUÉS DE ASOCIACIÓN FIFO ====================');
-    console.log('[AudioTranscriber] [DEBUG] Array completo después de FIFO:', JSON.parse(JSON.stringify(messages)));
-
-    // Filtrar y mostrar solo los mensajes con audio
-    const audioMessages = messages.filter(msg => msg.content?.hasAudio);
-    console.log(`[AudioTranscriber] [REPORT] Mensajes con audio: ${audioMessages.length}`);
-
-    audioMessages.forEach((msg, idx) => {
-      console.log(`[AudioTranscriber] [REPORT] #${idx + 1} ID=${msg.id}`);
-      console.log(`  - Tipo: ${msg.content.type || 'unknown'}`);
-      console.log(`  - Transcripción: ${msg.content.transcribedAudio || 'No disponible'}`);
-
-      // Mostrar datos adicionales relevantes
-      if (msg.content.audioUrl) {
-        console.log(`  - URL: ${msg.content.audioUrl}`);
-        const urlTimestamp = this.extractTimestampFromAudioUrl(msg.content.audioUrl);
-        if (urlTimestamp) {
-          console.log(`  - Timestamp de URL: ${new Date(urlTimestamp).toISOString()}`);
-        }
-      }
-
-      if (msg.content.audioMarkerId) {
-        console.log(`  - Marker: ${msg.content.audioMarkerId}`);
-      }
-    });
-    console.log('=================================================================================');
-  }
-
-  /**
    * Limpia el estado de transcripciones para un nuevo chat
    * @param {string} chatId - ID del chat actual
    */
@@ -1175,7 +1226,7 @@ class AudioTranscriber {
    */
   debugLog(message) {
     if (this.DEBUG_MODE) {
-      console.log(`[AudioTranscriber][DEBUG] ${message}`);
+      window.logManager.step('GENERAL', 'DEBUG', message);
     }
   }
 }

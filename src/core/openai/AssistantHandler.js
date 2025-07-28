@@ -28,7 +28,11 @@ class AssistantHandler {
     try {
       // Check required dependencies
       if (!window.apiClient || !window.threadStore || !window.messagePreprocessor) {
-        logger.error('Missing required dependencies for AssistantHandler');
+        if (window.logManager) {
+          window.logManager.phase('INITIALIZATION', 'ERROR', 'Dependencias requeridas no disponibles para AssistantHandler');
+        } else {
+          logger.error('Missing required dependencies for AssistantHandler');
+        }
         return false;
       }
 
@@ -39,10 +43,19 @@ class AssistantHandler {
       }
 
       this.initialized = true;
-      console.log('AssistantHandler initialized successfully');
+      if (window.logManager) {
+        window.logManager.phase(window.logManager.phases.INITIALIZATION, 'AssistantHandler inicializado correctamente');
+      } else {
+        console.log('AssistantHandler initialized successfully');
+      }
       return true;
     } catch (error) {
-      logger.error('Failed to initialize AssistantHandler', {}, error);
+      if (window.logManager) {
+        window.logManager.phase(window.logManager.phases.INITIALIZATION, 'ERROR', 
+          `Fallo al inicializar AssistantHandler: ${error.message}`, error);
+      } else {
+        logger.error('Failed to initialize AssistantHandler', {}, error);
+      }
       return false;
     }
   }
@@ -67,12 +80,22 @@ class AssistantHandler {
 
     // Validate and set default chatRole if needed
     if (chatRole !== 'seller' && chatRole !== 'buyer') {
-      logger.warn(`Invalid chat role: ${chatRole}, defaulting to seller`);
+      if (window.logManager) {
+        window.logManager.step(window.logManager.phases.GENERATION, 'VALIDATE', 
+          `Rol inválido: ${chatRole}, usando seller por defecto`);
+      } else {
+        logger.warn(`Invalid chat role: ${chatRole}, defaulting to seller`);
+      }
       chatRole = 'seller';
     }
 
-    console.log(`Generating response for thread ${fbThreadId} as ${chatRole}`);
-    console.log(`[AssistantHandler] Step 4.1: Generating response for thread ${fbThreadId} as ${chatRole}`);
+    if (window.logManager) {
+      window.logManager.phase(window.logManager.phases.GENERATION, 
+        `Generando respuesta para conversación ${fbThreadId} como ${chatRole}`);
+    } else {
+      console.log(`Generating response for thread ${fbThreadId} as ${chatRole}`);
+      console.log(`[AssistantHandler] Step 4.1: Generating response for thread ${fbThreadId} as ${chatRole}`);
+    }
 
     try {
       // Primero asegurar que ThreadStore está inicializado
@@ -86,12 +109,22 @@ class AssistantHandler {
 
       // Choose appropriate flow
       if (!threadInfo) {
+        if (window.logManager) {
+          window.logManager.step('GENERATION', 'FLOW', 'Flujo de nuevo hilo seleccionado');
+        }
         return await this.handleNewThread(fbThreadId, allMessages, chatRole, productData);
       } else {
+        if (window.logManager) {
+          window.logManager.step('GENERATION', 'FLOW', 'Flujo de hilo existente seleccionado');
+        }
         return await this.handleExistingThread(fbThreadId, allMessages, chatRole, threadInfo);
       }
     } catch (error) {
-      logger.error(`Error generating response: ${error.message}`, {}, error);
+      if (window.logManager) {
+        window.logManager.phase('GENERATION', 'ERROR', `Error generando respuesta: ${error.message}`, error);
+      } else {
+        logger.error(`Error generating response: ${error.message}`, {}, error);
+      }
       throw error;
     }
   }
@@ -108,20 +141,39 @@ class AssistantHandler {
    * @private
    */
   async handleNewThread(fbThreadId, allMessages, chatRole, productData) {
-    console.log(`[AssistantHandler][DEBUG] handleNewThread - fbThreadId: ${fbThreadId}, messages: ${allMessages.length}, role: ${chatRole}`);
+    if (window.logManager) {
+      window.logManager.step('GENERATION', 'NEW_THREAD', 
+        `Procesando nuevo hilo - fbThreadId: ${fbThreadId}, mensajes: ${allMessages.length}, rol: ${chatRole}`);
+    } else {
+      console.log(`[AssistantHandler][DEBUG] handleNewThread - fbThreadId: ${fbThreadId}, messages: ${allMessages.length}, role: ${chatRole}`);
+    }
 
     // --- LÓGICA DE SEGUIMIENTO PARA NUEVOS HILOS ---
     const lastMessage = allMessages.length > 0 ? allMessages[allMessages.length - 1] : null;
     let isFollowUpRequest = false;
 
     if (lastMessage && lastMessage.sentByUs) {
-      console.log('[AssistantHandler] Detectada solicitud de seguimiento manual en un hilo nuevo.');
+      if (window.logManager) {
+        window.logManager.step('GENERATION', 'FOLLOW_UP', 'Detectada solicitud de seguimiento manual en hilo nuevo');
+      } else {
+        console.log('[AssistantHandler] Detectada solicitud de seguimiento manual en un hilo nuevo.');
+      }
+      
       if (!this._canPerformFollowUp(allMessages)) {
-        console.warn('[AssistantHandler] Límite de seguimiento alcanzado para este nuevo hilo. No se creará el hilo para evitar spam.');
+        if (window.logManager) {
+          window.logManager.step('GENERATION', 'FOLLOW_UP', 'Límite de seguimiento alcanzado. No se creará hilo para evitar spam.');
+        } else {
+          console.warn('[AssistantHandler] Límite de seguimiento alcanzado para este nuevo hilo. No se creará el hilo para evitar spam.');
+        }
         alert('Max follow-ups reached (3). The other user must respond to continue.');
         return ''; // Detener ejecución
       }
-      console.log('[AssistantHandler] Verificación de seguimiento pasada. Se añadirá instrucción de seguimiento.');
+      
+      if (window.logManager) {
+        window.logManager.step('GENERATION', 'FOLLOW_UP', 'Verificación de seguimiento pasada. Añadiendo instrucción de seguimiento');
+      } else {
+        console.log('[AssistantHandler] Verificación de seguimiento pasada. Se añadirá instrucción de seguimiento.');
+      }
       isFollowUpRequest = true;
     }
     // --- FIN DE LA LÓGICA DE SEGUIMIENTO ---

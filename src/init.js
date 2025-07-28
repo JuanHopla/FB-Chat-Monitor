@@ -9,7 +9,12 @@ function initialize() {
   }
   window.initializationInProgress = true;
 
-  logger.log('Initializing FB Chat Monitor');
+  // Usar LogManager para el registro de inicialización
+  if (window.logManager) {
+    window.logManager.phase('INITIALIZATION', 'Inicializando FB Chat Monitor');
+  } else {
+    logger.log('Inicializando FB Chat Monitor');
+  }
 
   // Create interface - USE THE FUNCTION FROM THE UI MODULE INSTEAD OF THE LOCAL FUNCTION
   // createFloatingButton(); <- THIS LINE IS THE PROBLEM
@@ -20,7 +25,11 @@ function initialize() {
   if (savedKey) {
     CONFIG.AI.apiKey = savedKey;
     CONFIG.AI.enabled = true;
-    logger.log('API Key loaded from localStorage in init');
+    if (window.logManager) {
+      window.logManager.step('INITIALIZATION', 'CONFIG', 'API Key cargada desde localStorage');
+    } else {
+      logger.log('API Key loaded from localStorage in init');
+    }
   }
 
   // Load preferences
@@ -30,27 +39,52 @@ function initialize() {
   // Check API Key
   if (CONFIG.AI.apiKey) {
     CONFIG.AI.enabled = true;
-    logger.log('API key loaded from localStorage');
+    if (window.logManager) {
+      window.logManager.step('INITIALIZATION', 'CONFIG', 'API key disponible - AI habilitada');
+    } else {
+      logger.log('API key loaded from localStorage');
+    }
+    
     // Re-initialize OpenAI Manager
     if (window.openAIManager) {
       // Ensure openAIManager is loaded
       const ok = openAIManager.initialize(CONFIG.AI.apiKey, CONFIG.AI.model);
-      logger.log(`OpenAI Manager auto-initialized: ${ok}`);
+      if (window.logManager) {
+        window.logManager.step('INITIALIZATION', 'OPENAI', `OpenAI Manager inicializado: ${ok ? 'OK' : 'ERROR'}`);
+      } else {
+        logger.log(`OpenAI Manager auto-initialized: ${ok}`);
+      }
     } else {
-      logger.error('openAIManager not available for auto-initialization.');
+      if (window.logManager) {
+        window.logManager.step('INITIALIZATION', 'ERROR', 'openAIManager no disponible para auto-inicialización');
+      } else {
+        logger.error('openAIManager not available for auto-initialization.');
+      }
     }
   }
 
   // Check if OpenAI is available
   if (window.openaiManager) {
-    logger.log('OpenAI Manager is available to generate responses');
+    if (window.logManager) {
+      window.logManager.step('INITIALIZATION', 'VERIFY', 'OpenAI Manager disponible para generar respuestas');
+    } else {
+      logger.log('OpenAI Manager is available to generate responses');
+    }
   } else {
-    logger.warn('OpenAI Manager is not available. Some functions may not be operational.');
+    if (window.logManager) {
+      window.logManager.step('INITIALIZATION', 'WARNING', 'OpenAI Manager no disponible. Algunas funciones no estarán operativas.');
+    } else {
+      logger.warn('OpenAI Manager is not available. Some functions may not be operational.');
+    }
   }
 
   // If there is also an AssistantManager, verify
   if (window.assistantManager) {
-    logger.log('Assistant Manager is available to generate responses');
+    if (window.logManager) {
+      window.logManager.step('INITIALIZATION', 'VERIFY', 'Assistant Manager disponible para generar respuestas');
+    } else {
+      logger.log('Assistant Manager is available to generate responses');
+    }
   }
 
   // Welcome message
@@ -58,7 +92,12 @@ function initialize() {
   try {
     // Check if we are on the correct page before starting monitoring
     if (window.location.href.includes('/marketplace/')) {
-      logger.log('We are in Marketplace, starting monitoring...');
+      if (window.logManager) {
+        window.logManager.phase('INITIALIZATION', 'Estamos en Marketplace, iniciando monitoreo...');
+      } else {
+        logger.log('We are in Marketplace, starting monitoring...');
+      }
+      
       // Start monitoring with a slight delay to ensure the page is loaded
       setTimeout(() => {
         if (window.FBChatMonitor && typeof window.FBChatMonitor.manualScan === 'function') {
@@ -68,7 +107,12 @@ function initialize() {
         }
       }, 2500);
     } else {
-      logger.log('We are not in Marketplace, trying redirection...');
+      if (window.logManager) {
+        window.logManager.phase('INITIALIZATION', 'No estamos en Marketplace, intentando redirección...');
+      } else {
+        logger.log('We are not in Marketplace, trying redirection...');
+      }
+      
       // If not in Marketplace, try redirecting
       if (window.pageUtils && window.pageUtils.redirectToMarketplace) {
         window.pageUtils.redirectToMarketplace();
@@ -77,7 +121,11 @@ function initialize() {
       }
     }
   } catch (error) {
-    logger.error(`Error in initialization: ${error.message}`);
+    if (window.logManager) {
+      window.logManager.phase('INITIALIZATION', `Error en la inicialización: ${error.message}`, error);
+    } else {
+      logger.error(`Error in initialization: ${error.message}`);
+    }
   } finally {
     window.initializationInProgress = false;
   }
@@ -91,11 +139,25 @@ async function initializeServices() {
 
   // Initialize audio transcriber service - Add this
   if (CONFIG.audioTranscription.enabled) {
-    logger.debug('Initializing audio transcription service...');
-    if (!window.audioTranscriber) {
-      logger.error('Audio transcriber not loaded. Transcription services will be unavailable.');
+    if (window.logManager) {
+      window.logManager.phase('INITIALIZATION', 'Inicializando servicio de transcripción de audio...');
     } else {
-      logger.debug('Audio transcription service ready');
+      logger.debug('Initializing audio transcription service...');
+    }
+    
+    if (!window.audioTranscriber) {
+      if (window.logManager) {
+        window.logManager.phase('INITIALIZATION', 'ERROR', 'Audio transcriber no cargado. Servicios de transcripción no estarán disponibles.');
+      } else {
+        logger.error('Audio transcriber not loaded. Transcription services will be unavailable.');
+      }
+    } else {
+      if (window.logManager) {
+        window.logManager.phase('INITIALIZATION', 'Servicio de transcripción de audio listo');
+      } else {
+        logger.debug('Audio transcription service ready');
+      }
+      
       // Start polling for audio resources early
       window.audioTranscriber.checkForAudioResources();
     }

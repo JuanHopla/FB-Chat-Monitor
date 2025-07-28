@@ -137,11 +137,6 @@ class OpenAIManager {
       messagesArray = await window.messagePreprocessor.attachTranscriptions(messagesArray);
     }
 
-    // NUEVO: Log del array completo sin filtrar
-    console.log('==================== ARRAY COMPLETO DE MENSAJES CON TRANSCRIPCIONES ====================');
-    console.log('[OpenAIManager] Array completo con transcripciones:', JSON.parse(JSON.stringify(messagesArray)));
-    console.log('=================================================================================');
-
     // Logs originales
     console.log('[OpenAIManager] Step 3.1: Received context for response generation:', {
       ...context,

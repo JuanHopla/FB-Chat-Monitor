@@ -355,7 +355,6 @@ class MessagePreprocessor {
         await window.audioTranscriber.associateTranscriptionsWithMessagesFIFO(messages);
       }
 
-      // El resto del código se mantiene igual...
       return messages;
     } catch (error) {
       console.error("[MessagePreprocessor][ERROR] Error al asociar transcripciones:", error);
@@ -394,8 +393,6 @@ class MessagePreprocessor {
       return null;
     }
     const content = [];
-
-    // --- INICIO DE LA CORRECCIÓN ---
 
     // 1. Obtener el resumen textual del producto primero.
     let summary = '';
@@ -439,8 +436,6 @@ class MessagePreprocessor {
         }
       });
     }
-
-    // --- FIN DE LA CORRECCIÓN ---
 
     return {
       role: "user",
@@ -669,41 +664,6 @@ class MessagePreprocessor {
       role: role,
       content: contentParts,
     };
-  }
-
-  /**
-   * Groups consecutive messages by the same sender
-   * @param {Array} messages - Messages to group
-   * @returns {Array<Array>} Grouped messages
-   * @private
-   */
-  groupMessagesByRole(messages) {
-    if (!messages || messages.length === 0) return [];
-
-    const groups = [];
-    let currentGroup = [messages[0]];
-
-    for (let i = 1; i < messages.length; i++) {
-      const current = messages[i];
-      const previous = messages[i - 1];
-
-      // If same sender, add to current group
-      if (current.sentByUs === previous.sentByUs) {
-        currentGroup.push(current);
-      }
-      // Otherwise start a new group
-      else {
-        groups.push(currentGroup);
-        currentGroup = [current];
-      }
-    }
-
-    // Add the last group
-    if (currentGroup.length > 0) {
-      groups.push(currentGroup);
-    }
-
-    return groups;
   }
 
   /**

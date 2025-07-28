@@ -26,6 +26,26 @@ Object.assign(CONFIG, {
     }
   },
 
+  // Logging configuration
+  logging: {
+    consoleOutput: true,
+    fileOutput: false,
+    level: 'normal', // 'minimal', 'normal', 'detailed', 'debug'
+    showTimestamps: true,
+    saveLogs: true, // Si se deben guardar los logs en localStorage
+    maxEntries: 1000 // Máximo número de entradas de log a mantener
+  },
+
+  // Audio transcription settings
+  audioTranscription: {
+    enabled: true,
+    model: 'whisper-1',
+    language: 'es',
+    cacheResults: true,
+    maxCacheSize: 100, // Número máximo de transcripciones en caché
+    autoTranscribe: true // Si se deben transcribir automáticamente los audios detectados
+  },
+
   autoResponseDelay: 5000,
   simulateHumanTyping: true,
   autoSendMessages: true,

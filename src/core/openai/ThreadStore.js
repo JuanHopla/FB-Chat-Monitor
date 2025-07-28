@@ -51,7 +51,7 @@ class ThreadStore {
     
     // Si se solicita forzar recarga o el store no está inicializado, cargar desde storage
     if (forceReload || !this.initialized) {
-      console.log(`[ThreadStore][DEBUG] ${forceReload ? 'Forzando recarga' : 'Store no inicializado'}, cargando desde storage`);
+      //console.log(`[ThreadStore][DEBUG] ${forceReload ? 'Forzando recarga' : 'Store no inicializado'}, cargando desde storage`);
       this.loadThreads();
     }
     

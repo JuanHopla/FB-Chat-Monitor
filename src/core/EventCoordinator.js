@@ -61,7 +61,7 @@ class EventCoordinator {
     
     // Log de depuración
     if (this.debug) {
-      console.log(`[EventCoordinator] Evento emitido: ${eventName}`, data);
+      //console.log(`[EventCoordinator] Evento emitido: ${eventName}`, data);
     }
     
     // Notificar a los listeners
