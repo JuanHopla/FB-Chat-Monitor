@@ -441,7 +441,7 @@ class AudioTranscriber {
     // NUEVO: Excluir explícitamente URLs que parecen ser de video
     const videoPattern = /\/t42\.3356-2\/|\/video-\d+|\/video_redirect/i;
     if (videoPattern.test(url)) {
-      this.debugLog(`URL detectada como video, ignorando: ${url}`);
+      //this.debugLog(`URL detectada como video, ignorando: ${url}`);
       return false;
     }
 

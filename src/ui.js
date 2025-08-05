@@ -808,12 +808,18 @@ function createConfigContent() {
           <small style="display:block; margin-top:5px; color:#666;">How often to check for new messages</small>
         </div>
 
+        <!-- REEMPLAZO: Sección de calidad de imagen en lugar de simulación humana -->
         <div class="fb-chat-monitor-form-group">
-          <h4 style="margin-top: 20px; margin-bottom: 10px;">Human Simulation</h4>
-
-          <label for="fb-chat-monitor-typing-speed">Typing speed (characters per second)</label>
-          <input type="number" id="fb-chat-monitor-typing-speed" min="1" max="20" value="${CONFIG.AI?.humanSimulation?.baseTypingSpeed || 5}">
-          <small style="display:block; margin-top:5px; color:#666;">Higher values = faster typing</small>
+          <h4 style="margin-top: 20px; margin-bottom: 10px;">Image Quality Settings</h4>
+          <div id="fb-chat-monitor-image-quality-container">
+            <label for="fb-chat-monitor-image-quality">Image quality for OpenAI</label>
+            <select id="fb-chat-monitor-image-quality">
+              <option value="high" ${CONFIG.images?.quality === 'high' ? 'selected' : ''}>High Quality (Original Size)</option>
+              <option value="medium" ${CONFIG.images?.quality === 'medium' ? 'selected' : ''}>Medium Quality (800px)</option>
+              <option value="low" ${CONFIG.images?.quality === 'low' ? 'selected' : ''}>Low Quality (400px)</option>
+            </select>
+            <small style="display:block; margin-top:5px; color:#666;">Lower quality uses fewer tokens in OpenAI's API</small>
+          </div>
         </div>
 
         <div>
@@ -1355,7 +1361,35 @@ function saveConfig() {
   }
 
   try {
-    // Only save options that still exist
+    // Guardar configuración de intervalos de escaneo
+    const scanInterval = document.getElementById('fb-chat-monitor-scan-interval');
+    if (scanInterval && scanInterval.value) {
+      const interval = parseInt(scanInterval.value, 10) * 1000;
+      if (!isNaN(interval) && interval >= 5000) {
+        window.CONFIG.scanInterval = interval;
+        GM_setValue('CONFIG_scanInterval', interval);
+      }
+    }
+
+    // NUEVO: Guardar la configuración de calidad de imagen
+    const imageQualitySelect = document.getElementById('fb-chat-monitor-image-quality');
+    if (imageQualitySelect) {
+      const quality = imageQualitySelect.value;
+      if (quality && ['high', 'medium', 'low'].includes(quality)) {
+        // Usamos la función específica de CONFIG para garantizar que se guarde correctamente
+        if (window.CONFIG.saveImageQuality) {
+          window.CONFIG.saveImageQuality(quality);
+        } else {
+          // Método alternativo si no existe la función específica
+          if (!window.CONFIG.images) window.CONFIG.images = {};
+          window.CONFIG.images.quality = quality;
+          GM_setValue('FB_CHAT_IMAGE_QUALITY', quality);
+          logger.log(`[Config] Image quality changed to: ${quality}`);
+        }
+      }
+    }
+
+    // Guardar el modo de operación
     GM_setValue('CONFIG_operationMode', window.CONFIG.operationMode || 'manual');
     GM_setValue('CONFIG_autoSendMessages', window.CONFIG.autoSendMessages || false);
 
@@ -1364,9 +1398,12 @@ function saveConfig() {
       GM_setValue('CONFIG_AI_apiKey', window.CONFIG.AI.apiKey);
     }
 
+    // Mostrar mensaje de confirmación
+    showSimpleAlert('Configuration saved successfully', 'success');
     logger.log('Configuration saved to persistent storage');
   } catch (error) {
     logger.error(`Error saving configuration: ${error.message}`);
+    showSimpleAlert('Error saving configuration', 'error');
   }
 }
 
@@ -1380,9 +1417,17 @@ function loadConfig() {
   }
 
   try {
-    // Only load options that still exist
+    // Cargar configuración anterior
     window.CONFIG.operationMode = GM_getValue('CONFIG_operationMode', 'manual');
     window.CONFIG.autoSendMessages = GM_getValue('CONFIG_autoSendMessages', false);
+    window.CONFIG.scanInterval = GM_getValue('CONFIG_scanInterval', 30000);
+
+    // NUEVO: Cargar configuración de calidad de imagen
+    const savedQuality = GM_getValue('FB_CHAT_IMAGE_QUALITY', 'high');
+    if (savedQuality && ['high', 'medium', 'low'].includes(savedQuality)) {
+      if (!window.CONFIG.images) window.CONFIG.images = {};
+      window.CONFIG.images.quality = savedQuality;
+    }
 
     // Load API key if it exists
     if (!window.CONFIG.AI) window.CONFIG.AI = {};
@@ -1390,7 +1435,7 @@ function loadConfig() {
 
     logger.log('Configuration loaded from persistent storage');
 
-    // Update UI with the loaded configuration
+    // Actualizar la UI con la configuración cargada
     updateUIWithLoadedConfig();
   } catch (error) {
     logger.error(`Error loading configuration: ${error.message}`);
@@ -1401,8 +1446,26 @@ function loadConfig() {
  * Updates the UI with the loaded configuration
  */
 function updateUIWithLoadedConfig() {
-  // Update operation mode in the UI
+  // Actualizar el modo de operación en la UI
   updateUIForConfigChange('operationMode', window.CONFIG.operationMode);
+
+  // Actualizar el intervalo de escaneo
+  const scanIntervalInput = document.getElementById('fb-chat-monitor-scan-interval');
+  if (scanIntervalInput && window.CONFIG.scanInterval) {
+    scanIntervalInput.value = Math.floor(window.CONFIG.scanInterval / 1000);
+  }
+
+  // NUEVO: Actualizar el selector de calidad de imagen
+  const imageQualitySelect = document.getElementById('fb-chat-monitor-image-quality');
+  if (imageQualitySelect && window.CONFIG.images && window.CONFIG.images.quality) {
+    const options = imageQualitySelect.options;
+    for (let i = 0; i < options.length; i++) {
+      if (options[i].value === window.CONFIG.images.quality) {
+        imageQualitySelect.selectedIndex = i;
+        break;
+      }
+    }
+  }
 }
 
 /**

@@ -26,6 +26,18 @@ Object.assign(CONFIG, {
     }
   },
 
+  images: {
+    quality: 'high',     // Valores posibles: 'high', 'medium', 'low'
+    sizes: {
+      medium: 800,       // Tamaño máximo para calidad media
+      low: 400           // Tamaño máximo para calidad baja
+    },
+    compression: {
+      medium: 0.8,       // Nivel de compresión JPEG para calidad media (0-1)
+      low: 0.6           // Nivel de compresión JPEG para calidad baja (0-1)
+    }
+  },
+
   // Logging configuration
   logging: {
     consoleOutput: true,
@@ -258,12 +270,28 @@ Object.assign(CONFIG, {
         }
       }
 
+      if (storage.FB_CHAT_IMAGE_QUALITY) {
+        this.images.quality = storage.FB_CHAT_IMAGE_QUALITY;
+      }
+
       if (typeof logger !== 'undefined') logger.log('Configuration loaded from storage');
       return this;
     } catch (error) {
       if (typeof logger !== 'undefined') logger.error(`Error loading configuration: ${error.message}`);
       return this;
     }
+  },
+
+  saveImageQuality(quality) {
+    if (!quality || !['high', 'medium', 'low'].includes(quality)) {
+      if (typeof logger !== 'undefined') logger.error('Invalid image quality value');
+      return false;
+    }
+    this.images.quality = quality;
+    this.threadSystem.newThreads.imageDetail = quality; // Mantener sincronizado por compatibilidad
+    this.saveToStorage('FB_CHAT_IMAGE_QUALITY', quality);
+    if (typeof logger !== 'undefined') logger.log(`Image quality changed to: ${quality}`);
+    return true;
   },
 
   // --- REFACTOR: Simplified saving logic ---
@@ -304,7 +332,7 @@ Object.assign(CONFIG, {
   // --- Storage utilities (sin cambios) ---
   getStorage() {
     const storage = {};
-    const keysToLoad = ['FB_CHAT_OPERATION_MODE', 'FB_CHAT_MODE', 'FB_CHAT_API_KEY', 'FB_CHAT_MODEL', 'FB_CHAT_ASSISTANTS'];
+    const keysToLoad = ['FB_CHAT_OPERATION_MODE', 'FB_CHAT_MODE', 'FB_CHAT_API_KEY', 'FB_CHAT_MODEL', 'FB_CHAT_ASSISTANTS', 'FB_CHAT_IMAGE_QUALITY'];
     if (typeof GM_getValue === 'function') {
       keysToLoad.forEach(key => {
         const value = GM_getValue(key);
@@ -342,13 +370,13 @@ Object.assign(CONFIG, {
       maxProductImages: 5,      // Maximum number of product images to include
       imageDetail: "high",      // Image quality: "high" or "low"
     },
-    
+
     // Configurations for existing threads
     existingThreads: {
       ignoreOlderThan: 24 * 60 * 60 * 1000, // 24h in milliseconds
       onlyNewConversations: false,          // If true, ignore old chats
     },
-    
+
     // General configurations for the thread system
     general: {
       threadTTL: 2 * 60 * 60 * 1000,       // Thread lifetime: 2 hours
@@ -363,26 +391,26 @@ Object.assign(CONFIG, {
 // but it reads from and writes to the new CONFIG.AI.apiKey.
 Object.defineProperties(CONFIG, {
   'apiKey': {
-    get: function() { return this.AI.apiKey; },
-    set: function(value) { this.AI.apiKey = value; },
+    get: function () { return this.AI.apiKey; },
+    set: function (value) { this.AI.apiKey = value; },
     enumerable: true,
     configurable: true
   },
   'model': {
-    get: function() { return this.AI.model; },
-    set: function(value) { this.AI.model = value; },
+    get: function () { return this.AI.model; },
+    set: function (value) { this.AI.model = value; },
     enumerable: true,
     configurable: true
   },
   'assistants': {
-    get: function() { return this.AI.assistants; },
-    set: function(value) { this.AI.assistants = value; },
+    get: function () { return this.AI.assistants; },
+    set: function (value) { this.AI.assistants = value; },
     enumerable: true,
     configurable: true
   },
   'modo': {
-    get: function() { return this.operationMode; },
-    set: function(value) { this.operationMode = value; },
+    get: function () { return this.operationMode; },
+    set: function (value) { this.operationMode = value; },
     enumerable: true,
     configurable: true
   }

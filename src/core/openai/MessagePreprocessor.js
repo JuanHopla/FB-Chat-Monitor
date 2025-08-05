@@ -384,11 +384,40 @@ class MessagePreprocessor {
   }
 
   /**
+ * Procesa imágenes para OpenAI, usando el proxy y la calidad configurada
+ * @param {Array} imageUrls - URLs de imágenes a procesar
+ * @returns {Promise<Array>} - URLs procesadas
+ * @private
+ */
+  async processImagesForOpenAI(imageUrls) {
+    try {
+      if (!imageUrls || !Array.isArray(imageUrls) || imageUrls.length === 0) {
+        return [];
+      }
+
+      // Obtener la calidad de imagen de la configuración
+      const imageQuality = window.CONFIG?.images?.quality || 'high';
+      logger.debug(`[MessagePreprocessor] Procesando ${imageUrls.length} imágenes con calidad: ${imageQuality}`);
+
+      // Usar ImageFilterUtils para procesar las imágenes con la calidad especificada
+      if (window.ImageFilterUtils && typeof window.ImageFilterUtils.processImageUrls === 'function') {
+        return await window.ImageFilterUtils.processImageUrls(imageUrls, imageQuality);
+      } else {
+        logger.warn('[MessagePreprocessor] ImageFilterUtils no disponible, devolviendo URLs originales');
+        return imageUrls;
+      }
+    } catch (error) {
+      logger.error('[MessagePreprocessor] Error procesando imágenes:', error);
+      return imageUrls; // Devolver las originales en caso de error
+    }
+  }
+
+  /**
    * Construye el mensaje de detalles de producto en formato OpenAI
    * @param {Object} product - Detalles del producto
    * @returns {Object|null} Mensaje OpenAI o null si no hay producto
    */
-  async buildProductDetailMessage(product) { // <-- CORRECCIÓN: Ya no se necesita assistantId aquí
+  async buildProductDetailMessage(product) {
     if (!product) {
       return null;
     }
@@ -417,14 +446,14 @@ class MessagePreprocessor {
       originalImageUrls = product.images;
     }
 
-    // 3. Procesar las URLs a través de nuestro nuevo proxy de Cloudflare.
+    // 3. MODIFICADO: Procesar las URLs con la calidad configurada
     let processedImageUrls = [];
-    if (window.ImageFilterUtils && originalImageUrls.length > 0) {
-      // La nueva función solo necesita las URLs.
-      processedImageUrls = await window.ImageFilterUtils.processImageUrls(originalImageUrls);
+    if (originalImageUrls.length > 0) {
+      // Usar el nuevo método centralizado para procesar imágenes
+      processedImageUrls = await this.processImagesForOpenAI(originalImageUrls);
     }
 
-    // 4. Añadir las URLs procesadas (limpias) al mensaje.
+    // 4. Añadir las URLs procesadas al mensaje
     const maxImages = CONFIG.threadSystem?.newThreads?.maxProductImages || 5;
     for (const imgUrl of processedImageUrls.slice(0, maxImages)) {
       if (!imgUrl || typeof imgUrl !== 'string' || imgUrl.trim() === '') continue;
@@ -432,7 +461,8 @@ class MessagePreprocessor {
         type: "image_url",
         image_url: {
           url: imgUrl,
-          detail: CONFIG.threadSystem?.newThreads?.imageDetail || "auto"
+          // Usar la calidad configurada para el detalle de la imagen
+          detail: CONFIG.images?.quality || "auto"
         }
       });
     }
@@ -582,7 +612,9 @@ class MessagePreprocessor {
     const role = isSentByUs ? 'assistant' : 'user';
     const contentParts = [];
     let combinedText = '';
-    const workerUrl = 'https://fb-image-proxy.juandavid.workers.dev';
+
+    // Recopilamos primero todas las imágenes para procesarlas en lote
+    const imagesToProcess = [];
 
     for (const message of messageGroup) {
       // 1. Texto del mensaje - sanitizamos y combinamos
@@ -590,30 +622,30 @@ class MessagePreprocessor {
         combinedText += `${message.content.text}\n`;
       }
 
-      // 2. Transcripción de audio - MEJORADO con múltiples intentos
+      // 2. Transcripción de audio
       if (message.content?.hasAudio) {
         let audioTranscription = null;
 
         // Opción 1: Ya tiene transcripción asignada
-        if (message.content.transcribedAudio &&
-          message.content.transcribedAudio !== '[Transcription Pending]') {
+        if (
+          message.content.transcribedAudio &&
+          message.content.transcribedAudio !== '[Transcription Pending]'
+        ) {
           audioTranscription = message.content.transcribedAudio;
-          console.log(`[MessagePreprocessor][DEBUG] Añadiendo transcripción: "${audioTranscription.substring(0, 30)}..."`);
         }
         // Opción 2: Tiene URL de audio, intentar obtener transcripción directamente
         else if (message.content.audioUrl) {
           const cleanUrl = message.content.audioUrl.split('?')[0];
           audioTranscription = window.audioTranscriber?.getTranscription(cleanUrl);
-          if (audioTranscription) {
-            console.log(`[MessagePreprocessor][DEBUG] Añadiendo transcripción de URL: "${audioTranscription.substring(0, 30)}..."`);
-          }
         }
         // Opción 3: Tiene audioMarkerId, buscar en completedTranscriptions
-        else if (message.content.audioMarkerId && window.audioTranscriber?.completedTranscriptions) {
+        else if (
+          message.content.audioMarkerId &&
+          window.audioTranscriber?.completedTranscriptions
+        ) {
           for (const [url, data] of window.audioTranscriber.completedTranscriptions.entries()) {
             if (data.messageId === message.content.audioMarkerId) {
               audioTranscription = data.text;
-              console.log(`[MessagePreprocessor][DEBUG] Añadiendo transcripción por markerId: "${audioTranscription.substring(0, 30)}..."`);
               break;
             }
           }
@@ -623,30 +655,36 @@ class MessagePreprocessor {
         if (audioTranscription && audioTranscription !== '[Transcription Pending]') {
           combinedText += `\n[Audio transcription: "${audioTranscription.trim()}"]\n`;
         } else {
-          // No hay transcripción disponible
           combinedText += '\n[Audio message - no transcription available]\n';
         }
       }
-      // 3. Procesar las imágenes encontradas en el historial del chat.
-      // Usa la ruta correcta: message.content.media.images
+
+      // 3. Recopilamos las imágenes para procesarlas juntas
       if (message.content?.media?.images && message.content.media.images.length > 0) {
         for (const image of message.content.media.images) {
           if (image.url) {
-            // Construir la URL del proxy con tu worker de Cloudflare.
-            const proxyUrl = `${workerUrl}?url=${encodeURIComponent(image.url)}`;
-            contentParts.push({
-              type: "image_url",
-              image_url: {
-                url: proxyUrl,
-              },
-            });
-            console.log(`[MessagePreprocessor] Imagen del chat añadida al payload vía proxy: ${proxyUrl}`);
+            imagesToProcess.push(image.url);
           }
         }
       }
     }
 
-    // 3. Limpiar y añadir el bloque de texto combinado al principio del contenido.
+    // 4. Procesar todas las imágenes juntas con la calidad configurada
+    if (imagesToProcess.length > 0) {
+      const processedImageUrls = await this.processImagesForOpenAI(imagesToProcess);
+
+      for (const imageUrl of processedImageUrls) {
+        contentParts.push({
+          type: "image_url",
+          image_url: {
+            url: imageUrl,
+            detail: window.CONFIG?.images?.quality || "auto"
+          }
+        });
+      }
+    }
+
+    // 5. Añadir el texto combinado al principio del contenido
     const sanitizedText = this.sanitizeText(combinedText.trim());
     if (sanitizedText) {
       contentParts.unshift({
@@ -655,14 +693,14 @@ class MessagePreprocessor {
       });
     }
 
-    // Si después de todo el proceso no hay contenido, ignorar este grupo.
+    // Si después de todo el proceso no hay contenido, ignorar este grupo
     if (contentParts.length === 0) {
       return null;
     }
 
     return {
       role: role,
-      content: contentParts,
+      content: contentParts
     };
   }
 
