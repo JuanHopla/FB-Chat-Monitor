@@ -1145,3 +1145,12 @@ window.pageUtils = pageUtils;
 window.showSimpleAlert = showSimpleAlert;
 window.delay = delay;
 window.insertTextDirectly = insertTextDirectly;
+window.ensureAssistantsLoaded = function() {
+  if (window.populateAssistantsFromStorage && typeof window.populateAssistantsFromStorage === 'function') {
+    logger.debug('Forcing assistants load from ensureAssistantsLoaded()');
+    window.populateAssistantsFromStorage();
+    return true;
+  }
+  logger.warn('Could not load assistants - populateAssistantsFromStorage function not available');
+  return false;
+};

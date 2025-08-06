@@ -4,7 +4,7 @@
 // UI State Storage
 const uiState = {
   isControlPanelVisible: false,
-  activeTab: 'dashboard',
+  activeTab: 'assistants',
   floatingButton: null,
   controlPanel: null,
   statusIndicator: null,
@@ -17,20 +17,37 @@ const uiState = {
 function initializeUI() {
   uiState.floatingButton = createFloatingButton();
   createStyles();
+  const now = Date.now();
+  const lastInitTime = parseInt(sessionStorage.getItem('FB_CHAT_MONITOR_LAST_INIT') || '0');
+  const timeSinceLastInit = now - lastInitTime;
 
-  // Load UI state from storage
-  const savedState = storageUtils.get('UI_STATE', {});
-  if (savedState.activeTab) {
-    uiState.activeTab = savedState.activeTab;
+  const isPageRefresh = !sessionStorage.getItem('FB_CHAT_MONITOR_SESSION_ACTIVE') ||
+    (timeSinceLastInit > 2000 && timeSinceLastInit < 3600000);
+
+  sessionStorage.setItem('FB_CHAT_MONITOR_SESSION_ACTIVE', 'true');
+  sessionStorage.setItem('FB_CHAT_MONITOR_LAST_INIT', now.toString());
+
+  if (isPageRefresh) {
+    uiState.activeTab = 'assistants';
+    populateAssistantsFromStorage();
+
+    storageUtils.set('UI_STATE', { activeTab: 'assistants' });
+    logger.debug('Page reloaded - forcing assistants tab');
+  } else {
+    const savedState = storageUtils.get('UI_STATE', {});
+    if (savedState.activeTab) {
+      uiState.activeTab = savedState.activeTab;
+    }
+
+    logger.debug('Existing session - using saved tab: ' + uiState.activeTab);
   }
+  setTimeout(() => {
+    populateAssistantsFromStorage();
+  }, 100);
 
   logger.debug('UI initialized');
-
-  // ADDED: Create and append floating button for quick response generation
   uiState.floatingResponseButton = createFloatingResponseButton();
   document.body.appendChild(uiState.floatingResponseButton);
-
-  // Start periodic check for floating button visibility
   setInterval(updateFloatingResponseButtonVisibility, 2000);
 }
 
