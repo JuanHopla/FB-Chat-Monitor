@@ -9,113 +9,58 @@ var CONFIG = {};
  */
 // Initialize properties after creation
 Object.assign(CONFIG, {
-  // Current version for internal control and migrations
   version: '1.0.0',
-
-  // Standard property for operation mode ('auto' or 'manual')
   operationMode: 'manual',
 
-  // Add a getter/setter to maintain compatibility with old code
-  get modo() {
-    return this.operationMode;
-  },
-
-  set modo(value) {
-    if (value === 'auto' || value === 'manual') {
-      this.operationMode = value;
-      if (typeof logger !== 'undefined') {
-        logger.debug(`Mode updated via 'modo' property: ${value}`);
-      }
-    }
-  },
-
-  // API Key for OpenAI
-  apiKey: null,
-
-  // AI section to centralize artificial intelligence configuration
+  // --- REFACTOR: Centralize all AI configuration under the AI object ---
   AI: {
-    apiKey: null,       // API key for OpenAI
-    model: 'gpt-4o', // Default model
-    maxTokens: 2048,    // Maximum tokens per response
-    temperature: 0.7,   // Temperature for generation
-    useAssistantAPI: true, // Use Assistants API instead of completions
-    provider: 'openai', // AI provider (for future extensibility)
-
-    // Add the missing assistants property
+    apiKey: null,       // The single source of truth for the API key
+    model: 'gpt-4o',    // The single source of truth for the model
+    maxTokens: 2048,
+    temperature: 0.7,
+    useAssistantAPI: true,
+    provider: 'openai',
     assistants: {
-      seller: {
-        id: null,
-        name: "Seller Assistant",
-        instructions: "Act as a professional, friendly, and concise salesperson."
-      },
-      buyer: {
-        id: null,
-        name: "Buyer Assistant",
-        instructions: "Act as an interested buyer, asking relevant questions about the product."
-      }
-    },
-
-    // Function to synchronize with old configuration
-    syncWithLegacyConfig: function () {
-      // Synchronize apiKey between the two locations for compatibility
-      if (CONFIG.apiKey && !this.apiKey) {
-        this.apiKey = CONFIG.apiKey;
-      } else if (this.apiKey && !CONFIG.apiKey) {
-        CONFIG.apiKey = this.apiKey;
-      }
-
-      // Synchronize model
-      if (CONFIG.model && CONFIG.model !== this.model) {
-        this.model = CONFIG.model;
-      }
-
-      // Synchronize assistants with old configuration
-      if (CONFIG.assistants) {
-        if (CONFIG.assistants.seller) {
-          this.assistants.seller = { ...this.assistants.seller, ...CONFIG.assistants.seller };
-        }
-        if (CONFIG.assistants.buyer) {
-          this.assistants.buyer = { ...this.assistants.buyer, ...CONFIG.assistants.buyer };
-        }
-      }
+      seller: { id: null, name: "Seller Assistant", instructions: "..." },
+      buyer: { id: null, name: "Buyer Assistant", instructions: "..." }
     }
   },
 
-  // Model to use (default)
-  model: 'gpt-4o',
+  images: {
+    quality: 'high',     // Possible values: 'high', 'medium', 'low'
+    sizes: {
+      medium: 800,       // Maximum size for medium quality
+      low: 400           // Maximum size for low quality
+    },
+    compression: {
+      medium: 0.8,       // JPEG compression level for medium quality (0-1)
+      low: 0.6           // JPEG compression level for low quality (0-1)
+    }
+  },
 
-  // Minimum time between automatic responses (ms)
-  autoResponseDelay: 5000,
+  // Logging configuration
+  logging: {
+    consoleOutput: true,
+    fileOutput: false,
+    level: 'normal', // 'minimal', 'normal', 'detailed', 'debug'
+    showTimestamps: true,
+    saveLogs: true, // Whether to save logs to localStorage
+    maxEntries: 1000 // Maximum number of log entries to keep
+  },
 
-  // Flag to enable/disable human typing simulation
-  simulateHumanTyping: true,
-
-  // Configuration for audio transcription
+  // Audio transcription settings
   audioTranscription: {
-    enabled: false, // Disabled by default
-    apiKey: null,   // Use a specific API key or the general one
-    model: 'whisper-1', // Model for transcription
-    maxDuration: 120 // Maximum duration in seconds
+    enabled: true,
+    model: 'whisper-1',
+    language: 'es',
+    cacheResults: true,
+    maxCacheSize: 100, // Maximum number of transcriptions in cache
+    autoTranscribe: true // Whether to automatically transcribe detected audios
   },
 
-  // Assistants configuration
-  assistants: {
-    seller: {
-      id: null,
-      name: "Seller Assistant",
-      instructions: "Act as a professional, friendly, and concise salesperson."
-    },
-    buyer: {
-      id: null,
-      name: "Buyer Assistant",
-      instructions: "Act as an interested buyer, asking relevant questions about the product."
-    }
-  },
-
-  // Flag to enable/disable automatic message sending (will only take effect when operationMode is 'auto')
+  autoResponseDelay: 5000,
+  simulateHumanTyping: true,
   autoSendMessages: true,
-
-  // Delay between text insertion and message sending (ms)
   sendMessageDelay: 2000,
 
   // DOM selectors for Facebook/Messenger
@@ -179,7 +124,7 @@ Object.assign(CONFIG, {
         'span[title][aria-label*=":"]',
         'span.x1lliihq.x1plvlek.xryxfnj[aria-label]',
         'span[aria-label*="sent at"]',
-        'span[aria-label*="enviado a las"]' // Kept Spanish for specific cases if needed, or translate to "sent at"
+        'span[aria-label*="enviado a las"]' 
       ],
       // Updated image selectors
       messageImageElement: [
@@ -197,7 +142,7 @@ Object.assign(CONFIG, {
         'div[role="button"][aria-label="Play"]',
         'div[aria-label="Play"][role="button"]',
         'div[role="button"][aria-label*="audio"]',
-        'div[aria-label*="reproducir"][role="button"]',
+        'div[aria-label*="reproducir"][role="button"]', 
         'div[aria-label*="Audio message"]',
         'div.xzg4506 > div.x1qjc9v5 > div[role="button"]',
         'div[aria-label*="Play" i][role="button"]'
@@ -223,7 +168,7 @@ Object.assign(CONFIG, {
         'a[href*="cdn.fbsbx.com"][download]',
         'div[data-testid="attachment"]',
         'div[role="button"][aria-label*="file"]',
-        'div[aria-label*="archivo adjunto"]'
+        'div[aria-label*="archivo adjunto"]' 
       ],
 
       // Selectors for location (new)
@@ -232,7 +177,7 @@ Object.assign(CONFIG, {
         'a[href*="l.facebook.com/l.php"][href*="maps"]',
         'a[href*="google.com/maps"]',
         'div[aria-label*="location"]',
-        'div[aria-label*="ubicación"]'
+        'div[aria-label*="ubicación"]' 
       ],
 
       // Selectors for GIFs and stickers (new)
@@ -290,114 +235,26 @@ Object.assign(CONFIG, {
     }
   },
 
-  /**
-   * Initializes configuration on load
-   */
-  init() {
-    // Load from storage
-    this.loadFromStorage();
-
-    // Initialize additional configurations
-    this.initializeExtras();
-
-    // Synchronize old configuration with the new AI structure
-    if (this.AI && typeof this.AI.syncWithLegacyConfig === 'function') {
-      this.AI.syncWithLegacyConfig();
-    }
-
-    // FIX: Log to diagnose mode status after loading
-    if (typeof logger !== 'undefined') {
-      logger.debug(`Configuration initialized. Mode: ${this.operationMode}, modo property: ${this.modo}`);
-
-      // FIX: Additional log for values in storage
-      const gmMode = typeof GM_getValue === 'function' ? GM_getValue('FB_CHAT_MODE') : null;
-      const gmOpMode = typeof GM_getValue === 'function' ? GM_getValue('FB_CHAT_OPERATION_MODE') : null;
-      const lsMode = localStorage.getItem('FB_CHAT_MODE');
-      const lsOpMode = localStorage.getItem('FB_CHAT_OPERATION_MODE');
-
-      logger.debug(`Storage status - GM: modo=${gmMode}, opMode=${gmOpMode} | LS: modo=${lsMode}, opMode=${lsOpMode}`);
-    }
-
-    return true;
-  },
-
-  /**
-   * Initializes additional configurations
-   */
-  initializeExtras() {
-    // Configure listeners for changes
-    document.addEventListener('configUpdated', (event) => {
-      const details = event?.detail || {};
-
-      // If a mode was specified in the event, update
-      if (details.operationMode) {
-        this.operationMode = details.operationMode;
-        logger.debug(`Mode updated by event: ${this.operationMode}, source: ${details.source || 'unknown'}`);
-      }
-    });
-
-    return true;
-  },
-
-  // Synchronization with storage
+  // --- REFACTOR: Simplified loading logic ---
   loadFromStorage() {
     try {
       const storage = this.getStorage();
 
-      // Get mode from any of the properties, with priority for the new one
-      const storedOperationMode = storage.FB_CHAT_OPERATION_MODE;
-      const storedMode = storage.FB_CHAT_MODE;
+      // Load Operation Mode
+      const storedOperationMode = storage.FB_CHAT_OPERATION_MODE || storage.FB_CHAT_MODE || 'manual';
+      this.operationMode = storedOperationMode;
 
-      // FIX: Log for diagnosis
-      if (typeof logger !== 'undefined') {
-        logger.debug(`Mode values found - FB_CHAT_OPERATION_MODE: ${storedOperationMode}, FB_CHAT_MODE: ${storedMode}`);
-      }
-
-      // Choose the correct value with priority for the new property
-      let effectiveMode = null;
-      if (storedOperationMode === 'auto' || storedOperationMode === 'manual') {
-        effectiveMode = storedOperationMode;
-        if (typeof logger !== 'undefined') {
-          logger.debug(`Mode loaded from FB_CHAT_OPERATION_MODE: ${effectiveMode}`);
-        }
-      } else if (storedMode === 'auto' || storedMode === 'manual') {
-        effectiveMode = storedMode;
-        if (typeof logger !== 'undefined') {
-          logger.debug(`Mode loaded from FB_CHAT_MODE (legacy): ${effectiveMode}`);
-        }
-        // Migrate to the new format
-        this.saveToStorage('FB_CHAT_OPERATION_MODE', storedMode);
-        if (typeof logger !== 'undefined') {
-          logger.debug(`Mode migrated from FB_CHAT_MODE to FB_CHAT_OPERATION_MODE: ${storedMode}`);
-        }
-      } else {
-        // FIX: If none is defined, assign a default value and save it
-        effectiveMode = 'manual'; // Default value if nothing is saved
-        if (typeof logger !== 'undefined') {
-          logger.debug(`No saved value found for mode. Assigning default value: ${effectiveMode}`);
-        }
-        this.saveToStorage('FB_CHAT_OPERATION_MODE', effectiveMode);
-        this.saveToStorage('FB_CHAT_MODE', effectiveMode);
-      }
-
-      // Set the mode if a valid one was found
-      if (effectiveMode) {
-        this.operationMode = effectiveMode;
-      }
-
-      // Load API Key
+      // Load API Key directly into the single source of truth
       if (storage.FB_CHAT_API_KEY) {
-        this.apiKey = storage.FB_CHAT_API_KEY;
-        if (this.AI) this.AI.apiKey = storage.FB_CHAT_API_KEY; // Also update in AI structure
+        this.AI.apiKey = storage.FB_CHAT_API_KEY;
       }
 
-      // Load model
+      // Load Model directly into the single source of truth
       if (storage.FB_CHAT_MODEL) {
-        this.model = storage.FB_CHAT_MODEL;
-        if (this.AI) this.AI.model = storage.FB_CHAT_MODEL; // Also update in AI structure
+        this.AI.model = storage.FB_CHAT_MODEL;
       }
 
-      // Load assistants configuration if it exists
+      // Load Assistants directly into the single source of truth
       if (storage.FB_CHAT_ASSISTANTS) {
         try {
           const assistantsData = typeof storage.FB_CHAT_ASSISTANTS === 'string'
@@ -405,274 +262,104 @@ Object.assign(CONFIG, {
             : storage.FB_CHAT_ASSISTANTS;
 
           if (assistantsData && typeof assistantsData === 'object') {
-            // Update only existing properties in both structures
-            if (assistantsData.seller) {
-              this.assistants.seller = { ...this.assistants.seller, ...assistantsData.seller };
-              if (this.AI && this.AI.assistants) {
-                this.AI.assistants.seller = { ...this.AI.assistants.seller, ...assistantsData.seller };
-              }
-            }
-            if (assistantsData.buyer) {
-              this.assistants.buyer = { ...this.assistants.buyer, ...assistantsData.buyer };
-              if (this.AI && this.AI.assistants) {
-                this.AI.assistants.buyer = { ...this.AI.assistants.buyer, ...assistantsData.buyer };
-              }
-            }
+            if (assistantsData.seller) this.AI.assistants.seller = { ...this.AI.assistants.seller, ...assistantsData.seller };
+            if (assistantsData.buyer) this.AI.assistants.buyer = { ...this.AI.assistants.buyer, ...assistantsData.buyer };
           }
-        } catch (assistantsError) {
-          if (typeof logger !== 'undefined') {
-            logger.error(`Error parsing assistants: ${assistantsError.message}`);
-          }
+        } catch (e) {
+          if (typeof logger !== 'undefined') logger.error(`Error parsing assistants from storage: ${e.message}`);
         }
       }
 
-      if (typeof logger !== 'undefined') {
-        logger.log('Configuration loaded from storage');
-        // Explicit log of the final state
-        logger.debug(`Final state after loading: operationMode=${this.operationMode}, modo=${this.modo}`);
+      if (storage.FB_CHAT_IMAGE_QUALITY) {
+        this.images.quality = storage.FB_CHAT_IMAGE_QUALITY;
       }
 
-      // FIX: Always return the CONFIG object, not just boolean
+      if (typeof logger !== 'undefined') logger.log('Configuration loaded from storage');
       return this;
     } catch (error) {
-      if (typeof logger !== 'undefined') {
-        logger.error(`Error loading configuration: ${error.message}`);
-      }
+      if (typeof logger !== 'undefined') logger.error(`Error loading configuration: ${error.message}`);
       return this;
     }
   },
 
-  /**
-   * Updates the operation mode and ensures it is saved correctly
-   * @param {string} mode - 'auto' or 'manual'
-   * @returns {boolean} True if updated correctly
-   */
-  updateOperationMode(mode) {
-    if (mode !== 'auto' && mode !== 'manual') {
-      logger.error(`Invalid operation mode: ${mode}. Must be 'auto' or 'manual'`);
+  saveImageQuality(quality) {
+    if (!quality || !['high', 'medium', 'low'].includes(quality)) {
+      if (typeof logger !== 'undefined') logger.error('Invalid image quality value');
       return false;
     }
-
-    // Update in memory
-    this.operationMode = mode;
-
-    // Save in both the new and old key to ensure compatibility
-    if (typeof GM_setValue === 'function') {
-      GM_setValue('FB_CHAT_OPERATION_MODE', mode);
-      GM_setValue('FB_CHAT_MODE', mode); // Keep the old key synchronized
-    } else {
-      localStorage.setItem('FB_CHAT_OPERATION_MODE', mode);
-      localStorage.setItem('FB_CHAT_MODE', mode); // Keep the old key synchronized
-    }
-
-    // Notify mode change
-    logger.log(`Operation mode updated to: ${mode.toUpperCase()}`);
-
-    // FIX: Dispatch event to notify other components with more information
-    document.dispatchEvent(new CustomEvent('configUpdated', {
-      detail: {
-        operationMode: mode,
-        modo: mode, // For compatibility
-        source: 'updateOperationMode'
-      }
-    }));
-
-    // Update UI if available
-    if (window.ui && typeof window.ui.updateModeUI === 'function') {
-      window.ui.updateModeUI(mode);
-    }
-
-    // Verify that responseManager updates its state if it exists
-    if (window.responseManager) {
-      window.responseManager.isAutomodeEnabled = mode === 'auto';
-      logger.debug(`ResponseManager updated: automode=${window.responseManager.isAutomodeEnabled}`);
-    }
-
-    // Log to console for debug
-    logger.debug(`Mode updated: operationMode=${this.operationMode}, modo=${this.modo}`);
-
+    this.images.quality = quality;
+    this.threadSystem.newThreads.imageDetail = quality; // Mantener sincronizado por compatibilidad
+    this.saveToStorage('FB_CHAT_IMAGE_QUALITY', quality);
+    if (typeof logger !== 'undefined') logger.log(`Image quality changed to: ${quality}`);
     return true;
   },
 
-  /**
-   * Saves the API key in the configuration
-   * @param {string} apiKey - The API key for OpenAI
-   * @returns {boolean} True if saved correctly
-   */
+  // --- REFACTOR: Simplified saving logic ---
   saveApiKey(apiKey) {
     if (!apiKey || typeof apiKey !== 'string') {
-      logger.error('Invalid API Key');
+      if (typeof logger !== 'undefined') logger.error('Invalid API Key provided to saveApiKey');
       return false;
     }
-
-    this.apiKey = apiKey;
-    // Also update in the new AI structure
-    if (this.AI) this.AI.apiKey = apiKey;
+    this.AI.apiKey = apiKey; // Update the single source of truth
     this.saveToStorage('FB_CHAT_API_KEY', apiKey);
-
-    logger.log('API Key saved');
+    if (typeof logger !== 'undefined') logger.log('API Key saved');
     return true;
   },
 
-  /**
-   * Saves the model to use
-   * @param {string} model - The OpenAI model
-   * @returns {boolean} True if saved correctly
-   */
   saveModel(model) {
     if (!model || typeof model !== 'string') {
-      logger.error('Invalid model');
+      if (typeof logger !== 'undefined') logger.error('Invalid model provided');
       return false;
     }
-
-    this.model = model;
-    // Also update in the new AI structure
-    if (this.AI) this.AI.model = model;
+    this.AI.model = model; // Update the single source of truth
     this.saveToStorage('FB_CHAT_MODEL', model);
-
-    logger.log(`Model changed to: ${model}`);
+    if (typeof logger !== 'undefined') logger.log(`Model changed to: ${model}`);
     return true;
   },
 
-  /**
-   * Saves the assistants configuration
-   * @param {Object} assistants - Assistants configuration
-   * @returns {boolean} True if saved correctly
-   */
   saveAssistants(assistants) {
     if (!assistants || typeof assistants !== 'object') {
-      logger.error('Invalid assistants configuration');
+      if (typeof logger !== 'undefined') logger.error('Invalid assistants configuration');
       return false;
     }
-
-    // Update only if there is valid data for each role
-    if (assistants.seller) {
-      this.assistants.seller = { ...this.assistants.seller, ...assistants.seller };
-      if (this.AI && this.AI.assistants) {
-        this.AI.assistants.seller = { ...this.AI.assistants.seller, ...assistants.seller };
-      }
-    }
-    if (assistants.buyer) {
-      this.assistants.buyer = { ...this.assistants.buyer, ...assistants.buyer };
-      if (this.AI && this.AI.assistants) {
-        this.AI.assistants.buyer = { ...this.AI.assistants.buyer, ...assistants.buyer };
-      }
-    }
-
-    // Save to storage
-    this.saveToStorage('FB_CHAT_ASSISTANTS', JSON.stringify(this.assistants));
-
-    logger.log('Assistants configuration updated');
+    if (assistants.seller) this.AI.assistants.seller = { ...this.AI.assistants.seller, ...assistants.seller };
+    if (assistants.buyer) this.AI.assistants.buyer = { ...this.AI.assistants.buyer, ...assistants.buyer };
+    this.saveToStorage('FB_CHAT_ASSISTANTS', JSON.stringify(this.AI.assistants));
+    if (typeof logger !== 'undefined') logger.log('Assistants configuration updated');
     return true;
   },
 
-  // Method to get the storage object (GM_* or localStorage)
+  // --- Storage utilities (sin cambios) ---
   getStorage() {
-    // Create a wrapper that unifies access to GM_* and localStorage
     const storage = {};
-
-    // Detect availability of GM_setValue/GM_getValue
-    const hasGMStorage = typeof GM_getValue === 'function' && typeof GM_setValue === 'function';
-
-    // If GM_* is available, use it for all keys
-    if (hasGMStorage) {
-      // Get all available keys
-      let allKeys = [];
-      if (typeof GM_listValues === 'function') {
-        allKeys = GM_listValues();
-      }
-
-      // Iterate over known keys if GM_listValues is not available
-      if (!allKeys.length) {
-        allKeys = [
-          'FB_CHAT_MODE',
-          'FB_CHAT_OPERATION_MODE',
-          'FB_CHAT_API_KEY',
-          'FB_CHAT_MODEL',
-          'FB_CHAT_ASSISTANTS'
-        ];
-      }
-
-      // Load each key into the storage object
-      allKeys.forEach(key => {
-        try {
-          storage[key] = GM_getValue(key);
-        } catch (e) {
-          logger.debug(`Error reading key ${key} from GM_getValue: ${e.message}`);
-        }
+    const keysToLoad = ['FB_CHAT_OPERATION_MODE', 'FB_CHAT_MODE', 'FB_CHAT_API_KEY', 'FB_CHAT_MODEL', 'FB_CHAT_ASSISTANTS', 'FB_CHAT_IMAGE_QUALITY'];
+    if (typeof GM_getValue === 'function') {
+      keysToLoad.forEach(key => {
+        const value = GM_getValue(key);
+        if (value !== undefined) storage[key] = value;
       });
     } else {
-      // Use localStorage as fallback
-      // Copy all keys starting with FB_CHAT_
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith('FB_CHAT_')) {
-          try {
-            let value = localStorage.getItem(key);
-            // Try to parse as JSON if possible
-            try {
-              const parsedValue = JSON.parse(value);
-              value = parsedValue;
-            } catch (e) {
-              // Not JSON, use the value as is
-            }
-            storage[key] = value;
-          } catch (e) {
-            logger.debug(`Error reading key ${key} from localStorage: ${e.message}`);
-          }
-        }
-      }
+      keysToLoad.forEach(key => {
+        const value = localStorage.getItem(key);
+        if (value !== null) storage[key] = value;
+      });
     }
-
     return storage;
   },
 
-  // Method to save a value to storage
   saveToStorage(key, value) {
     try {
-      // Try to use GM_setValue first
-      if (typeof GM_setValue === 'function') {
-        GM_setValue(key, value);
-        return true;
-      }
-
-      // Fallback to localStorage
-      // Convert objects to JSON
       const storageValue = typeof value === 'object' ? JSON.stringify(value) : value;
-      localStorage.setItem(key, storageValue);
+      if (typeof GM_setValue === 'function') {
+        GM_setValue(key, storageValue);
+      } else {
+        localStorage.setItem(key, storageValue);
+      }
       return true;
     } catch (e) {
-      logger.error(`Error saving to storage [${key}]: ${e.message}`);
+      if (typeof logger !== 'undefined') logger.error(`Error saving to storage [${key}]: ${e.message}`);
       return false;
     }
-  },
-
-  /**
-   * Checks the configuration status
-   * @returns {Object} Configuration status
-   */
-  checkStatus() {
-    const isApiKeySet = !!this.apiKey || (this.AI && !!this.AI.apiKey);
-    const isModelSet = !!this.model || (this.AI && !!this.AI.model);
-    const isOperationModeValid = this.operationMode === 'auto' || this.operationMode === 'manual';
-
-    // Check if assistants are configured
-    const hasAssistants =
-      (this.assistants.seller && this.assistants.seller.id) ||
-      (this.assistants.buyer && this.assistants.buyer.id) ||
-      (this.AI && this.AI.assistants && (
-        (this.AI.assistants.seller && this.AI.assistants.seller.id) ||
-        (this.AI.assistants.buyer && this.AI.assistants.buyer.id)
-      ));
-
-    return {
-      isReady: isApiKeySet && isModelSet && isOperationModeValid,
-      isApiKeySet,
-      isModelSet,
-      isOperationModeValid,
-      operationMode: this.operationMode,
-      hasAssistants,
-    };
   },
 
   // Thread management system configurations
@@ -683,13 +370,13 @@ Object.assign(CONFIG, {
       maxProductImages: 5,      // Maximum number of product images to include
       imageDetail: "high",      // Image quality: "high" or "low"
     },
-    
+
     // Configurations for existing threads
     existingThreads: {
       ignoreOlderThan: 24 * 60 * 60 * 1000, // 24h in milliseconds
       onlyNewConversations: false,          // If true, ignore old chats
     },
-    
+
     // General configurations for the thread system
     general: {
       threadTTL: 2 * 60 * 60 * 1000,       // Thread lifetime: 2 hours
@@ -697,6 +384,36 @@ Object.assign(CONFIG, {
       threadInfoMaxAge: 30 * 24 * 60 * 60 * 1000 // Maximum age for thread information: 30 days
     }
   },
+});
+
+// --- REFACTOR: Add getters/setters for backward compatibility ---
+// This ensures that old code accessing CONFIG.apiKey still works,
+// but it reads from and writes to the new CONFIG.AI.apiKey.
+Object.defineProperties(CONFIG, {
+  'apiKey': {
+    get: function () { return this.AI.apiKey; },
+    set: function (value) { this.AI.apiKey = value; },
+    enumerable: true,
+    configurable: true
+  },
+  'model': {
+    get: function () { return this.AI.model; },
+    set: function (value) { this.AI.model = value; },
+    enumerable: true,
+    configurable: true
+  },
+  'assistants': {
+    get: function () { return this.AI.assistants; },
+    set: function (value) { this.AI.assistants = value; },
+    enumerable: true,
+    configurable: true
+  },
+  'modo': {
+    get: function () { return this.operationMode; },
+    set: function (value) { this.operationMode = value; },
+    enumerable: true,
+    configurable: true
+  }
 });
 
 // Export the configuration
