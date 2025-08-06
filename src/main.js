@@ -109,6 +109,10 @@ function loadSavedSettings() {
   // Load operation mode
   CONFIG.operationMode = storageUtils.get('OPERATION_MODE', CONFIG.defaultOperationMode);
 
+  if (window.populateAssistantsFromStorage && typeof window.populateAssistantsFromStorage === 'function') {
+    window.populateAssistantsFromStorage();
+  }
+
   // Load assistant IDs
   if (!CONFIG.AI.assistants) CONFIG.AI.assistants = { seller: {}, buyer: {} };
 

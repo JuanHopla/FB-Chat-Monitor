@@ -78,6 +78,13 @@ function initialize() {
     }
   }
 
+  if (window.populateAssistantsFromStorage && typeof window.populateAssistantsFromStorage === 'function') {
+    console.log('Loading assistants from init.js');
+    window.populateAssistantsFromStorage();
+  }
+
+  window.FB_CHAT_MONITOR_INITIALIZED = true;
+
   // If there is also an AssistantManager, verify
   if (window.assistantManager) {
     if (window.logManager) {

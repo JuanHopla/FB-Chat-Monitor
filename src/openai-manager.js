@@ -109,12 +109,15 @@ class OpenAIManager {
    */
   async generateResponse(context) {
     if (!this.isReady()) throw new Error('OpenAI API not ready');
+    if (window.ensureAssistantsLoaded) {
+      window.ensureAssistantsLoaded();
+    }
 
     // Verify context structure
     if (!context || typeof context !== 'object') {
       throw new Error('Invalid context object provided');
     }
-    
+
     // NEW: Verify if it is a regeneration request
     const isRegenerationRequest = context.forceNewGeneration === true;
 
