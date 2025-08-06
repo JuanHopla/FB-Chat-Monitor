@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
-const Terser = require('terser');
+const JavaScriptObfuscator = require('javascript-obfuscator');
 
 // Check if we are in production or development mode
 const isProd = process.argv[2] === 'prod';
@@ -29,7 +29,7 @@ const sourceFiles = [
   'core/openai/ThreadStore.js',
   'audioTranscriber.js',
   'core/ScrollManager.js',
-  'core/EventCoordinator.js', 
+  'core/EventCoordinator.js',
   'chatManager.js',
   'product-extractor.js',
   'core/openai/image-filter-utils.js',
@@ -86,80 +86,87 @@ async function build() {
   // Add IIFE end
   combinedCode += '})();';
 
-  // Apply minification in production mode
   if (isProd) {
-    console.log('Minifying code...');
+    console.log('Obfuscating code...');
     try {
-      const minified = await Terser.minify(combinedCode, {
-        compress: {
-          drop_console: false,
-          drop_debugger: true
-        },
-        mangle: {
-          reserved: [
-            // Tampermonkey API
-            'GM_setValue',
-            'GM_getValue',
-            'GM_deleteValue',
-            'GM_listValues',
-            'GM_xmlhttpRequest',
-            'GM_addStyle',
+      const obfuscationResult = JavaScriptObfuscator.obfuscate(combinedCode, {
+        compact: true,
+        controlFlowFlattening: true,
+        controlFlowFlatteningThreshold: 0.6,
+        deadCodeInjection: true,
+        deadCodeInjectionThreshold: 0.1,
+        debugProtection: false,
+        debugProtectionInterval: 0,
+        disableConsoleOutput: false,
+        identifierNamesGenerator: 'hexadecimal',
+        log: false,
+        numbersToExpressions: true,
+        renameGlobals: false,
+        selfDefending: true,
+        simplify: true,
+        splitStrings: true,
+        stringArray: true,
+        stringArrayThreshold: 0.75,
+        transformObjectKeys: false,
+        unicodeEscapeSequence: false,
+        reservedNames: [
+          // Tampermonkey API
+          'GM_setValue',
+          'GM_getValue',
+          'GM_deleteValue',
+          'GM_listValues',
+          'GM_xmlhttpRequest',
+          'GM_addStyle',
 
-            // Config and utilities
-            'CONFIG',
-            'UTILS',
+          // Config and utilities
+          'CONFIG',
+          'UTILS',
 
-            // Main managers
-            'ChatManager',
-            'chatManager',
-            'responseManager',
-            'ResponseManager',
-            'openAIManager',
-            'OpenAIManager',
-            'humanSimulator',
-            'HumanSimulator',
+          // Main managers
+          'ChatManager',
+          'chatManager',
+          'responseManager',
+          'ResponseManager',
+          'openAIManager',
+          'OpenAIManager',
+          'humanSimulator',
+          'HumanSimulator',
 
-            // User interface
-            'ui',
-            'UI',
-            'assistantManagerUI',
-            'AssistantManagerUI',
-            'domUtils',
+          // User interface
+          'ui',
+          'UI',
+          'assistantManagerUI',
+          'AssistantManagerUI',
+          'domUtils',
 
-            // Global classes and objects
-            'FBChatMonitor',
-            'ProductExtractor',
-            'productExtractor',
-            'ConversationAnalyzer',
-            'conversationAnalyzer',
-            'storageUtils',
+          // Global classes and objects
+          'FBChatMonitor',
+          'ProductExtractor',
+          'productExtractor',
+          'ConversationAnalyzer',
+          'conversationAnalyzer',
+          'storageUtils',
 
-            // Specific utilities
-            'logger',
-            'audioTranscriber',
-            'initializeMonitor',
-            'getProductInfo',
-            'extractProductDetails',
+          // Specific utilities
+          'logger',
+          'audioTranscriber',
+          'initializeMonitor',
+          'getProductInfo',
+          'extractProductDetails',
 
-            // Critical properties and methods
-            'initialize',
-            'sendMessage',
-            'processMessage',
-            'analyzeConversation'
-          ]
-        }
-        // Do not configure format.comments here, as we will handle the header separately
+          // Critical properties and methods
+          'initialize',
+          'sendMessage',
+          'processMessage',
+          'analyzeConversation'
+        ]
       });
 
-      if (minified.error) {
-        throw new Error(minified.error);
-      }
-
-      combinedCode = minified.code;
-      console.log('Minification completed successfully.');
+      combinedCode = obfuscationResult.getObfuscatedCode();
+      console.log('Obfuscation completed successfully.');
     } catch (err) {
-      console.error('Error during minification:', err);
-      console.log('Continuing with unminified code...');
+      console.error('Error during obfuscation:', err);
+      console.log('Continuing with non-obfuscated code...');
     }
   }
 
