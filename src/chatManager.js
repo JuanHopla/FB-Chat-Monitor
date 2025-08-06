@@ -95,7 +95,7 @@ class ChatManager {
    * @returns {Promise<number>} Number of unread chats found
    */
   async scanForUnreadChats() {
-    logger.log('Scanning for unread chats...');
+    logger.debug('Scanning for unread chats...');
 
     try {
       // Get chat list container
@@ -107,7 +107,7 @@ class ChatManager {
 
       // Get all chat elements
       const chatItems = domUtils.findAllElements(CONFIG.selectors.chatList.chatItem, chatContainer);
-      logger.log(`Found ${chatItems.length} chat elements`);
+      logger.debug(`Found ${chatItems.length} chat elements`);
 
       // Clear the pending chat queue
       this.pendingChats = [];
@@ -144,7 +144,7 @@ class ChatManager {
       // Sort queue by time (oldest first)
       this.pendingChats.sort((a, b) => b.messageTime - a.messageTime);
 
-      logger.log(`Total valid unread chats: ${this.pendingChats.length}`);
+      logger.debug(`Total valid unread chats: ${this.pendingChats.length}`);
 
       // Show notification with results
       if (this.pendingChats.length > 0) {
