@@ -512,9 +512,6 @@ class MessagePreprocessor {
 
     // NUEVO: Log para diagnóstico de grupos
     console.log(`[MessagePreprocessor][DEBUG] Mensajes agrupados en ${messageGroups.length} grupos`);
-    messageGroups.forEach((group, index) => {
-      console.log(`[MessagePreprocessor][DEBUG] Grupo ${index + 1}: ${group.length} mensajes, sentByUs=${group[0]?.sentByUs}`);
-    });
 
     // Convertir grupos a formato OpenAI
     for (const messageGroup of messageGroups) {
@@ -524,6 +521,11 @@ class MessagePreprocessor {
       if (openAIMessage) {
         openaiMessages.push(openAIMessage);
       }
+    }
+
+    // Si hay audioTranscriber, mostrar resumen de transcripciones
+    if (window.audioTranscriber && typeof window.audioTranscriber.showTranscriptionLogs === 'function') {
+      window.audioTranscriber.showTranscriptionLogs();
     }
 
     // NUEVO: Log detallado del resultado final
@@ -546,8 +548,18 @@ class MessagePreprocessor {
     let currentGroup = [];
     let currentSender = null;
 
-    // NUEVO: Log para diagnóstico
-    console.log(`[MessagePreprocessor][DEBUG] groupMessagesByRole: Procesando ${messages.length} mensajes`);
+    // Contadores para estadísticas
+    const stats = {
+      totalGroups: 0,
+      userGroups: 0,
+      assistantGroups: 0,
+      userMessages: 0,
+      assistantMessages: 0,
+      groupSizes: []
+    };
+
+    // Log único al inicio
+    console.log(`[MessagePreprocessor][DEBUG] Procesando ${messages.length} mensajes para agrupar`);
 
     for (let i = 0; i < messages.length; i++) {
       const message = messages[i];
@@ -581,6 +593,19 @@ class MessagePreprocessor {
         // Guardar grupo anterior si existe
         if (currentGroup.length > 0) {
           groups.push([...currentGroup]);
+
+          // Actualizar estadísticas en vez de hacer log
+          stats.totalGroups++;
+          stats.groupSizes.push(currentGroup.length);
+
+          if (currentSender) {
+            stats.assistantGroups++;
+            stats.assistantMessages += currentGroup.length;
+          } else {
+            stats.userGroups++;
+            stats.userMessages += currentGroup.length;
+          }
+
           currentGroup = [];
         }
         currentSender = isSentByUs;
@@ -593,10 +618,31 @@ class MessagePreprocessor {
     // No olvidar el último grupo
     if (currentGroup.length > 0) {
       groups.push([...currentGroup]);
+
+      // Actualizar estadísticas del último grupo
+      stats.totalGroups++;
+      stats.groupSizes.push(currentGroup.length);
+
+      if (currentSender) {
+        stats.assistantGroups++;
+        stats.assistantMessages += currentGroup.length;
+      } else {
+        stats.userGroups++;
+        stats.userMessages += currentGroup.length;
+      }
     }
 
-    // NUEVO: Log para diagnóstico
-    console.log(`[MessagePreprocessor][DEBUG] groupMessagesByRole: Generados ${groups.length} grupos`);
+    // Log ÚNICO y resumido en vez de múltiples logs
+    console.log(`[MessagePreprocessor][DEBUG] Mensajes agrupados: ${messages.length} → ${groups.length} grupos (${stats.userGroups} usuario, ${stats.assistantGroups} asistente)`);
+
+    // Solo en modo debug mostramos detalles expandibles
+    if (window.CONFIG?.logging?.level === 'debug') {
+      console.groupCollapsed('[MessagePreprocessor][DEBUG] Detalle de grupos (expandir para ver)');
+      groups.forEach((group, i) => {
+        //console.log(`Grupo ${i+1}: ${group.length} mensajes, sentByUs=${group[0].sentByUs}`);
+      });
+      console.groupEnd();
+    }
 
     return groups;
   }

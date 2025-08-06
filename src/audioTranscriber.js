@@ -30,6 +30,7 @@ class AudioTranscriber {
     this.messageIdsToAudioUrls = new Map(); // messageId -> cleanUrl
     this.messageIdToTimestamp = new Map(); // messageId -> timestamp
     this.listenerAttached = new Set(); // Elementos con listeners
+    this.transcriptionLogs = [];
 
     // Estado para asociación por clic
     this.expectingAudioForMessageId = null;
@@ -461,9 +462,19 @@ class AudioTranscriber {
     // Pero generamos un ID limpio para el mapeo interno
     const cleanUrl = audioUrl.split('?')[0];
 
+    // Crear una entrada de log para esta transcripción
+    const logEntry = {
+      audioUrl: cleanUrl.split('/').pop(), // Extraer solo nombre de archivo para más claridad
+      messageId: messageId,
+      startTime: Date.now(),
+      steps: []
+    };
+
     if (this.pendingTranscriptions.has(cleanUrl) || this.completedTranscriptions.has(cleanUrl)) {
-      window.logManager.step(window.logManager.phases.TRANSCRIPTION, 'SKIP',
-        `Audio ${cleanUrl} ya está siendo procesado o completado`);
+      logEntry.status = 'skipped';
+      logEntry.reason = 'already_processed';
+      this.transcriptionLogs.push(logEntry);
+
       return this.getTranscription(cleanUrl);
     }
 
@@ -474,37 +485,20 @@ class AudioTranscriber {
       messageId
     });
 
-    // --- Array para coleccionar logs estructurados de este audio ---
-    const audioLogArray = [];
-
-    // 1. Log de inicio
-    window.logManager.phase(
-      window.logManager.phases.TRANSCRIPTION,
-      `Iniciando transcripción: ${audioUrl.substring(0, 50)}...${messageId ? ` (asociado a ${messageId})` : ''}`,
-      { url: audioUrl, messageId }
-    );
-    audioLogArray.push({ event: 'START', url: audioUrl, messageId, timestamp: Date.now() });
+    logEntry.steps.push({ name: 'start', time: Date.now() });
 
     try {
-      // 2. Descarga
-      window.logManager.step(window.logManager.phases.TRANSCRIPTION, 'DOWNLOAD', 'Descargando audio');
-      audioLogArray.push({ event: 'DOWNLOAD_START', timestamp: Date.now() });
-
+      // Descarga
+      logEntry.steps.push({ name: 'download_start', time: Date.now() });
       const audioBlob = await this.getAudioBlob(audioUrl);
       if (!audioBlob) throw new Error('Failed to obtain audio blob');
 
       const sizeKB = Math.round(audioBlob.size / 1024);
-      window.logManager.step(
-        window.logManager.phases.TRANSCRIPTION,
-        'DOWNLOAD_COMPLETE',
-        `Audio descargado: ${sizeKB} KB`
-      );
-      audioLogArray.push({ event: 'DOWNLOAD_COMPLETE', sizeKB, timestamp: Date.now() });
+      logEntry.sizeKB = sizeKB;
+      logEntry.steps.push({ name: 'download_complete', time: Date.now() });
 
-      // 3. Llamada a la API
-      window.logManager.step(window.logManager.phases.TRANSCRIPTION, 'API_CALL', 'Enviando audio a API');
-      audioLogArray.push({ event: 'API_CALL', timestamp: Date.now() });
-
+      // Transcripción API
+      logEntry.steps.push({ name: 'api_call', time: Date.now() });
       let transcription;
       if (window.apiClient && typeof window.apiClient.transcribeAudio === 'function') {
         transcription = await window.apiClient.transcribeAudio(audioBlob);
@@ -513,13 +507,10 @@ class AudioTranscriber {
       }
       if (!transcription) throw new Error('Transcription failed or returned empty');
 
-      audioLogArray.push({
-        event: 'API_RESPONSE',
-        textSnippet: transcription.substring(0, 50),
-        timestamp: Date.now()
-      });
+      logEntry.steps.push({ name: 'api_response', time: Date.now() });
+      logEntry.textLength = transcription.length;
 
-      // 4. Marcar completado y almacenar
+      // Guardar resultado
       const currentEntry = this.pendingTranscriptions.get(cleanUrl);
       this.pendingTranscriptions.delete(cleanUrl);
 
@@ -529,21 +520,16 @@ class AudioTranscriber {
         messageId: currentEntry?.messageId || messageId
       });
 
-      audioLogArray.push({
-        event: 'COMPLETE',
-        cleanUrl,
-        messageId: currentEntry?.messageId || messageId,
-        timestamp: Date.now()
-      });
-
       // Asociaciones y cache
       if (currentEntry?.messageId || messageId) {
         const assocId = currentEntry?.messageId || messageId;
         this.audioUrlsToMessages.set(cleanUrl, assocId);
         this.messageIdsToAudioUrls.set(assocId, cleanUrl);
+        logEntry.associatedId = assocId;
       }
       this.saveCache();
 
+      // Notificar coordinador de eventos
       if (window.eventCoordinator) {
         window.eventCoordinator.emit('audioTranscribed', {
           audioUrl: cleanUrl,
@@ -552,22 +538,32 @@ class AudioTranscriber {
         });
       }
 
-      // 5. Emitir un solo log estructurado con todo el array
-      window.logManager.phase(
-        window.logManager.phases.TRANSCRIPTION,
-        'STRUCTURED_LOGS',
-        'Historial estructurado de logs de transcripción',
-        audioLogArray
-      );
+      // Finalizar log
+      logEntry.status = 'success';
+      logEntry.endTime = Date.now();
+      logEntry.duration = logEntry.endTime - logEntry.startTime;
+      logEntry.transcription = transcription.substring(0, 50) + (transcription.length > 50 ? "..." : "");
+      this.transcriptionLogs.push(logEntry);
+
+      // Mantener un log mínimo por transcripción completa (esto puede ser útil)
+      console.log(`Transcription successful: ${transcription.substring(0, 50)}${transcription.length > 50 ? "..." : ""}`);
 
       return transcription;
 
     } catch (error) {
+      // Log de error
+      logEntry.status = 'error';
+      logEntry.errorMessage = error.message;
+      logEntry.endTime = Date.now();
+      logEntry.duration = logEntry.endTime - logEntry.startTime;
+      this.transcriptionLogs.push(logEntry);
+
+      // Mantener error logs ya que son importantes
       window.logManager.phase(
         window.logManager.phases.TRANSCRIPTION,
         'ERROR',
         `Error al transcribir audio: ${error.message}`,
-        { url: audioUrl, error }
+        { url: audioUrl }
       );
       this.pendingTranscriptions.delete(cleanUrl);
       return null;
@@ -580,7 +576,6 @@ class AudioTranscriber {
    * @returns {Promise<Blob>} Blob de audio
    */
   async getAudioBlob(audioUrl) {
-    this.debugLog(`Iniciando descarga de audio: ${audioUrl}`);
 
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
@@ -637,6 +632,50 @@ class AudioTranscriber {
       // Usar ApiClient si está disponible
       return await window.apiClient.transcribeAudio(audioBlob);
     }
+  }
+
+  /**
+ * Muestra un resumen de los logs de transcripción acumulados
+ */
+  showTranscriptionLogs() {
+    if (!this.transcriptionLogs || this.transcriptionLogs.length === 0) {
+      console.log('[AudioTranscriber] No hay logs de transcripción');
+      return;
+    }
+
+    // Estadísticas
+    const exitosos = this.transcriptionLogs.filter(log => log.status === 'success').length;
+    const fallidos = this.transcriptionLogs.filter(log => log.status === 'error').length;
+    const omitidos = this.transcriptionLogs.filter(log => log.status === 'skipped').length;
+    const tiempoTotal = this.transcriptionLogs
+      .filter(log => log.duration)
+      .reduce((total, log) => total + log.duration, 0);
+
+    // Mostrar un resumen
+    console.log(`[AudioTranscriber] Resumen de ${this.transcriptionLogs.length} transcripciones:`);
+    console.log(`- Exitosas: ${exitosos}`);
+    console.log(`- Fallidas: ${fallidos}`);
+    console.log(`- Omitidas: ${omitidos}`);
+    console.log(`- Tiempo total: ${tiempoTotal}ms (promedio: ${Math.round(tiempoTotal / exitosos)}ms por transcripción)`);
+
+    // Mostrar detalles en un grupo colapsado
+    console.groupCollapsed(`[AudioTranscriber] Detalle de transcripciones (${this.transcriptionLogs.length})`);
+
+    this.transcriptionLogs.forEach((log, index) => {
+      const status = log.status === 'success' ? '✅' : log.status === 'error' ? '❌' : '⏭️';
+      console.log(`${status} [${index + 1}/${this.transcriptionLogs.length}] ${log.audioUrl} (${log.duration || 0}ms)`);
+      if (log.transcription) {
+        console.log(`   "${log.transcription}"`);
+      }
+      if (log.errorMessage) {
+        console.log(`   Error: ${log.errorMessage}`);
+      }
+    });
+
+    console.groupEnd();
+
+    // Limpiar el array después de mostrar el resumen para evitar duplicados
+    this.transcriptionLogs = [];
   }
 
   /**
@@ -769,6 +808,8 @@ class AudioTranscriber {
     for (const batch of batches) {
       await processBatch(batch);
     }
+
+    this.showTranscriptionLogs();
 
     // Actualizar los mensajes originales con las transcripciones
     return messages.map(msg => {
@@ -960,18 +1001,22 @@ class AudioTranscriber {
     let messages = null;
     let timeBlocks = [];
 
+    // Arrays acumuladores para logs
+    const associationDetails = [];
+    let debugDetails = [];
+
     // Determinar formato de entrada y extraer datos adecuadamente
     if (Array.isArray(messageData)) {
       messages = messageData;
-      window.logManager.phase(window.logManager.phases.ASSOCIATION, 
+      window.logManager.phase(window.logManager.phases.ASSOCIATION,
         `Procesando array directo con ${messages.length} mensajes`);
     } else if (messageData && messageData.messages) {
       messages = messageData.messages;
       timeBlocks = messageData.timeBlocks || [];
-      window.logManager.phase(window.logManager.phases.ASSOCIATION, 
+      window.logManager.phase(window.logManager.phases.ASSOCIATION,
         `Procesando objeto con ${messages.length} mensajes y ${timeBlocks.length} bloques temporales`);
     } else {
-      window.logManager.phase(window.logManager.phases.ASSOCIATION, 'ERROR', 
+      window.logManager.phase(window.logManager.phases.ASSOCIATION, 'ERROR',
         'Formato de messageData no reconocido', messageData);
       return { assigned: 0, remaining: 0 };
     }
@@ -1037,13 +1082,13 @@ class AudioTranscriber {
       return { assigned: 0, remaining: messagesToAssign.length };
     }
 
-    if (window.logger) {
-      window.logger.process('ASSOCIATION', `Asociando ${messagesToAssign.length} mensajes con ${unassignedTranscriptions.length} transcripciones`);
-    } else {
+    // Acumular información en lugar de logs individuales
+    debugDetails.push(`Asociando ${messagesToAssign.length} mensajes con ${unassignedTranscriptions.length} transcripciones`);
+
+    if (this.DEBUG_MODE) {
       this.debugLog(`Asociando ${messagesToAssign.length} mensajes con ${unassignedTranscriptions.length} transcripciones`);
     }
 
-    // MODIFICACIÓN IMPORTANTE: Ordenar siempre por timestamp
     // Ordenar transcripciones por timestamp extraído de URL (crucial)
     unassignedTranscriptions.sort((a, b) => {
       // Priorizar transcripciones con timestamp extraído de URL
@@ -1054,10 +1099,7 @@ class AudioTranscriber {
       return a.timestamp - b.timestamp;
     });
 
-    if (window.logger) {
-      window.logger.substep('ASSOCIATION', 'ORDERING',
-        `Transcripciones ordenadas por timestamp de URL: ${unassignedTranscriptions.map(t => t.urlTimestamp || 'sin timestamp').join(', ')}`);
-    }
+    debugDetails.push(`Transcripciones ordenadas: ${unassignedTranscriptions.map(t => t.urlTimestamp || 'sin timestamp').slice(0, 5).join(', ')}${unassignedTranscriptions.length > 5 ? '...' : ''}`);
 
     // Ordenar mensajes por datos adicionales que podrían indicar orden (como ID o timestamp)
     messagesToAssign.forEach(msg => {
@@ -1090,24 +1132,19 @@ class AudioTranscriber {
       return getNumericPart(a.id) - getNumericPart(b.id);
     });
 
-    if (window.logger) {
-      window.logger.substep('ASSOCIATION', 'ORDERING',
-        `Mensajes ordenados: ${messagesToAssign.map(m => m._extractedTimestamp || 'sin timestamp').join(', ')}`);
-    }
+    debugDetails.push(`Mensajes ordenados: ${messagesToAssign.map(m => m._extractedTimestamp || 'sin timestamp').slice(0, 5).join(', ')}${messagesToAssign.length > 5 ? '...' : ''}`);
 
     // Asociación usando el orden cronológico determinado
     let assignedCount = 0;
     const assignedMessages = new Set();
     const assignedTranscriptions = new Set();
 
-    if (window.logger) window.logger.process('ASSOCIATION', "Utilizando asociación basada en timestamps");
-    else this.debugLog("Utilizando asociación basada en timestamps");
+    debugDetails.push("Utilizando asociación basada en timestamps");
 
     // Asociar mensajes y transcripciones en el orden determinado
     const assignableCount = Math.min(messagesToAssign.length, unassignedTranscriptions.length);
 
-    if (window.logger) window.logger.substep('ASSOCIATION', 'ASSIGNING', `Asignando ${assignableCount} transcripciones por orden cronológico`);
-    else this.debugLog(`Asignando ${assignableCount} transcripciones por orden cronológico`);
+    debugDetails.push(`Asignando ${assignableCount} transcripciones por orden cronológico`);
 
     for (let i = 0; i < assignableCount; i++) {
       const message = messagesToAssign[i];
@@ -1139,18 +1176,13 @@ class AudioTranscriber {
 
       assignedCount++;
 
-      // Log detallado para debugging
-      if (window.logger) {
-        window.logger.substep('ASSOCIATION', 'ASSIGNED',
-          `Mensaje ${message.id} asociado con "${transcriptionData.text.substring(0, 30)}..."`,
-          {
-            messageId: message.id,
-            urlTimestamp: transcriptionData.urlTimestamp,
-            messageTimestamp: message._extractedTimestamp || 'N/A'
-          });
-      } else {
-        this.debugLog(`Asociado: Mensaje ${message.id} con transcripción "${transcriptionData.text.substring(0, 30)}..."`);
-      }
+      // Acumular detalles de asociación en vez de logs individuales
+      associationDetails.push({
+        messageId: message.id,
+        urlTimestamp: transcriptionData.urlTimestamp,
+        messageTimestamp: message._extractedTimestamp || 'N/A',
+        transcriptionPreview: transcriptionData.text.substring(0, 30) + '...'
+      });
 
       // Recolectar datos adicionales para análisis en formato estructurado
       window.logManager.collect('associations', {
@@ -1166,9 +1198,21 @@ class AudioTranscriber {
     // Guardar caché actualizada
     this.saveCache();
 
-    // Mostrar resultado
+    // Mostrar resumen de resultados
     window.logManager.phase(window.logManager.phases.ASSOCIATION,
       `Asociación completada: ${assignedCount} de ${messagesToAssign.length} mensajes asociados`);
+
+    // Mostrar detalles de depuración expandibles si está en modo debug
+    if (this.DEBUG_MODE && associationDetails.length > 0) {
+      console.groupCollapsed(`[AudioTranscriber] Detalles de ${assignedCount} asociaciones (expandir para ver)`);
+
+      // Mostrar información de depuración acumulada
+      debugDetails.forEach(detail => console.log(detail));
+
+      // Mostrar tabla de asociaciones
+      console.table(associationDetails);
+      console.groupEnd();
+    }
 
     // Mostrar datos recolectados de forma estructurada pero con protección contra errores
     try {

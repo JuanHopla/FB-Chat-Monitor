@@ -51,7 +51,7 @@ class AssistantHandler {
       return true;
     } catch (error) {
       if (window.logManager) {
-        window.logManager.phase(window.logManager.phases.INITIALIZATION, 'ERROR', 
+        window.logManager.phase(window.logManager.phases.INITIALIZATION, 'ERROR',
           `Fallo al inicializar AssistantHandler: ${error.message}`, error);
       } else {
         logger.error('Failed to initialize AssistantHandler', {}, error);
@@ -146,7 +146,7 @@ class AssistantHandler {
    */
   async handleNewThread(fbThreadId, allMessages, chatRole, productData) {
     if (window.logManager) {
-      window.logManager.step('GENERATION', 'NEW_THREAD', 
+      window.logManager.step('GENERATION', 'NEW_THREAD',
         `Procesando nuevo hilo - fbThreadId: ${fbThreadId}, mensajes: ${allMessages.length}, rol: ${chatRole}`);
     } else {
       console.log(`[AssistantHandler][DEBUG] handleNewThread - fbThreadId: ${fbThreadId}, messages: ${allMessages.length}, role: ${chatRole}`);
@@ -162,7 +162,7 @@ class AssistantHandler {
       } else {
         console.log('[AssistantHandler] Detectada solicitud de seguimiento manual en un hilo nuevo.');
       }
-      
+
       if (!this._canPerformFollowUp(allMessages)) {
         if (window.logManager) {
           window.logManager.step('GENERATION', 'FOLLOW_UP', 'Límite de seguimiento alcanzado. No se creará hilo para evitar spam.');
@@ -172,7 +172,7 @@ class AssistantHandler {
         alert('Max follow-ups reached (3). The other user must respond to continue.');
         return ''; // Detener ejecución
       }
-      
+
       if (window.logManager) {
         window.logManager.step('GENERATION', 'FOLLOW_UP', 'Verificación de seguimiento pasada. Añadiendo instrucción de seguimiento');
       } else {
@@ -233,23 +233,24 @@ class AssistantHandler {
     }
 
     const messagesWithTranscriptions = await window.messagePreprocessor.attachTranscriptions(allMessages);
+    if (window.audioTranscriber && typeof window.audioTranscriber.showTranscriptionLogs === 'function') {
+      window.audioTranscriber.showTranscriptionLogs();
+    }
 
-    // NUEVO: Añadir este log completo:
-    console.log('==================== ARRAY COMPLETO DE MENSAJES CON TRANSCRIPCIONES ====================');
-    console.log('[AssistantHandler] [DEBUG] After attachTranscriptions:', JSON.parse(JSON.stringify(messagesWithTranscriptions)));
-
-    // NUEVO: Log adicional para visualizar específicamente los mensajes con audio y sus transcripciones
+    // OPTIMIZACIÓN: Reemplazar logs verbosos con resumen y detalles colapsables
     const audioMessages = messagesWithTranscriptions.filter(msg => msg.content?.hasAudio);
-    console.log(`[AssistantHandler] [DEBUG] ${audioMessages.length} mensajes con audio encontrados:`);
-    audioMessages.forEach((msg, idx) => {
-      console.log(`[${idx}] Mensaje ID: ${msg.id}`);
-      console.log(`    - audioUrl: ${msg.content.audioUrl ? 'Disponible' : 'No disponible'}`);
-      console.log(`    - transcripción: ${msg.content.transcribedAudio || 'No disponible'}`);
-      if (msg.content.transcribedAudio) {
-        console.log(`    - texto completo: "${msg.content.transcribedAudio}"`);
-      }
-    });
-    console.log('===================================================================================');
+    console.log(`[AssistantHandler] [DEBUG] ${audioMessages.length} mensajes con audio encontrados`);
+
+    // Solo en modo debug mostrar detalles expandibles
+    if (window.CONFIG?.logging?.level === 'debug') {
+      console.groupCollapsed('[AssistantHandler] [DEBUG] Detalles de mensajes con audio (expandir para ver)');
+      audioMessages.forEach((msg, idx) => {
+        console.log(`[${idx}] Mensaje ID: ${msg.id}`);
+        console.log(`    - audioUrl: ${msg.content.audioUrl ? 'Disponible' : 'No disponible'}`);
+        console.log(`    - transcripción: ${msg.content.transcribedAudio?.substring(0, 50)}${msg.content.transcribedAudio?.length > 50 ? '...' : ''}`);
+      });
+      console.groupEnd();
+    }
 
     const openAIMessages = await window.messagePreprocessor.formatMessagesForOpenAI(
       messagesWithTranscriptions.slice(-50),
