@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenAI Components Integration Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        h1,
+        h2 {
+            color: #333;
+        }
+
+        pre {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+            overflow: auto;
+        }
+
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 0;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        .log-container {
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            padding: 10px;
+            margin: 20px 0;
+            height: 400px;
+            overflow-y: auto;
+            background-color: #f9f9f9;
+        }
+
+        .success {
+            color: green;
+        }
+
+        .error {
+            color: red;
+        }
+
+        .warning {
+            color: orange;
+        }
+
+        #api-key-form {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+
+        input[type="text"] {
+            padding: 8px;
+            width: 300px;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>OpenAI Components Integration Test</h1>
+
+    <!-- 1. Form to enter the API key -->
+    <div id="api-key-form">
+        <h2>API Key Configuration</h2>
+        <p>Enter your OpenAI API key to run the tests:</p>
+        <input type="text" id="api-key-input" placeholder="sk-...">
+        <button id="save-key-btn">Save Key</button>
+    </div>
+
+    <!-- Visual assistant selector ALWAYS visible -->
+    <div id="assistant-selector" style="margin:20px 0; padding:15px; border:1px solid #ddd; border-radius:5px;">
+        <h2>Select assistants for the test</h2>
+        <div>
+            <label for="seller-assistant-select"><b>Seller Assistant:</b></label>
+            <select id="seller-assistant-select" style="width:300px">
+                <option value="">-- No assistants available --</option>
+            </select>
+        </div>
+        <div>
+            <label for="buyer-assistant-select"><b>Buyer Assistant:</b></label>
+            <select id="buyer-assistant-select" style="width:300px">
+                <option value="">-- No assistants available --</option>
+            </select>
+        </div>
+        <button id="save-assistants-btn" style="margin-top:10px;">Save assistants selection</button>
+    </div>
+
+    <!-- 3. Buttons to run the tests -->
+    <div>
+        <h2>Integration Tests</h2>
+        <p>These tests verify that all new OpenAI components work correctly together.</p>
+        <button id="run-tests-btn" disabled>Run Integration Tests</button>
+        <button id="clear-log-btn">Clear Log</button>
+    </div>
+
+    <!-- 4. Test results -->
+    <h2>Test Results</h2>
+    <div id="log" class="log-container"></div>
+
+    <script>
+        // Mock logger and CONFIG objects
+        window.logger = {
+            log: (...args) => {
+                console.log(...args);
+                logToUI('INFO', args.join(' '));
+            },
+            debug: (...args) => {
+                console.debug(...args);
+                logToUI('DEBUG', args.join(' '));
+            },
+            warn: (...args) => {
+                console.warn(...args);
+                logToUI('WARN', args.join(' '), 'warning');
+            },
+            error: (...args) => {
+                console.error(...args);
+                logToUI('ERROR', args.join(' '), 'error');
+            }
+        };
+
+        // Initial configuration WITHOUT hardcoded IDs
+        window.CONFIG = window.CONFIG || {};
+        window.CONFIG.AI = window.CONFIG.AI || {};
+        window.CONFIG.AI.assistants = {};
+
+        window.CONFIG.AI.apiKey = '';
+
+        window.storageUtils = {
+            data: {},
+            get: (key, defaultValue) => window.storageUtils.data[key] || defaultValue,
+            set: (key, value) => { window.storageUtils.data[key] = value; }
+        };
+
+        // UI Functions
+        function logToUI(level, message, className) {
+            const logElement = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.textContent = `[${level}] ${message}`;
+            if (className) {
+                entry.className = className;
+            }
+            logElement.appendChild(entry);
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        // Helpers to persist assistants selection
+        function saveSelectedAssistants(sellerId, buyerId) {
+            localStorage.setItem('TEST_OPENAI_SELLER_ASSISTANT_ID', sellerId);
+            localStorage.setItem('TEST_OPENAI_BUYER_ASSISTANT_ID', buyerId);
+            window.CONFIG.AI.assistants = {
+                seller: { id: sellerId },
+                buyer: { id: buyerId }
+            };
+        }
+
+        function loadSelectedAssistants() {
+            const sellerId = localStorage.getItem('TEST_OPENAI_SELLER_ASSISTANT_ID');
+            const buyerId = localStorage.getItem('TEST_OPENAI_BUYER_ASSISTANT_ID');
+            if (sellerId && buyerId) {
+                window.CONFIG.AI.assistants = {
+                    seller: { id: sellerId },
+                    buyer: { id: buyerId }
+                };
+                return { sellerId, buyerId };
+            }
+            return null;
+        }
+
+        // Logic to load assistants and populate selectors
+        async function loadAssistantsForSelection() {
+            // Use openaiManager as in the real system
+            let assistants = [];
+            let rawResult = null;
+            try {
+                if (window.openaiManager && typeof window.openaiManager.initialize === 'function') {
+                    window.openaiManager.initialize(window.CONFIG.AI.apiKey);
+                    rawResult = await window.openaiManager.listAssistants();
+                    assistants = rawResult;
+                } else if (window.apiClient && typeof window.apiClient.listAssistants === 'function') {
+                    rawResult = await window.apiClient.listAssistants();
+                    assistants = rawResult.data || [];
+                }
+                logToUI('DEBUG', 'Raw response from listAssistants: ' + JSON.stringify(rawResult));
+            } catch (err) {
+                logToUI('ERROR', 'Error loading assistants: ' + err.message, 'error');
+                return;
+            }
+
+            const sellerSelect = document.getElementById('seller-assistant-select');
+            const buyerSelect = document.getElementById('buyer-assistant-select');
+            sellerSelect.innerHTML = '<option value="">-- No assistants available --</option>';
+            buyerSelect.innerHTML = '<option value="">-- No assistants available --</option>';
+
+            if (!assistants || !assistants.length) {
+                logToUI('ERROR', 'No assistants available in your OpenAI account.', 'error');
+                document.getElementById('run-tests-btn').disabled = true;
+                return;
+            }
+
+            sellerSelect.innerHTML = '';
+            buyerSelect.innerHTML = '';
+            assistants.forEach(asst => {
+                const optionSeller = document.createElement('option');
+                optionSeller.value = asst.id;
+                optionSeller.textContent = `${asst.name || asst.id} (${asst.id})`;
+                sellerSelect.appendChild(optionSeller);
+
+                const optionBuyer = document.createElement('option');
+                optionBuyer.value = asst.id;
+                optionBuyer.textContent = `${asst.name || asst.id} (${asst.id})`;
+                buyerSelect.appendChild(optionBuyer);
+            });
+
+            // Preselect only if the saved IDs exist in the current list
+            const prev = loadSelectedAssistants();
+            if (prev) {
+                const sellerExists = assistants.some(a => a.id === prev.sellerId);
+                const buyerExists = assistants.some(a => a.id === prev.buyerId);
+                sellerSelect.value = sellerExists ? prev.sellerId : '';
+                buyerSelect.value = buyerExists ? prev.buyerId : '';
+                document.getElementById('run-tests-btn').disabled = !(sellerExists && buyerExists);
+            } else {
+                document.getElementById('run-tests-btn').disabled = true;
+            }
+        }
+
+        // When saving the selection, update config and storage
+        document.getElementById('save-assistants-btn').addEventListener('click', function () {
+            const sellerId = document.getElementById('seller-assistant-select').value;
+            const buyerId = document.getElementById('buyer-assistant-select').value;
+            if (!sellerId || !buyerId) {
+                logToUI('ERROR', 'You must select both assistants.', 'error');
+                return;
+            }
+            saveSelectedAssistants(sellerId, buyerId);
+            logToUI('INFO', 'Assistants selected successfully.', 'success');
+            document.getElementById('run-tests-btn').disabled = false;
+            if (window.openAIIntegrationTest && typeof window.openAIIntegrationTest.onAssistantsSelected === 'function') {
+                window.openAIIntegrationTest.onAssistantsSelected();
+            }
+        });
+
+        // Save API Key
+        document.getElementById('save-key-btn').addEventListener('click', async function () {
+            const apiKey = document.getElementById('api-key-input').value.trim();
+            if (apiKey) {
+                window.CONFIG.AI.apiKey = apiKey;
+                localStorage.setItem('TEST_OPENAI_API_KEY', apiKey);
+                if (window.apiClient && typeof window.apiClient.setApiKey === 'function') {
+                    window.apiClient.setApiKey(apiKey);
+                }
+                if (window.openaiManager && typeof window.openaiManager.initialize === 'function') {
+                    window.openaiManager.initialize(apiKey);
+                }
+                logToUI('INFO', 'API key saved successfully!', 'success');
+                await loadAssistantsForSelection();
+            } else {
+                logToUI('ERROR', 'API key cannot be empty', 'error');
+            }
+        });
+
+        // When saving the API key, load assistants and select if already saved
+        document.getElementById('save-key-btn').addEventListener('click', async function () {
+            const apiKey = document.getElementById('api-key-input').value.trim();
+            if (apiKey) {
+                window.CONFIG.AI.apiKey = apiKey;
+                localStorage.setItem('TEST_OPENAI_API_KEY', apiKey);
+                // NEW: Set the API key in the client
+                if (window.apiClient && typeof window.apiClient.setApiKey === 'function') {
+                    window.apiClient.setApiKey(apiKey);
+                }
+                logToUI('INFO', 'API key saved successfully!', 'success');
+                // Load assistants and select if already saved
+                await loadAssistantsForSelection();
+            } else {
+                logToUI('ERROR', 'API key cannot be empty', 'error');
+            }
+        });
+
+        // On page load, if there is a saved API key and assistants, select and enable the test
+        window.addEventListener('DOMContentLoaded', async function () {
+            const savedKey = localStorage.getItem('TEST_OPENAI_API_KEY');
+            if (savedKey) {
+                document.getElementById('api-key-input').value = savedKey;
+                window.CONFIG.AI.apiKey = savedKey;
+                // NEW: Set the API key in the client
+                if (window.apiClient && typeof window.apiClient.setApiKey === 'function') {
+                    window.apiClient.setApiKey(savedKey);
+                }
+                if (window.openaiManager && typeof window.openaiManager.initialize === 'function') {
+                    window.openaiManager.initialize(savedKey);
+                }
+                const prev = loadSelectedAssistants();
+                if (prev) {
+                    document.getElementById('run-tests-btn').disabled = false;
+                }
+                await loadAssistantsForSelection();
+            } else {
+                await loadAssistantsForSelection();
+            }
+        });
+
+        // Clear log
+        document.getElementById('clear-log-btn').addEventListener('click', clearLog);
+
+        // Run tests button
+        document.getElementById('run-tests-btn').addEventListener('click', async function () {
+            // Improved availability check
+            if (!window.openAIIntegrationTest) {
+                logToUI('ERROR', 'Test harness not loaded yet! Trying to reload dependencies...', 'error');
+
+                // Show component status
+                logToUI('INFO', 'Current component status:');
+                logToUI('INFO', `- ApiClient: ${window.apiClient ? 'Available' : 'Not available'}`);
+                logToUI('INFO', `- ThreadStore: ${window.threadStore ? 'Available' : 'Not available'}`);
+                logToUI('INFO', `- MessagePreprocessor: ${window.messagePreprocessor ? 'Available' : 'Not available'}`);
+                logToUI('INFO', `- AssistantHandler: ${window.assistantHandler ? 'Available' : 'Not available'}`);
+
+                await loadDependencies(); // Try to reload dependencies
+
+                if (!window.openAIIntegrationTest) {
+                    logToUI('ERROR', 'Could not load test harness after retry. Check console for errors.', 'error');
+                    return;
+                }
+                logToUI('INFO', 'Test harness successfully loaded after retry', 'success');
+            }
+
+            try {
+                this.disabled = true;
+                this.textContent = 'Running Tests...';
+                clearLog();
+                logToUI('INFO', '🧪 Starting Integration Tests 🧪');
+
+                // Add global error handler during tests
+                const originalOnError = window.onerror;
+                window.onerror = function (message, source, lineno, colno, error) {
+                    logToUI('ERROR', `Unhandled error: ${message} (line ${lineno})`, 'error');
+                    console.error('Unhandled error during tests:', error);
+                    return true; // Prevent default handling
+                };
+
+                try {
+                    await window.openAIIntegrationTest.runTests();
+                } finally {
+                    // Restore original error handler
+                    window.onerror = originalOnError;
+                }
+            } catch (error) {
+                logToUI('ERROR', `Test execution failed: ${error.message}`, 'error');
+                console.error('Test execution error:', error);
+            } finally {
+                this.disabled = false;
+                this.textContent = 'Run Integration Tests';
+            }
+        });
+
+        // Dynamic script loading function - improved with better error handling
+        function loadScript(url) {
+            return new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = url;
+                script.onload = () => {
+                    console.log(`Script loaded: ${url}`);
+                    resolve();
+                };
+                script.onerror = (e) => {
+                    console.error(`Failed to load script: ${url}`, e);
+                    reject(new Error(`Failed to load script: ${url}`));
+                };
+                document.body.appendChild(script);
+            });
+        }
+
+        // Ensure window.apiClient is an instance of ApiClient (from src/core/openai/ApiClient.js)
+        async function ensureApiClient() {
+            if (!window.ApiClient) {
+                await loadScript('../ApiClient.js'); // Use correct path and capitalization
+            }
+            window.apiClient = window.apiClient || new window.ApiClient();
+        }
+
+        // Modify loadDependencies to ensure components from src/core/openai/ are loaded in order
+        async function loadDependencies() {
+            try {
+                logToUI('INFO', 'Loading dependencies...');
+                document.querySelectorAll('script[data-component]').forEach(script => script.remove());
+
+                // 1. Load ApiClient.js first and create window.apiClient correctly
+                await ensureApiClient();
+                logToUI('INFO', 'ApiClient.js loaded and apiClient initialized', 'success');
+
+                // 2. Load the rest of the components from src/core/openai/
+                const components = [
+                    '../ThreadStore.js',
+                    '../MessagePreprocessor.js',
+                    '../AssistantHandler.js',
+                    '../tests/integration-test.js'
+                ];
+
+                for (const component of components) {
+                    await loadScript(component);
+                    logToUI('INFO', `Loaded ${component} successfully`, 'success');
+                }
+
+                // Check that the components are available globally
+                setTimeout(() => {
+                    logToUI('INFO', 'Checking component availability after loading:');
+                    logToUI('INFO', `- OpenAIApiClient: ${window.OpenAIApiClient ? 'Available ✓' : 'Not available ✗'}`);
+                    logToUI('INFO', `- apiClient: ${window.apiClient ? 'Available ✓' : 'Not available ✗'}`);
+                    logToUI('INFO', `- ThreadStore: ${window.threadStore ? 'Available ✓' : 'Not available ✗'}`);
+                    logToUI('INFO', `- MessagePreprocessor: ${window.messagePreprocessor ? 'Available ✓' : 'Not available ✗'}`);
+                    logToUI('INFO', `- AssistantHandler: ${window.assistantHandler ? 'Available ✓' : 'Not available ✗'}`);
+                    logToUI('INFO', `- Integration Test: ${window.openAIIntegrationTest ? 'Available ✓' : 'Not available ✗'}`);
+
+                    if (window.openAIIntegrationTest) {
+                        logToUI('INFO', 'All dependencies and test harness loaded successfully!', 'success');
+                    } else {
+                        logToUI('ERROR', 'Test harness not available after loading scripts', 'error');
+                    }
+                }, 500);
+            } catch (error) {
+                logToUI('ERROR', `Error loading dependencies: ${error.message}`, 'error');
+                console.error('Failed to load dependencies:', error);
+            }
+        }
+
+        // Load dependencies when page loads
+        window.addEventListener('DOMContentLoaded', loadDependencies);
+    </script>
+</body>
+
+</html>

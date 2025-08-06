@@ -17,25 +17,19 @@ class ChatManager {
     this.pendingChats = []; // Queue of unread chats
     this.currentChatId = null; // Currently open chat ID
     this.chatHistory = new Map(); // Conversation history by ID
-    this.isProcessing = false; // Indicates if we are processing messages
-    this.conversationLogs = JSON.parse(localStorage.getItem('FB_CHAT_MONITOR_LOGS') || '[]');
     this.lastProcessedMessageCount = 0; // Counter of processed messages
-    this.manualChatChangeDetected = false; // Indicator of manual changes
-    this.activeChatObserver = null; // Observer for active chat content
-    this.lastScrollHeight = 0; // To detect new messages by scrolling
     this.isProcessingChat = false; // Anti-concurrency flag
     this.respondedChats = new Set(); // Avoids duplicate responses in auto mode
     this.isResponding = false; // New anti-reentrancy flag
 
-    // State to simulate human typing
-    this.typingState = {
-      isTyping: false,
-      intervalId: null,
-      chatId: null
-    };
 
     // Configure URL monitoring for manual chat changes
     this._setupUrlChangeDetection();
+
+    // Initializes the audio association system (if available)
+    if (window.audioTranscriber && typeof window.audioTranscriber.init === 'function') {
+      window.audioTranscriber.init();
+    }
   }
 
   //===================================================================
@@ -66,21 +60,25 @@ class ChatManager {
    * @private
    * @param {string} url - The new URL
    */
+  // In the method that handles chat changes (_handleUrlChange or similar)
   _handleUrlChange(url) {
     try {
-      // Extract chat ID from messenger URL in marketplace
-      // Format: https://www.messenger.com/marketplace/t/1234567890/
-      const marketplaceMatch = url.match(/\/marketplace\/t\/(\d+)/);
+      const oldChatId = this.currentChatId;
 
-      if (marketplaceMatch && marketplaceMatch[1]) {
-        const chatId = marketplaceMatch[1];
+      // Extract new chatId from the URL
+      const chatIdMatch = url.match(/\/t\/(\d+)/);
+      if (chatIdMatch && chatIdMatch[1]) {
+        const newChatId = chatIdMatch[1];
 
-        // Update only if different from current
-        if (chatId !== this.currentChatId) {
-          logger.debug(`Manual chat change detected to ID: ${chatId}`);
-          this.currentChatId = chatId;
+        // If it's a real chat change
+        if (newChatId !== oldChatId) {
+          this.currentChatId = newChatId;
+          console.log(`[ChatManager] Chat change detected: ${oldChatId} -> ${newChatId}`);
 
-          logger.debug('Chat ID updated. The chat will be processed when Generate Response is clicked.');
+          // NEW: Reset transcription state for the new chat
+          if (window.audioTranscriber && typeof window.audioTranscriber.resetForNewChat === 'function') {
+            window.audioTranscriber.resetForNewChat(newChatId);
+          }
         }
       }
     } catch (error) {
@@ -383,8 +381,6 @@ class ChatManager {
         // Pass isAutoMode value for auto-response
         await this.processCurrentChat(isAutoMode);
 
-        await this.markChatAsRead();
-
         return true;
       }
       // OPTION 2: Navigate directly by URL if we have a numeric ID
@@ -396,7 +392,6 @@ class ChatManager {
 
         // Change current location - this will reload the page
         window.location.href = url;
-        await this.markChatAsRead();
         return true;
       }
 
@@ -414,45 +409,101 @@ class ChatManager {
 
   /**
    * Generates a response for the current chat (used by Generate Response button)
-   * This method now handles both extraction and response generation
+   * This method now uses only openaiManager and core modules
    * @returns {Promise<boolean} True if the response was successfully generated
    */
   async generateResponseForCurrentChat() {
-    if (!this.currentChatId) {
-      logger.error('No active chat to generate response');
-      showSimpleAlert('No active chat detected. Please select a chat first.', 'error');
-      return false;
-    }
-
     try {
-      logger.debug('Generate Response button clicked - processing current chat');
-
-      // First, extract all chat data - this is now only done when the button is clicked
-      await this.extractCurrentChatData();
-
-      // Get updated chat data
-      const chatData = this.chatHistory.get(this.currentChatId);
-      if (!chatData || !chatData.messages || chatData.messages.length === 0) {
-        logger.error('Could not extract chat data');
-        showSimpleAlert('Could not extract chat data. Please try again.', 'error');
+      if (this.isResponding) {
+        logger.warn('Already generating a response. Please wait.');
         return false;
       }
 
-      // Create context for response generation
+      this.isResponding = true;
+
+      if (!this.currentChatId) {
+        logger.error('No active chat to generate response');
+        showSimpleAlert('No active chat detected. Please select a chat first.', 'error');
+        return false;
+      }
+
+      window.logManager.phase(window.logManager.phases.GENERATION, 'Extracting data from current chat');
+
+      // Increment the counter of processed chats in manual mode
+      if (window.FBChatMonitor && typeof window.FBChatMonitor.incrementChatsProcessed === 'function') {
+        window.FBChatMonitor.incrementChatsProcessed();
+      }
+
+      // Extract chat data
+      const chatData = await this.extractCurrentChatData();
+
+      if (!chatData || !chatData.success) {
+        logger.error('Failed to extract chat data for response generation');
+        window.logManager.phase(window.logManager.phases.GENERATION, 'ERROR',
+          'Could not extract chat data');
+        return false;
+      }
+
+      // Ensure openaiManager is available
+      if (!window.openaiManager) {
+        logger.error('OpenAI Manager not available');
+        window.logManager.phase(window.logManager.phases.GENERATION, 'ERROR',
+          'OpenAI Manager is not available');
+        return false;
+      }
+
       const context = {
         chatId: this.currentChatId,
-        role: chatData.isSeller ? 'seller' : 'buyer',
-        messages: chatData.messages,
-        productDetails: chatData.productDetails
+        role: chatData.chatData.isSeller ? 'seller' : 'buyer',
+        messages: chatData.chatData.messages,
+        productDetails: chatData.chatData.productDetails,
+        forceNewGeneration: true // NEW: Add flag to force new generation
       };
 
-      // Generate response
-      await this.handleResponse(context);
-      return true;
+      window.logManager.step(window.logManager.phases.GENERATION, 'CONTEXT_BUILT',
+        `Context built for response generation as ${context.role}`,
+        {
+          chatId: context.chatId,
+          role: context.role,
+          messageCount: context.messages.length,
+          hasProduct: !!context.productDetails,
+          forceNewGeneration: true
+        });
+
+      // Log before calling openaiManager
+      window.logManager.step(window.logManager.phases.GENERATION, 'API_CALL',
+        'Calling openaiManager.generateResponse(context) with forceNewGeneration=true');
+
+      const response = await window.openaiManager.generateResponse(context);
+
+      // Log after receiving the response
+      window.logManager.step(window.logManager.phases.GENERATION, 'RESPONSE_RECEIVED',
+        `Response received from assistant (${response?.length || 0} characters)`,
+        { responsePreview: response?.substring(0, 100) });
+
+      if (response && typeof response === 'string' && response.trim()) {
+        this.insertResponseInInputField(response);
+        window.logManager.phase(window.logManager.phases.GENERATION,
+          'Response generated and inserted into the input field');
+
+        // Log to history (new line)
+        this.logResponseToHistory(context, context.role, response, false);
+        return true;
+      } else {
+        window.logManager.phase(window.logManager.phases.GENERATION, 'ERROR',
+          'No response was generated by OpenAI');
+
+        showSimpleAlert('No response generated by OpenAI.', 'warning');
+        return false;
+      }
     } catch (error) {
-      logger.error(`Error generating response: ${error.message}`);
+      window.logManager.phase(window.logManager.phases.GENERATION, 'ERROR',
+        `Error generating response: ${error.message}`, error);
+
       showSimpleAlert(`Error generating response: ${error.message}`, 'error');
       return false;
+    } finally {
+      this.isResponding = false;
     }
   }
 
@@ -486,29 +537,97 @@ class ChatManager {
         logger.debug(`Product link found: ${productLink}`);
         // Pass productLink to extractor
         productDetails = await productExtractor.getProductDetails(productId, productLink);
-        // INJECT: revert to fresh URLs from the DOM
-        // productDetails.images = productExtractor.getProductImagesFromChat(chatContainer); // Comentado: getProductImagesFromChat no está disponible en productExtractor
-        // logger.debug(`Product images extracted from DOM: ${productDetails.images.length} URLs`); // Comentar o ajustar si la línea anterior se elimina
       }
 
       // Get the messages container
       const messagesWrapper = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageWrapper);
-      const scrollContainer = domUtils.findElement(
-        CONFIG.selectors.activeChat.scrollbar,
-        messagesWrapper
-      ) || messagesWrapper;
 
-      // Scroll to load full history
-      await domUtils.scrollToTop(scrollContainer);
+      // NEW INTEGRATION: Use ScrollManager to manage scroll depending on thread type
+      // Determine if it's a new or existing thread
+      const threadInfo = window.threadStore?.getThreadInfo?.(this.currentChatId);
+      const isNewThread = !threadInfo;
+      logger.log(`Thread type: ${isNewThread ? 'new' : 'existing'}`);
+
+      // Extract messages depending on thread type
+      let messages = [];
+
+      if (window.scrollManager) {
+        if (isNewThread) {
+          // For new threads: perform a full scroll to the beginning
+          logger.log('New thread: performing complete scroll to beginning');
+          await window.scrollManager.scrollToBeginning({
+            onScroll: () => {
+              // Detect audios while scrolling
+              if (window.audioTranscriber) {
+                window.audioTranscriber.checkForAudioResources();
+              }
+            }
+          });
+
+          // Extract messages after the full scroll
+          messages = await this.extractChatHistory(messagesWrapper);
+
+          // Restore original position (at the end of the conversation)
+          await window.scrollManager.restorePosition();
+
+          // Check if we really returned to the end, if not, force scroll
+          const scrollContainer = domUtils.findElement(CONFIG.selectors.activeChat.scrollbar, messagesWrapper);
+          if (scrollContainer) {
+            // Wait a moment for the DOM to stabilize
+            await new Promise(resolve => setTimeout(resolve, 100));
+
+            // If the scroll is not in the correct position, force scroll to the end
+            if (Math.abs(scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight) > 50) {
+              logger.debug('Forcing scroll to bottom after restoration');
+              scrollContainer.scrollTop = scrollContainer.scrollHeight;
+            }
+          }
+        } else {
+          // For existing threads: try to load up to the last known message
+          if (threadInfo?.lastMessageId) {
+            logger.log(`Existing thread: scrolling to last known message: ${threadInfo.lastMessageId}`);
+            await window.scrollManager.scrollToMessage(threadInfo.lastMessageId);
+          }
+
+          // Extract visible messages
+          messages = await this.extractChatHistory(messagesWrapper);
+
+          // NEW IMPLEMENTATION: Also restore position for existing threads
+          logger.log('Existing thread: restoring original scroll position');
+          await window.scrollManager.restorePosition();
+
+          // Also check for existing threads if we returned to the correct position
+          const scrollContainer = domUtils.findElement(CONFIG.selectors.activeChat.scrollbar, messagesWrapper);
+          if (scrollContainer) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+
+            if (Math.abs(scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight) > 50) {
+              logger.debug('Forcing scroll to bottom after restoration for existing thread');
+              scrollContainer.scrollTop = scrollContainer.scrollHeight;
+            }
+          }
+        }
+      } else {
+        // Fallback to the old method if scrollManager is not available
+        logger.warn('ScrollManager not available, using legacy scroll method');
+        const scrollContainer = domUtils.findElement(
+          CONFIG.selectors.activeChat.scrollbar,
+          messagesWrapper
+        ) || messagesWrapper;
+
+        // Save original position
+        const originalPosition = scrollContainer.scrollTop;
+
+        await domUtils.scrollToTop(scrollContainer);
+        messages = await this.extractChatHistory(messagesWrapper);
+
+        // Restore position (at the end of the conversation)
+        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      }
+
       // Determine if we are seller or buyer
       const isSeller = this.determineIfSeller(chatContainer);
       logger.log(`Role in chat: ${isSeller ? 'seller' : 'buyer'}`);
-      scrollContainer.scrollTop = scrollContainer.scrollHeight;
-
-      // Get the full chat history with improved extraction
-      // Pass messagesWrapper to extractChatHistory
-      const messages = await this.extractChatHistory(messagesWrapper);
-      logger.log(`Extracted ${messages.length} messages from chat`);
 
       // Store in history
       const chatData = {
@@ -530,18 +649,18 @@ class ChatManager {
 
   /**
    * Processes the current chat: Extracts data and optionally generates response.
+   * Combines the old logic with improved scroll/thread detection from the new version.
    * @param {boolean} autoRespond - Whether to automatically generate response
    * @returns {Promise<boolean>} - True if processing was successful
    */
   async processCurrentChat(autoRespond = false) {
-    // FIX: Explicitly check operation mode if not provided
+    // Explicitly check operation mode if not provided
     if (autoRespond === undefined || autoRespond === null) {
       autoRespond = window.CONFIG?.operationMode === 'auto';
       logger.debug(`Auto-respond not specified, using global setting: ${autoRespond ? 'AUTO' : 'MANUAL'}`);
     }
 
-    // NEW PROTECTION: If we are in AUTO mode, preventively clear the input field
-    // before any processing to avoid sending pre-existing text
+    // Preventively clear the input field in AUTO mode
     if (autoRespond) {
       try {
         logger.debug(`AUTO mode detected - Preventively clearing input field`);
@@ -560,15 +679,14 @@ class ChatManager {
         }
       } catch (e) {
         logger.error(`Error in preventive cleaning: ${e.message}`);
-        // Continue despite error
       }
     }
 
-      // If we already responded to this chat in auto mode, skip to avoid duplicates
-      if (autoRespond && this.respondedChats.has(this.currentChatId)) {
-        logger.debug(`Auto-response already sent for chat ${this.currentChatId}, skipping.`);
-        return true;
-      }
+    // If we already responded to this chat in auto mode, skip to avoid duplicates
+    if (autoRespond && this.respondedChats.has(this.currentChatId)) {
+      logger.debug(`Auto-response already sent for chat ${this.currentChatId}, skipping.`);
+      return true;
+    }
 
     // Anti-reentrancy
     if (autoRespond && this.isResponding) {
@@ -577,52 +695,154 @@ class ChatManager {
     }
     this.isResponding = autoRespond;
 
-    // Step 1: Extract data
-    const extractionResult = await this.extractCurrentChatData();
-
-    if (!extractionResult.success) {
-      logger.error('Failed to extract chat data during processCurrentChat.');
-      return false; // Indicate failure
-    }
-
-    // Step 2: Optionally generate response if autoRespond is true
-    if (autoRespond) {
-      logger.debug(`Automatic response enabled for chat ${this.currentChatId} (operationMode: ${window.CONFIG?.operationMode})`);
-      const chatData = extractionResult.chatData;
-
-      if (!chatData || !chatData.messages || chatData.messages.length === 0) {
-        logger.warn('No messages found in extracted data, cannot auto-respond.');
-        return true;
-      }
-
-      // Create context for response generation
-      const context = {
-        chatId: this.currentChatId,
-        role: chatData.isSeller ? 'seller' : 'buyer',
-        messages: chatData.messages,
-        productDetails: chatData.productDetails
-      };
-
-      try {
-        // FIX: Add more diagnostic logs
-        logger.log(`Generating automatic response as ${context.role} for chat ${this.currentChatId}`);
-
-        // Call handleResponse to generate and potentially send the response
-        await this.handleResponse(context);
-        this.respondedChats.add(this.currentChatId); // Mark as responded
-
-        logger.log('Automatic response generated and sent successfully');
-        return true;
-      } catch (responseError) {
-        logger.error(`Error during automatic response generation: ${responseError.message}`);
+    // --- BEGIN: Improved scroll/thread logic from new version ---
+    try {
+      logger.log('Processing current chat with improved scroll/thread logic');
+      const chatContainer = document.querySelector(CONFIG.selectors.activeChat.container);
+      if (!chatContainer) {
+        logger.error('Active chat container not found');
+        this.isResponding = false;
         return false;
       }
-    } else {
-      logger.debug(`Automatic response disabled for chat ${this.currentChatId}. Only data was extracted.`);
-    }
 
-    this.isResponding = false;
-    return true; // Indicate successful processing (at least extraction)
+      const chatId = this.currentChatId;
+      if (!chatId) {
+        logger.error('Could not extract chat ID');
+        this.isResponding = false;
+        return false;
+      }
+
+      // Get thread info to determine if it's a new or existing thread
+      const threadInfo = window.threadStore?.getThreadInfo?.(chatId);
+      const isNewThread = !threadInfo;
+      logger.debug(`Thread ${isNewThread ? 'NEW' : 'EXISTING'}: ${chatId}`);
+
+      // Prepare messages extraction with scroll logic
+      let messages = [];
+      const messagesWrapper = chatContainer.querySelector(CONFIG.selectors.activeChat.messageWrapper);
+
+      if (!messagesWrapper) {
+        logger.error('Messages wrapper not found');
+        this.isResponding = false;
+        return false;
+      }
+
+      if (isNewThread && window.scrollManager) {
+        logger.debug('New thread: performing complete scroll to beginning');
+        await window.scrollManager.scrollToBeginning({
+          onScroll: () => {
+            if (window.audioTranscriber) {
+              window.audioTranscriber.checkForAudioResources();
+            }
+          }
+        });
+        messages = await this.extractChatHistory(messagesWrapper);
+        await window.scrollManager.restorePosition();
+        // Ensure scroll is at the end
+        const scrollContainer = messagesWrapper.querySelector(CONFIG.selectors.activeChat.scrollbar) ||
+          messagesWrapper.querySelector('div[style*="overflow-y: auto"]');
+        if (scrollContainer) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          if (Math.abs(scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight) > 50) {
+            logger.debug('Forcing scroll to bottom after restoration');
+            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+          }
+        }
+      } else if (!isNewThread && window.scrollManager && threadInfo?.lastMessageId) {
+        logger.debug(`Existing thread: scrolling to last known message: ${threadInfo.lastMessageId}`);
+        await window.scrollManager.scrollToMessage(threadInfo.lastMessageId);
+        messages = await this.extractChatHistory(messagesWrapper);
+        await window.scrollManager.restorePosition();
+        const scrollContainer = messagesWrapper.querySelector(CONFIG.selectors.activeChat.scrollbar) ||
+          messagesWrapper.querySelector('div[style*="overflow-y: auto"]');
+        if (scrollContainer) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          if (Math.abs(scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight) > 50) {
+            logger.debug('Forcing scroll to bottom after restoration for existing thread');
+            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+          }
+        }
+      } else {
+        logger.debug('Extracting messages without special scroll');
+        messages = await this.extractChatHistory(messagesWrapper);
+      }
+
+      // If no messages found, abort
+      if (!messages || messages.length === 0) {
+        logger.error('No messages found in conversation');
+        this.isResponding = false;
+        return false;
+      }
+
+      // Extract product details and role as in the old method
+      let productDetails = null;
+      if (typeof this.extractProductDetails === 'function') {
+        try {
+          productDetails = await this.extractProductDetails(chatContainer);
+        } catch (e) {
+          logger.warn('Error extracting product details: ' + e.message);
+        }
+      }
+      let isSeller = false;
+      if (typeof this.determineIfSeller === 'function') {
+        try {
+          isSeller = this.determineIfSeller(chatContainer);
+        } catch (e) {
+          logger.warn('Error determining seller/buyer: ' + e.message);
+        }
+      }
+
+      // Store in chatHistory for compatibility with old flow
+      this.chatHistory.set(chatId, {
+        messages,
+        productDetails,
+        isSeller,
+        lastUpdated: new Date()
+      });
+
+      // Step 2: Optionally generate response if autoRespond is true
+      if (autoRespond) {
+        logger.debug(`Automatic response enabled for chat ${chatId} (operationMode: ${window.CONFIG?.operationMode})`);
+        const chatData = { messages, productDetails, isSeller };
+
+        if (!chatData || !chatData.messages || chatData.messages.length === 0) {
+          logger.warn('No messages found in extracted data, cannot auto-respond.');
+          this.isResponding = false;
+          return true;
+        }
+
+        // Create context for response generation
+        const context = {
+          chatId,
+          role: isSeller ? 'seller' : 'buyer',
+          messages,
+          productDetails
+        };
+
+        try {
+          logger.log(`Generating automatic response as ${context.role} for chat ${chatId}`);
+          await this.handleResponse(context);
+          this.respondedChats.add(chatId); // Mark as responded
+          logger.log('Automatic response generated and sent successfully');
+          this.isResponding = false;
+          return true;
+        } catch (responseError) {
+          logger.error(`Error during automatic response generation: ${responseError.message}`);
+          this.isResponding = false;
+          return false;
+        }
+      } else {
+        logger.debug(`Automatic response disabled for chat ${chatId}. Only data was extracted.`);
+      }
+
+      this.isResponding = false;
+      return true;
+    } catch (error) {
+      logger.error('Error processing chat', {}, error);
+      this.isResponding = false;
+      return false;
+    }
+    // --- END: Improved scroll/thread logic ---
   }
 
   /**
@@ -674,24 +894,125 @@ class ChatManager {
   }
 
   /**
-   * Extracts the full chat history - PHASE 2: Improved timestamp validation and message structure
+   * Finds date/time separators in the DOM using multiple methods
+   * @returns {Array<Object>} Array of separators found
+   */
+  findDateSeparators() {
+    const separators = [];
+
+    try {
+      // Array of selectors to test in order of priority
+      const selectors = [
+        'div[data-scope="date_break"]',           // Specific FB Messenger selector
+        'span.x186z157.xk50ysn',                  // Alternative selector identified
+        'h4 span.xdj266r',                        // Selector for headers
+        'div[role="row"] div[aria-hidden="true"]', // Possible selector for separators
+        'div[role="separator"]',                  // Generic selector for separators
+        'h4'                                      // Section headers (could contain dates)
+      ];
+
+      // Try each selector
+      let elementsFound = [];
+      let successfulSelector = null;
+
+      for (const selector of selectors) {
+        const elements = document.querySelectorAll(selector);
+        if (elements.length > 0) {
+          elementsFound = Array.from(elements);
+          successfulSelector = selector;
+          logger.debug(`Found ${elements.length} possible date separators using ${selector}`);
+          break;
+        }
+      }
+
+      // If we didn't find anything with selectors, try searching by content
+      if (elementsFound.length === 0) {
+        // Search for elements that could contain date texts (patterns like "10/8/24" or "Today")
+        const datePatterns = [
+          /\d{1,2}\/\d{1,2}\/\d{2,4}/,          // 10/8/24, 01/15/2024
+          /^(Today|Yesterday|Ayer|Hoy)/i,        // Today, Yesterday, etc
+          /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i // Jan 15, Oct 8, etc
+        ];
+
+        // Search for span or div with texts that match these patterns
+        const allTextElements = document.querySelectorAll('span, div[role="row"]');
+
+        elementsFound = Array.from(allTextElements).filter(el => {
+          const text = el.textContent.trim();
+          return datePatterns.some(pattern => pattern.test(text)) && text.length < 50; // Avoid long texts
+        });
+
+        if (elementsFound.length > 0) {
+          logger.debug(`Found ${elementsFound.length} possible date separators by text pattern`);
+          successfulSelector = 'content-pattern';
+        }
+      }
+
+      // Process the elements found
+      elementsFound.forEach((element, index) => {
+        try {
+          // Get the text
+          const dateText = element.textContent.trim();
+
+          // Ignore if it doesn't look like a date
+          if (!dateText || dateText.length < 5) return;
+
+          // Verify if it contains a date pattern
+          const hasDatePattern = /\d{1,2}\/\d{1,2}\/\d{2,4}|\d{1,2}:\d{2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i.test(dateText);
+          if (!hasDatePattern) return;
+
+          // Try to parse the date
+          const timestamp = this.parseDateString(dateText);
+          if (!timestamp) return;
+
+          // Find the parent element (row) if it exists
+          const parentRow = element.closest('div[role="row"]');
+
+          separators.push({
+            element: parentRow || element,
+            timestamp,
+            text: dateText,
+            index
+          });
+
+          logger.debug(`Date separator #${index + 1}: "${dateText}" (${new Date(timestamp).toLocaleString()})`);
+        } catch (e) {
+          logger.warn(`Error processing possible date separator: ${e.message}`);
+        }
+      });
+
+      // Sort by timestamp
+      separators.sort((a, b) => a.timestamp - b.timestamp);
+
+      logger.log(`Found ${separators.length} time blocks using ${successfulSelector || 'no selector'}`);
+      return separators;
+    } catch (error) {
+      logger.error(`Error searching for date separators: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Extracts the complete chat history - IMPROVED VERSION with support for time blocks
    * @param {HTMLElement} messagesWrapper - Message container
    * @returns {Promise<Array>} Array of extracted messages
    */
   async extractChatHistory(messagesWrapper) {
     if (this.isProcessingChat) {
-      logger.warn('Chat history extraction already in progress. Skipping.');
+      logger.warn('History extraction already in progress. Skipping.');
       return [];
     }
     if (!messagesWrapper) {
-      logger.error('messagesWrapper element not provided to extractChatHistory.');
+      logger.error('No messagesWrapper element provided to extractChatHistory.');
       return [];
     }
 
     this.isProcessingChat = true;
-    logger.debug('Starting chat history extraction (simplified)…');
+    logger.debug('Starting chat history extraction...');
 
     const messages = [];
+    const timeBlocks = []; // Array to record time blocks
+    let currentTimeBlock = null; // Current time block
     let messageElements = [];
 
     try {
@@ -702,7 +1023,7 @@ class ChatManager {
         senderAvatar: 'img.x1rg5ohu[alt]:not([alt="Open photo"])'
       };
 
-      // 2) Retrieve message rows
+      // 2) Get all message rows
       messageElements = domUtils.findAllElements(selectors.messageRow, messagesWrapper);
       logger.log(`Analyzing ${messageElements.length} messages in the current DOM`);
 
@@ -711,7 +1032,31 @@ class ChatManager {
         return [];
       }
 
-      // 3) Process each row
+      // NEW: Find date separators before processing messages
+      const dateSeparators = this.findDateSeparators();
+
+      // Convert separators to time blocks
+      dateSeparators.forEach((separator, idx) => {
+        timeBlocks.push({
+          timestamp: separator.timestamp,
+          element: separator.element,
+          text: separator.text,
+          index: idx,
+          messages: [] // Will be filled during processing
+        });
+      });
+
+      // For debugging
+      if (timeBlocks.length > 0) {
+        logger.debug('Time blocks found:');
+        timeBlocks.forEach((block, idx) => {
+          logger.debug(`  Block #${idx + 1}: ${block.text} (${new Date(block.timestamp).toLocaleString()})`);
+        });
+      }
+
+      // 3) Process each message row
+      let currentBlockIndex = 0; // For tracking the current block while processing messages
+
       messageElements.forEach((el, idx) => {
         // Extract and clean unique text
         const nodes = Array.from(el.querySelectorAll('span[dir="auto"], div[dir="auto"]'));
@@ -726,6 +1071,18 @@ class ChatManager {
         const isSys = !isDiv && this.isSystemMessage(text);
         const isReply = !isDiv && !isSys && !!this.detectQuotedMessage(el);
 
+        // --- UPDATED: Time block handling ---
+        // If we have time blocks and this element is a separator
+        if (timeBlocks.length > 0 && isDiv) {
+          // See if this element matches any of our separators
+          for (let i = 0; i < timeBlocks.length; i++) {
+            if (timeBlocks[i].element === el || el.contains(timeBlocks[i].element) || timeBlocks[i].element.contains(el)) {
+              currentBlockIndex = i; // Update the index of the current block
+              break;
+            }
+          }
+        }
+
         // Determine sender
         let sentByUs = false, type = 'UNKNOWN';
         if (isDiv) type = 'DIVIDER 📅';
@@ -738,462 +1095,554 @@ class ChatManager {
           type = sentByUs ? 'OWN ✅' : 'EXTERNAL ❌';
         }
 
-        // SKIP if it is a divider or system message
+        // SKIP if it is a separator or system message
         if (!isDiv && !isSys) {
-          messages.push({
+          const messageData = {
             id: `msg_${this.currentChatId}_${idx}`,
             sentByUs,
-            content: { 
-              text, 
-              type, 
+            content: {
+              text,
+              type: "unknown",
               media: {}
-            }
-          });
-          logger.debug(`#${idx + 1}: ${type} – ${text.substring(0, 30)}${text.length > 30 ? '…' : ''}`);
+            },
+            // UPDATED: Assign the index of the current time block
+            timeBlockIndex: timeBlocks.length > 0 ? currentBlockIndex : null
+          };
+
+          // Detect and add multimedia content
+          this.detectAndAddImageContent(el, messageData);
+          this.detectAndAddAudioContent(el, messageData);
+          this.detectAndAddVideoContent(el, messageData);
+          this.detectAndAddFileContent(el, messageData);
+          this.detectAndAddLocationContent(el, messageData);
+
+          messages.push(messageData);
+
+          // Also add to the time block array if it exists
+          if (timeBlocks.length > 0 && currentBlockIndex < timeBlocks.length) {
+            timeBlocks[currentBlockIndex].messages.push(messageData);
+          }
+
+          logger.debug(`#${idx + 1}: ${messageData.content.type} – ${text.substring(0, 30)}${text.length > 30 ? '…' : ''}`);
         } else {
-          logger.debug(`#${idx + 1}: Skipped ${isDiv ? 'DIVIDER' : 'SYSTEM'} message`);
+          logger.debug(`#${idx + 1}: Omitted message ${isDiv ? 'SEPARATOR' : 'SYSTEM'}`);
         }
       });
 
       this.lastProcessedMessageCount = messages.length;
-      logger.log(`Extraction completed: ${messages.length} messages found`);
+      logger.log(`Extraction completed: ${messages.length} messages found in ${timeBlocks.length} time blocks`);
+
+      // NEW: Show accumulated date logs
+      this.showDateParseLogs();
+
+      // Count audio messages and transcriptions
+      const messagesWithAudio = messages.filter(m => m.content?.hasAudio).length;
+      const messagesWithTranscription = messages.filter(m =>
+        m.content?.hasAudio &&
+        m.content.transcribedAudio &&
+        m.content.transcribedAudio !== '[Transcription Pending]'
+      ).length;
+
+      logger.debug(`Extraction complete: ${messages.length} messages (${messagesWithAudio} with audio, ${messagesWithTranscription} with transcription)`);
+
+      // Emit extraction completed event with time blocks
+      const result = {
+        messages: messages,
+        timeBlocks: timeBlocks
+      };
+
+      if (window.eventCoordinator) {
+        window.eventCoordinator.emit('chatHistoryExtracted', result);
+      }
+
+      return result;
 
     } catch (error) {
-      logger.error('Error during chat history extraction:', {}, error);
+      window.logManager.phase(window.logManager.phases.EXTRACTION, 'ERROR',
+        'Error during chat history extraction', error);
     } finally {
       this.isProcessingChat = false;
     }
 
-    return messages;
+    return { messages: messages, timeBlocks: timeBlocks };
   }
 
-  /**
-   * PHASE 2: New function to validate timestamps
-   * @param {string} text - Text to validate as timestamp
-   * @returns {boolean} True if it appears to be a valid timestamp
-   */
-  isValidTimestamp(text) {
-    if (!text || typeof text !== 'string') return false;
+    /**
+     * Parses a Messenger date string to timestamp and accumulates logs
+     * @param {string} dateText - Date text to parse
+     * @returns {number|null} Timestamp or null if not valid
+     */
+    parseDateString(dateText) {
+      if (!dateText) return null;
 
-    const trimmedText = text.trim();
-
-    // Patterns indicating it is NOT a timestamp (names, simple durations, actions)
-    const invalidPatterns = [
-      /^\d{1,2}:\d{2}$/, // Only MM:SS (probably audio duration)
-      /^[a-záéíóúüñ\s]+$/i, // Only letters and spaces (probably name or action)
-      /^(Play|Reproducir|Pause|Pausar)$/i, // Button labels
-      /^Message replied to:/i, // Reply indicator
-      /^Message:/i // Generic indicator
-    ];
-
-    // If it matches any invalid pattern, return false
-    if (invalidPatterns.some(pattern => pattern.test(trimmedText))) {
-      return false;
-    }
-
-    // Patterns indicating a valid timestamp
-    const validPatterns = [
-      /\d{1,2}:\d{2}\s*(AM|PM)/i, // HH:MM AM/PM
-      /\d{1,2}\/\d{1,2}\/\d{2,4}/, // DD/MM/YY(YY)
-      /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Sep|Oct|Nov|Dic)/i, // Month name
-      /(Today|Yesterday|Hoy|Ayer)/i, // Today/Yesterday
-      /minutes? ago|hours? ago|minutes?|hours?/i, // Relative (X minutes ago)
-      /sent at \d{1,2}:\d{2}\s*(AM|PM)?/i, // "sent at HH:MM"
-      /sent at \d{1,2}:\d{2}/i // "sent at HH:MM"
-    ];
-
-    // If it matches any valid pattern, return true
-    return validPatterns.some(pattern => pattern.test(trimmedText));
-  }
-
-  /**
-   * PHASE 2: New functions to detect and add content types
-   */
-
-  /**
-   * Improved image detection
-   * @param {HTMLElement} container - Message container
-   * @param {Object} messageData - Message data to update
-   */
-  detectAndAddImageContent(container, messageData) {
-    try {
-      const imageSelectors = Array.isArray(CONFIG.selectors.activeChat.messageImageElement) ?
-        CONFIG.selectors.activeChat.messageImageElement.join(', ') :
-        CONFIG.selectors.activeChat.messageImageElement;
-
-      const imgElements = container.querySelectorAll(imageSelectors);
-
-      if (imgElements.length > 0) {
-        const validImages = Array.from(imgElements).filter(img => {
-          const src = img.src || '';
-          // Filter small icons/base64/emojis/avatars
-          return src &&
-            !src.startsWith('data:') &&
-            (img.width > 30 || !img.width) &&
-            (img.height > 30 || !img.height) &&
-            !src.includes('/emoji.') &&
-            !src.includes('/avatar/');
-        });
-
-        if (validImages.length > 0) {
-          // Backward compatibility
-          messageData.content.imageUrls = validImages.map(img => img.src);
-
-          // New improved structure
-          messageData.content.media.images = validImages.map(img => ({
-            url: img.src,
-            alt: img.alt || '',
-            width: img.width || 0,
-            height: img.height || 0
-          }));
-
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'image';
-          }
-        }
+      // Initialize the logs array if it doesn't exist
+      if (!this.dateParseLogs) {
+        this.dateParseLogs = [];
       }
 
-      // Additional search for images in divs with background-image
-      const bgImageDivs = container.querySelectorAll('div[style*="background-image"]');
-      if (bgImageDivs.length > 0) {
-        for (const div of bgImageDivs) {
-          const style = div.getAttribute('style') || '';
-          const urlMatch = style.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
+      try {
+        // Facebook format: "10/8/24, 12:23 AM"
+        const dateTimeMatch = dateText.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:,\s*(\d{1,2}):(\d{2})(?:\s*(AM|PM))?)?/i);
 
-          if (urlMatch && urlMatch[1] && !urlMatch[1].startsWith('data:')) {
-            const imageUrl = urlMatch[1];
+        if (dateTimeMatch) {
+          const [, month, day, yearShort, hour = '0', minute = '0', ampm = ''] = dateTimeMatch;
 
-            // Add only if not already in the list
-            if (!messageData.content.imageUrls.includes(imageUrl)) {
-              messageData.content.imageUrls.push(imageUrl);
+          // Convert 2-digit year to 4-digit year
+          const year = yearShort.length === 2 ? 2000 + parseInt(yearShort, 10) : parseInt(yearShort, 10);
 
-              messageData.content.media.images.push({
-                url: imageUrl,
-                alt: "Background Image",
-                width: div.clientWidth || 0,
-                height: div.clientHeight || 0
-              });
+          // Convert hour to 24h format if necessary
+          let hours = parseInt(hour, 10);
+          if (ampm.toUpperCase() === 'PM' && hours < 12) hours += 12;
+          if (ampm.toUpperCase() === 'AM' && hours === 12) hours = 0;
 
-              if (messageData.content.type === 'unknown') {
-                messageData.content.type = 'image';
+          // Create date
+          const date = new Date(year, parseInt(month, 10) - 1, parseInt(day, 10), hours, parseInt(minute, 10));
+
+          // Create log and add it to the cumulative array (WITHOUT showing immediately)
+          this.dateParseLogs.push({
+            phase: window.logManager.phases.EXTRACTION,
+            type: 'DATE_PARSE',
+            message: `Parsed date: "${dateText}" → ${date.toISOString()}`,
+            data: { originalText: dateText, timestamp: date.getTime() }
+          });
+
+          return date.getTime();
+        }
+
+        // Try with the format "October 8, 2024"
+        const timestamp = new Date(dateText).getTime();
+
+        if (!isNaN(timestamp)) {
+          // Add log to the cumulative array (WITHOUT showing immediately)
+          this.dateParseLogs.push({
+            phase: window.logManager.phases.EXTRACTION,
+            type: 'DATE_PARSE',
+            message: `Parsed date (alternative format): "${dateText}" → ${new Date(timestamp).toISOString()}`,
+            data: { originalText: dateText, timestamp }
+          });
+
+          return timestamp;
+        }
+
+        // Add failure log to the cumulative array (WITHOUT showing immediately)
+        this.dateParseLogs.push({
+          phase: window.logManager.phases.EXTRACTION,
+          type: 'DATE_PARSE_FAIL',
+          message: `Could not parse date: "${dateText}"`,
+          data: { originalText: dateText }
+        });
+
+        return null;
+      } catch (error) {
+        // Add error log to the cumulative array (WITHOUT showing immediately)
+        this.dateParseLogs.push({
+          phase: window.logManager.phases.EXTRACTION,
+          type: 'DATE_PARSE_ERROR',
+          message: `Error parsing date "${dateText}": ${error.message}`,
+          data: { originalText: dateText, error: error.message }
+        });
+
+        return null;
+      }
+    }
+
+    /**
+     * Shows the accumulated date parsing logs
+     */
+    showDateParseLogs() {
+      if (!this.dateParseLogs || this.dateParseLogs.length === 0) {
+        console.log('[ChatManager] No date parsing logs');
+        return;
+      }
+
+      // Show a summary
+      console.log(`[ChatManager][EXTRACTION] Processed ${this.dateParseLogs.length} dates found`);
+
+      // Show details in a collapsed group
+      console.groupCollapsed(`[ChatManager][EXTRACTION] Parsed dates detail (${this.dateParseLogs.length})`);
+
+      this.dateParseLogs.forEach((log, index) => {
+        const isSuccess = !log.message.includes('Error') && !log.message.includes('Could not');
+        console.log(`[${index + 1}/${this.dateParseLogs.length}] ${log.message}`, log.data);
+      });
+
+      console.groupEnd();
+    }
+
+    /**
+     * PHASE 2: New functions to detect and add content types
+     */
+
+    /**
+     * Improved image detection
+     * @param {HTMLElement} container - Message container
+     * @param {Object} messageData - Message data to update
+     */
+    detectAndAddImageContent(container, messageData) {
+      try {
+        const imageSelectors = Array.isArray(CONFIG.selectors.activeChat.messageImageElement) ?
+          CONFIG.selectors.activeChat.messageImageElement.join(', ') :
+          CONFIG.selectors.activeChat.messageImageElement;
+
+        const imgElements = container.querySelectorAll(imageSelectors);
+
+        if (imgElements.length > 0) {
+          const validImages = Array.from(imgElements).filter(img => {
+            const src = img.src || '';
+            // Filter small icons/base64/emojis/avatars
+            return src &&
+              !src.startsWith('data:') &&
+              (img.width > 30 || !img.width) &&
+              (img.height > 30 || !img.height) &&
+              !src.includes('/emoji.') &&
+              !src.includes('/avatar/');
+          });
+
+          if (validImages.length > 0) {
+            // Backward compatibility
+            messageData.content.imageUrls = validImages.map(img => img.src);
+
+            // New improved structure
+            messageData.content.media.images = validImages.map(img => ({
+              url: img.src,
+              alt: img.alt || '',
+              width: img.width || 0,
+              height: img.height || 0
+            }));
+
+            if (messageData.content.type === 'unknown') {
+              messageData.content.type = 'image';
+            }
+
+            window.logManager.collect('mediaDetection', {
+              type: 'image',
+              messageId: messageData.id,
+              count: validImages.length,
+              urls: validImages.map(img => img.src).slice(0, 3) // First 3 URLs as sample
+            });
+          }
+        }
+
+        // Additional search for images in divs with background-image
+        const bgImageDivs = container.querySelectorAll('div[style*="background-image"]');
+        if (bgImageDivs.length > 0) {
+          for (const div of bgImageDivs) {
+            const style = div.getAttribute('style') || '';
+            const urlMatch = style.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
+
+            if (urlMatch && urlMatch[1] && !urlMatch[1].startsWith('data:')) {
+              const imageUrl = urlMatch[1];
+
+              // Add only if not already in the list
+              if (!messageData.content.imageUrls.includes(imageUrl)) {
+                messageData.content.imageUrls.push(imageUrl);
+
+                messageData.content.media.images.push({
+                  url: imageUrl,
+                  alt: "Background Image",
+                  width: div.clientWidth || 0,
+                  height: div.clientHeight || 0
+                });
+
+                if (messageData.content.type === 'unknown') {
+                  messageData.content.type = 'image';
+                }
               }
             }
           }
         }
+      } catch (error) {
+        logger.error(`Error detecting images: ${error.message}`, {}, error);
       }
-    } catch (error) {
-      logger.error(`Error detecting images: ${error.message}`, {}, error);
     }
-  }
 
-  /**
-   * Improved audio detection
-   * @param {HTMLElement} container - Message container
-   * @param {Object} messageData - Message data to update
-   */
-  detectAndAddAudioContent(container, messageData) {
-    try {
-      // Look for audio buttons
-      const audioSelectors = Array.isArray(CONFIG.selectors.activeChat.messageAudioPlayButton) ?
-        CONFIG.selectors.activeChat.messageAudioPlayButton.join(', ') :
-        CONFIG.selectors.activeChat.messageAudioPlayButton;
+    /**
+     * Improved audio detection in messages
+     * @param {HTMLElement} container - Message container
+     * @param {Object} messageData - Message data to update
+     */
+    detectAndAddAudioContent(container, messageData) {
+      // Use all audio button selectors for better detection
+      const audioButtonSelectors = CONFIG.selectors.activeChat.messageAudioPlayButton;
+      let audioButton = null;
 
-      const audioButton = container.querySelector(audioSelectors);
-
-      if (audioButton) {
-        const label = audioButton.getAttribute('aria-label') || '';
-
-        // Ignore if it's a video button
-        if (label.toLowerCase().includes('video')) {
-          return;
+      // Try each selector until an audio button is found
+      for (const selector of audioButtonSelectors) {
+        const buttons = container.querySelectorAll(selector);
+        if (buttons.length > 0) {
+          audioButton = buttons[0];
+          break;
         }
+      }
 
-        // Try to extract duration if available
-        const duration = this.extractAudioDuration(container) || '';
-        const audioUrl = this.extractAudioUrl(container) || null;
+      if (!audioButton) return;
 
-        // Backward compatibility
-        messageData.content.hasAudio = true;
-        messageData.content.audioUrl = audioUrl;
+      // If we find an audio button, mark this message as containing audio
+      messageData.content.hasAudio = true;
 
-        // New improved structure
-        messageData.content.media.audio = {
-          exists: true,
-          url: audioUrl,
-          duration: duration,
-          label: label
-        };
+      /*window.logManager.step(window.logManager.phases.EXTRACTION, 'AUDIO_DETECT', 
+        `Audio detected in message ${messageData.id}`);*/
 
-        if (messageData.content.type === 'unknown') {
-          messageData.content.type = 'audio';
-        }
-
-        // If there's a URL, try to get transcription if available
-        if (audioUrl && typeof this.getAudioTranscription === 'function') {
-          const transcription = this.getAudioTranscription(audioUrl);
-          if (transcription) {
-            messageData.content.transcribedAudio = transcription;
-          } else {
-            messageData.content.transcribedAudio = "[Audio Transcription Pending]";
-          }
-        }
+      // Try to get direct URL (rarely available in the DOM)
+      const audioElement = container.querySelector('audio[src]');
+      if (audioElement && audioElement.src) {
+        messageData.content.audioUrl = audioElement.src;
+        window.logManager.step(window.logManager.phases.EXTRACTION, 'AUDIO_URL',
+          `Audio URL found directly in the DOM`,
+          { messageId: messageData.id, url: audioElement.src });
       } else {
-        // Look for <audio> elements directly as alternative
-        const audioElement = container.querySelector('audio[src]');
-        if (audioElement) {
-          const audioUrl = audioElement.src;
+        // If there is no direct URL, generate a unique marker for this audio
+        // that we can use to associate later with the transcriptions
+        const audioMarkerId = `audio_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        messageData.content.audioMarkerId = audioMarkerId;
 
-          // Backward compatibility
-          messageData.content.hasAudio = true;
-          messageData.content.audioUrl = audioUrl;
+        // Add to the DOM as a data attribute to facilitate later association
+        if (audioButton) {
+          audioButton.setAttribute('data-audio-marker-id', audioMarkerId);
 
-          // New improved structure
-          messageData.content.media.audio = {
-            exists: true,
-            url: audioUrl,
-            duration: audioElement.duration ? `${Math.round(audioElement.duration)}s` : '',
-            label: 'Audio message'
-          };
-
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'audio';
+          // Register that we are waiting for this audio for when it is detected
+          if (window.audioTranscriber) {
+            window.audioTranscriber.expectingAudioForMessageId = messageData.id;
+            window.audioTranscriber.expectingAudioTimestamp = Date.now();
           }
+        }
 
-          // Try to get transcription
-          if (typeof this.getAudioTranscription === 'function') {
-            const transcription = this.getAudioTranscription(audioUrl);
-            if (transcription) {
-              messageData.content.transcribedAudio = transcription;
-            } else {
-              messageData.content.transcribedAudio = "[Audio Transcription Pending]";
+        /*window.logManager.step(window.logManager.phases.EXTRACTION, 'AUDIO_MARKER', 
+          `Marker generated for pending audio`, 
+          {messageId: messageData.id, audioMarkerId});*/
+      }
+
+      // Extract duration if available
+      messageData.content.audioDuration = this.extractAudioDuration(container);
+      messageData.content.transcribedAudio = '[Transcription Pending]';
+
+      window.logManager.collect('audioMessages', {
+        messageId: messageData.id,
+        hasUrl: !!messageData.content.audioUrl,
+        duration: messageData.content.audioDuration,
+        markerId: messageData.content.audioMarkerId
+      });
+    }
+
+    /**
+     * Extracts audio duration if available
+     * @param {HTMLElement} container - Message container
+     * @returns {string|null} Audio duration (format "M:SS") or null
+     */
+    extractAudioDuration(container) {
+      try {
+        const durationSelectors = [
+          'span[style*="color: rgba"]',
+          'span.x193iq5w',
+          'div[dir="auto"] > span'
+        ];
+
+        for (const selector of durationSelectors) {
+          const elements = container.querySelectorAll(selector);
+          for (const el of elements) {
+            const text = el.textContent.trim();
+            // Check format MM:SS or M:SS
+            if (/^\d{1,2}:\d{2}$/.test(text)) {
+              return text;
             }
           }
         }
+
+        return null;
+      } catch (error) {
+        logger.debug(`Error extracting audio duration: ${error.message}`);
+        return null;
       }
-    } catch (error) {
-      logger.error(`Error detecting audio: ${error.message}`, {}, error);
     }
-  }
 
-  /**
-   * Extracts audio duration if available
-   * @param {HTMLElement} container - Message container
-   * @returns {string|null} Audio duration (format "M:SS") or null
-   */
-  extractAudioDuration(container) {
-    try {
-      const durationSelectors = [
-        'span[style*="color: rgba"]',
-        'span.x193iq5w',
-        'div[dir="auto"] > span'
-      ];
+    /**
+     * Tries to extract the audio URL
+     * @param {HTMLElement} container - Message container
+     * @returns {string|null} Audio URL or null
+     */
+    extractAudioUrl(container) {
+      try {
+        const audioElement = container.querySelector('audio[src]');
+        if (audioElement && audioElement.src) {
+          return audioElement.src;
+        }
 
-      for (const selector of durationSelectors) {
-        const elements = container.querySelectorAll(selector);
-        for (const el of elements) {
-          const text = el.textContent.trim();
-          // Check format MM:SS or M:SS
-          if (/^\d{1,2}:\d{2}$/.test(text)) {
-            return text;
+        // Check for links to audio files
+        const audioLink = container.querySelector('a[href*=".mp3"], a[href*=".m4a"], a[href*=".wav"], a[href*=".ogg"]');
+        if (audioLink && audioLink.href) {
+          return audioLink.href;
+        }
+
+        return null;
+      } catch (error) {
+        logger.debug(`Error extracting audio URL: ${error.message}`);
+        return null;
+      }
+    }
+
+    /**
+     * Detects video content
+     * @param {HTMLElement} container - Message container
+     * @param {Object} messageData - Message data to update
+     */
+    detectAndAddVideoContent(container, messageData) {
+      try {
+        // Detect explicit video (<video> or links)
+        const videoElement = container.querySelector('video, a[href*="video_redirect"]');
+
+        if (videoElement) {
+          if (videoElement.tagName === 'VIDEO') {
+            const videoInfo = {
+              exists: true,
+              url: videoElement.src || null,
+              type: 'video',
+              thumbnail: this.extractVideoThumbnail(videoElement) || null,
+              duration: videoElement.duration ? `${Math.round(videoElement.duration)}s` : null
+            };
+
+            messageData.content.media.video = videoInfo;
+            if (messageData.content.type === 'unknown') {
+              messageData.content.type = 'video';
+            }
+          } else if (videoElement.tagName === 'A' && videoElement.href) {
+            const videoInfo = {
+              exists: true,
+              url: videoElement.href,
+              type: 'video_link',
+              thumbnail: null,
+              duration: null
+            };
+
+            messageData.content.media.video = videoInfo;
+            if (messageData.content.type === 'unknown') {
+              messageData.content.type = 'video';
+            }
+          }
+        } else {
+          // Look for video containers
+          const videoSelectors = Array.isArray(CONFIG.selectors.activeChat.messageVideoElement) ?
+            CONFIG.selectors.activeChat.messageVideoElement.join(', ') :
+            CONFIG.selectors.activeChat.messageVideoElement;
+
+          const potentialVideoContainer = container.querySelector(videoSelectors);
+
+          if (potentialVideoContainer) {
+            const label = potentialVideoContainer.getAttribute('aria-label') || 'Video Player';
+            const isThumbnail = potentialVideoContainer.style.backgroundImage ||
+              potentialVideoContainer.querySelector('div[style*="background-image"]');
+
+            const videoInfo = {
+              exists: true,
+              url: null,
+              type: isThumbnail ? 'video_thumbnail' : 'video_player',
+              thumbnail: this.extractBackgroundImage(potentialVideoContainer),
+              label: label
+            };
+
+            messageData.content.media.video = videoInfo;
+            if (messageData.content.type === 'unknown') {
+              messageData.content.type = 'video';
+            }
           }
         }
+      } catch (error) {
+        logger.error(`Error detecting video: ${error.message}`, {}, error);
       }
-
-      return null;
-    } catch (error) {
-      logger.debug(`Error extracting audio duration: ${error.message}`);
-      return null;
     }
-  }
 
-  /**
-   * Tries to extract the audio URL
-   * @param {HTMLElement} container - Message container
-   * @returns {string|null} Audio URL or null
-   */
-  extractAudioUrl(container) {
-    try {
-      const audioElement = container.querySelector('audio[src]');
-      if (audioElement && audioElement.src) {
-        return audioElement.src;
-      }
+    /**
+     * Extracts background image for video
+     * @param {HTMLElement} element - Element with possible background image
+     * @returns {string|null} URL of background image or null
+     */
+    extractBackgroundImage(element) {
+      try {
+        const style = element.getAttribute('style') || '';
+        const urlMatch = style.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
+        if (urlMatch && urlMatch[1]) {
+          return urlMatch[1];
+        }
 
-      // Check for links to audio files
-      const audioLink = container.querySelector('a[href*=".mp3"], a[href*=".m4a"], a[href*=".wav"], a[href*=".ogg"]');
-      if (audioLink && audioLink.href) {
-        return audioLink.href;
-      }
-
-      return null;
-    } catch (error) {
-      logger.debug(`Error extracting audio URL: ${error.message}`);
-      return null;
-    }
-  }
-
-  /**
-   * Detects video content
-   * @param {HTMLElement} container - Message container
-   * @param {Object} messageData - Message data to update
-   */
-  detectAndAddVideoContent(container, messageData) {
-    try {
-      // Detect explicit video (<video> or links)
-      const videoElement = container.querySelector('video, a[href*="video_redirect"]');
-
-      if (videoElement) {
-        if (videoElement.tagName === 'VIDEO') {
-          const videoInfo = {
-            exists: true,
-            url: videoElement.src || null,
-            type: 'video',
-            thumbnail: this.extractVideoThumbnail(videoElement) || null,
-            duration: videoElement.duration ? `${Math.round(videoElement.duration)}s` : null
-          };
-
-          messageData.content.media.video = videoInfo;
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'video';
-          }
-        } else if (videoElement.tagName === 'A' && videoElement.href) {
-          const videoInfo = {
-            exists: true,
-            url: videoElement.href,
-            type: 'video_link',
-            thumbnail: null,
-            duration: null
-          };
-
-          messageData.content.media.video = videoInfo;
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'video';
+        const childWithBg = element.querySelector('div[style*="background-image"]');
+        if (childWithBg) {
+          const childStyle = childWithBg.getAttribute('style') || '';
+          const childUrlMatch = childStyle.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
+          if (childUrlMatch && childUrlMatch[1]) {
+            return childUrlMatch[1];
           }
         }
-      } else {
-        // Look for video containers
-        const videoSelectors = Array.isArray(CONFIG.selectors.activeChat.messageVideoElement) ?
-          CONFIG.selectors.activeChat.messageVideoElement.join(', ') :
-          CONFIG.selectors.activeChat.messageVideoElement;
 
-        const potentialVideoContainer = container.querySelector(videoSelectors);
+        return null;
+      } catch (error) {
+        logger.debug(`Error extracting background image: ${error.message}`);
+        return null;
+      }
+    }
 
-        if (potentialVideoContainer) {
-          const label = potentialVideoContainer.getAttribute('aria-label') || 'Video Player';
-          const isThumbnail = potentialVideoContainer.style.backgroundImage ||
-            potentialVideoContainer.querySelector('div[style*="background-image"]');
+    /**
+     * Extracts video thumbnail
+     * @param {HTMLVideoElement} videoElement - Video element
+     * @returns {string|null} URL of thumbnail or null
+     */
+    extractVideoThumbnail(videoElement) {
+      try {
+        if (videoElement.poster) {
+          return videoElement.poster;
+        }
 
-          const videoInfo = {
-            exists: true,
-            url: null,
-            type: isThumbnail ? 'video_thumbnail' : 'video_player',
-            thumbnail: this.extractBackgroundImage(potentialVideoContainer),
-            label: label
-          };
+        const source = videoElement.querySelector('source[type^="video/"]');
+        if (source && source.src) {
+          return source.src.replace(/\.mp4$/, '.jpg'); // Common approximation
+        }
 
-          messageData.content.media.video = videoInfo;
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'video';
+        return null;
+      } catch (error) {
+        logger.debug(`Error extracting video thumbnail: ${error.message}`);
+        return null;
+      }
+    }
+
+    /**
+     * Detects file attachments
+     * @param {HTMLElement} container - Message container
+     * @param {Object} messageData - Message data to update
+     */
+    detectAndAddFileContent(container, messageData) {
+      try {
+        const fileSelectors = Array.isArray(CONFIG.selectors.activeChat.messageFileElement) ?
+          CONFIG.selectors.activeChat.messageFileElement.join(', ') :
+          CONFIG.selectors.activeChat.messageFileElement;
+
+        const fileElements = Array.from(container.querySelectorAll(fileSelectors));
+
+        if (fileElements.length > 0) {
+          const files = [];
+
+          fileElements.forEach(fileElement => {
+            const url = fileElement.href || null;
+            const fileName = this.extractFileName(fileElement);
+            const fileType = this.detectFileType(fileElement, fileName);
+
+            if (url || fileName) {
+              files.push({
+                url: url,
+                name: fileName,
+                type: fileType
+              });
+            }
+          });
+
+          if (files.length > 0) {
+            messageData.content.media.files = files;
+            if (messageData.content.type === 'unknown') {
+              messageData.content.type = 'file';
+            }
           }
         }
+      } catch (error) {
+        logger.error(`Error detecting files: ${error.message}`, {}, error);
       }
-    } catch (error) {
-      logger.error(`Error detecting video: ${error.message}`, {}, error);
     }
-  }
-
-  /**
-   * Extracts background image for video
-   * @param {HTMLElement} element - Element with possible background image
-   * @returns {string|null} URL of background image or null
-   */
-  extractBackgroundImage(element) {
-    try {
-      const style = element.getAttribute('style') || '';
-      const urlMatch = style.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
-      if (urlMatch && urlMatch[1]) {
-        return urlMatch[1];
-      }
-
-      const childWithBg = element.querySelector('div[style*="background-image"]');
-      if (childWithBg) {
-        const childStyle = childWithBg.getAttribute('style') || '';
-        const childUrlMatch = childStyle.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
-        if (childUrlMatch && childUrlMatch[1]) {
-          return childUrlMatch[1];
-        }
-      }
-
-      return null;
-    } catch (error) {
-      logger.debug(`Error extracting background image: ${error.message}`);
-      return null;
-    }
-  }
-
-  /**
-   * Extracts video thumbnail
-   * @param {HTMLVideoElement} videoElement - Video element
-   * @returns {string|null} URL of thumbnail or null
-   */
-  extractVideoThumbnail(videoElement) {
-    try {
-      if (videoElement.poster) {
-        return videoElement.poster;
-      }
-
-      const source = videoElement.querySelector('source[type^="video/"]');
-      if (source && source.src) {
-        return source.src.replace(/\.mp4$/, '.jpg'); // Common approximation
-      }
-
-      return null;
-    } catch (error) {
-      logger.debug(`Error extracting video thumbnail: ${error.message}`);
-      return null;
-    }
-  }
-
-  /**
-   * Detects file attachments
-   * @param {HTMLElement} container - Message container
-   * @param {Object} messageData - Message data to update
-   */
-  detectAndAddFileContent(container, messageData) {
-    try {
-      const fileSelectors = Array.isArray(CONFIG.selectors.activeChat.messageFileElement) ?
-        CONFIG.selectors.activeChat.messageFileElement.join(', ') :
-        CONFIG.selectors.activeChat.messageFileElement;
-
-      const fileElements = Array.from(container.querySelectorAll(fileSelectors));
-
-      if (fileElements.length > 0) {
-        const files = [];
-
-        fileElements.forEach(fileElement => {
-          const url = fileElement.href || null;
-          const fileName = this.extractFileName(fileElement);
-          const fileType = this.detectFileType(fileElement, fileName);
-
-          if (url || fileName) {
-            files.push({
-              url: url,
-              name: fileName,
-              type: fileType
-            });
-          }
-        });
-
-        if (files.length > 0) {
-          messageData.content.media.files = files;
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'file';
-          }
-        }
-      }
-    } catch (error) {
-      logger.error(`Error detecting files: ${error.message}`, {}, error);
-    }
-  }
 
   /**
    * Extracts file name
@@ -1215,7 +1664,7 @@ class ChatManager {
       if (fileElement.hasAttribute('title')) return fileElement.getAttribute('title');
       if (fileElement.hasAttribute('aria-label')) {
         const label = fileElement.getAttribute('aria-label');
-        if (label.includes('file') || label.includes('archivo')) {
+        if (label.includes('file') || label.includes('archivo')) { // Doubt: Should "archivo" be translated?
           const parts = label.split(':');
           if (parts.length > 1) return parts[1].trim();
         }
@@ -1344,7 +1793,7 @@ class ChatManager {
     try {
       if (locationElement.hasAttribute('aria-label')) {
         return locationElement.getAttribute('aria-label')
-          .replace(/location|ubicación|shared/i, '')
+          .replace(/location|ubicación|shared/i, '') // Doubt: Should "ubicación" be translated?
           .trim();
       }
 
@@ -1391,57 +1840,6 @@ class ChatManager {
   }
 
   /**
-   * Detects GIFs and stickers
-   * @param {HTMLElement} container - Message container
-   * @param {Object} messageData - Message data to update
-   */
-  detectAndAddGifContent(container, messageData) {
-    try {
-      const gifSelectors = Array.isArray(CONFIG.selectors.activeChat.messageGifElement) ?
-        CONFIG.selectors.activeChat.messageGifElement.join(', ') :
-        CONFIG.selectors.activeChat.messageGifElement;
-
-      const gifElement = container.querySelector(gifSelectors);
-
-      if (gifElement) {
-        let gifInfo = null;
-
-        // For image elements
-        if (gifElement.tagName === 'IMG') {
-          const url = gifElement.src;
-          const isGif = url && (url.includes('giphy.com') || url.includes('tenor.com') || url.endsWith('.gif'));
-          const isSticker = !!container.querySelector('[data-testid="sticker"]');
-
-          gifInfo = {
-            url: url,
-            type: isSticker ? 'sticker' : (isGif ? 'gif' : 'animated_content'),
-            alt: gifElement.alt || ''
-          };
-        } else { // For containers
-          const label = gifElement.getAttribute('aria-label') || 'GIF';
-          const imgElement = gifElement.querySelector('img');
-          const url = imgElement ? imgElement.src : null;
-
-          gifInfo = {
-            url: url,
-            type: label.toLowerCase().includes('sticker') ? 'sticker' : 'gif',
-            label: label
-          };
-        }
-
-        if (gifInfo) {
-          messageData.content.media.gif = gifInfo;
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'gif';
-          }
-        }
-      }
-    } catch (error) {
-      logger.error(`Error detecting GIF/sticker: ${error.message}`, {}, error);
-    }
-  }
-
-  /**
    * Determines if a message is a system message - IMPROVED VERSION
    * @param {string} messageText - Message text to check
    * @returns {boolean} True if the message is a system message
@@ -1452,73 +1850,75 @@ class ChatManager {
     // Common patterns for system messages - ADDITIONAL ADDITIONS
     const systemPatterns = [
       // ─── Conversation start ─────────────────────────────
-      /^(You|Tú|[A-Z][a-z]+) started this chat\.?( View (seller|buyer) profile)?$/i,
-      /^([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+) inició el chat\.?( Ver (perfil del vendedor|perfil del comprador))?$/i,
+      /^(You|Tú|[A-Z][a-z]+) started this chat\.?( View (seller|buyer) profile)?$/i, // Doubt: Should "Tú" be translated?
+      /^([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+) inició el chat\.?( Ver (perfil del vendedor|perfil del comprador))?$/i, // Doubt: Should "inició el chat", "Ver perfil del vendedor", "perfil del comprador" be translated?
 
       // ─── Participants added or removed ────────────────
       /^You added .* to the group\.$/i,
-      /^Agregaste a .* al grupo\.$/i,
+      /^Agregaste a .* al grupo\.$/i, // Doubt: Should "Agregaste a", "al grupo" be translated?
       /^You removed .* from the group\.$/i,
-      /^Eliminaste a .* del grupo\.$/i,
+      /^Eliminaste a .* del grupo\.$/i, // Doubt: Should "Eliminaste a", "del grupo" be translated?
 
       // ─── Users leaving the group ──────────────────────
-      /^.* (left|salió del) grupo\.$/i,
+      /^.* (left|salió del) grupo\.$/i, // Doubt: Should "salió del" be translated?
 
       // ─── Name or color changes ─────────────────────────
       /^You named the group .*$/i,
-      /^Nombraste al grupo .*$/i,
+      /^Nombraste al grupo .*$/i, // Doubt: Should "Nombraste al grupo" be translated?
       /^You changed the chat colors\.$/i,
-      /^Cambiaste los colores del chat\.$/i,
+      /^Cambiaste los colores del chat\.$/i, // Doubt: Should "Cambiaste los colores del chat" be translated?
       /^You set the nickname for .* to .*$/i,
-      /^Definiste el apodo de .* como .*$/i,
+      /^Definiste el apodo de .* como .*$/i, // Doubt: Should "Definiste el apodo de", "como" be translated?
 
       // ─── Changes in group photo/name with dynamic name
       /^Changed the group photo\.$/i,
-      /^Cambió la foto del grupo\.$/i,
-      /cambió la foto del grupo\.$/i,
+      /^Cambió la foto del grupo\.$/i, // Doubt: Should "Cambió la foto del grupo" be translated?
+      /cambió la foto del grupo\.$/i, // Doubt: Should "cambió la foto del grupo" be translated?
       /named the group .+\.$/i,
-      /nombró al grupo .+\.$/i,
+      /nombró al grupo .+\.$/i, // Doubt: Should "nombró al grupo" be translated?
       /^[A-Z][a-z]+(?: [A-Z][a-z]+)? changed the group photo\.$/i,
       /^[A-Z][a-z]+(?: [A-Z][a-z]+)? named the group .+\.$/i,
 
       // ─── Media sent ───────────────────────────────────
       /^You sent (a )?(GIF|photo|video|attachment)\.$/i,
-      /^Enviaste (un|una) (GIF|foto|video|adjunto)\.$/i,
+      /^Enviaste (un|una) (GIF|foto|video|adjunto)\.$/i, // Doubt: Should "Enviaste", "un", "una", "foto", "video", "adjunto" be translated?
       /^You shared a location\.$/i,
-      /^Compartiste una ubicación\.$/i,
+      /^Compartiste una ubicación\.$/i, // Doubt: Should "Compartiste una ubicación" be translated?
 
       // ─── Calls ──────────────────────────────────────────
       /^Missed call$/i,
       /^You missed a call from .*$/i,
-      /^Llamada perdida$/i,
-      /^Llamada perdida de .*$/i,
+      /^Llamada perdida$/i, // Doubt: Should "Llamada perdida" be translated?
+      /^Llamada perdida de .*$/i, // Doubt: Should "Llamada perdida de" be translated?
 
       // ─── Listing statuses ───────────────────────────────
       /^.* marked the listing as (Available|Pending)\.$/i,
-      /^Marcó este artículo como (vendido|pendiente|disponible)\.?$/i,
+      /^Marcó este artículo como (vendido|pendiente|disponible)\.?$/i, // Doubt: Should "Marcó este artículo como", "vendido", "pendiente", "disponible" be translated?
       /^.* sold .+\.$/i,
-      /^Vendió .+\.$/i,
+      /^Vendió .+\.$/i, // Doubt: Should "Vendió" be translated?
       /^[A-Z][a-z]+ marked the listing as (Available|Pending)\.$/i,
+      /^[A-Z][a-z]+ changed the listing description\.$/i,
       /^[A-Z][a-z]+ sold .+\.$/i,
 
       // ─── System messages / UI ─────────────────────────
       /^.* bumped their message:?$/i,
-      /^Mensaje enviado$/i,
-      /^Ver anuncios similares$/i,
+      /^Mensaje enviado$/i, // Doubt: Should "Mensaje enviado" be translated?
+      /^Ver anuncios similares$/i, // Doubt: Should "Ver anuncios similares" be translated?
       /^See similar listings$/i,
-      /^Ver perfil del comprador$/i,
+      /^Ver perfil del comprador$/i, // Doubt: Should "Ver perfil del comprador" be translated?
       /^View buyer profile$/i,
-      /^Ver perfil del vendedor$/i,
+      /^Ver perfil del vendedor$/i, // Doubt: Should "Ver perfil del vendedor" be translated?
       /^View seller profile$/i,
-      /^Ver detalles del comprador$/i,
+      /^Ver detalles del comprador$/i, // Doubt: Should "Ver detalles del comprador" be translated?
       /^View buyer details$/i,
-      /detalles del comprador$/i,
+      /detalles del comprador$/i, // Doubt: Should "detalles del comprador" be translated?
       /buyer details$/i,
 
       // ─── Alerts / informative messages ───────────────────
-      /^Estás recibiendo muchos mensajes sobre este anuncio/i,
+      /^Estás recibiendo muchos mensajes sobre este anuncio/i, // Doubt: Should "Estás recibiendo muchos mensajes sobre este anuncio" be translated?
+      /^To help identify and reduce scams and fraud, Meta may use technology to review Marketplace messages\./i,
       /^You're receiving a lot of messages about this listing/i,
-      /^Estás esperando tu respuesta sobre este anuncio\.\s*Ver anuncio$/i,
+      /^Estás esperando tu respuesta sobre este anuncio\.\s*Ver anuncio$/i, // Doubt: Should "Estás esperando tu respuesta sobre este anuncio", "Ver anuncio" be translated?
       /^You're waiting for a response about this listing\.\s*View listing$/i,
       /^Is getting a lot of messages about this listing/i,
       /^Is waiting for your response about this listing\.\s*View listing$/i,
@@ -1528,12 +1928,12 @@ class ChatManager {
 
       // ─── Ratings ────────────────────────────────────
       /^You can now rate each other.*Rate [A-Z][a-z]+$/i,
-      /^Ahora pueden calificarse.*Califica a [A-ZÁÉÍÓÚÑ][a-záéíóúñ]+$/i,
+      /^Ahora pueden calificarse.*Califica a [A-ZÁÉÍÓÚÑ][a-záéíóúñ]+$/i, // Doubt: Should "Ahora pueden calificarse", "Califica a" be translated?
 
       // ─── Profile information ─────────────────────────────
       /^Joined facebook in \d{4}$/i,
-      /^Se unió a Facebook en \d{4}$/i,
-      /se unió a Facebook en \d{4}/i,
+      /^Se unió a Facebook en \d{4}$/i, // Doubt: Should "Se unió a Facebook en" be translated?
+      /se unió a Facebook en \d{4}/i, // Doubt: Should "se unió a Facebook en" be translated?
 
       // ─── Dates / timestamps ───────────────────────────────
       /^\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}(\u2009|\u202F)?\s*(AM|PM)?$/i,
@@ -1573,7 +1973,7 @@ class ChatManager {
       }
 
       // 2. Check text that are usually dividers (dates, etc.)
-      if (/^(Today|Yesterday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Hoy|Ayer|Lunes|Martes|Miércoles|Jueves|Viernes|Sábado|Domingo)$/i.test(text)) {
+      if (/^(Today|Yesterday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Hoy|Ayer|Lunes|Martes|Miércoles|Jueves|Viernes|Sábado|Domingo)$/i.test(text)) { // Doubt: Should "Hoy", "Ayer", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo" be translated?
         logger.debug(`[isDivider] Element with day text: ${text}`);
         return true;
       }
@@ -1581,7 +1981,7 @@ class ChatManager {
       // 3. Check date patterns (DD/MM/YYYY, etc.)
       if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(text) ||
         /^\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(\w*)(\s+\d{2,4})?$/i.test(text) ||
-        /^\d{1,2}\s+(Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Sep|Oct|Nov|Dic)(\w*)(\s+\d{2,4})?$/i.test(text)) {
+        /^\d{1,2}\s+(Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Sep|Oct|Nov|Dic)(\w*)(\s+\d{2,4})?$/i.test(text)) { // Doubt: Should "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic" be translated?
         logger.debug(`[isDivider] Element with date text: ${text}`);
         return true;
       }
@@ -1645,559 +2045,6 @@ class ChatManager {
     } catch (error) {
       logger.debug(`Error detecting quoted message: ${error.message}`);
       return null;
-    }
-  }
-
-  /**
-   * Detects and extracts mentions in a message
-   * @param {HTMLElement} container - Message container
-   * @returns {array} Array of found mentions
-   */
-  extractMentions(container) {
-    try {
-      const mentions = [];
-
-      // Look for mention elements with specific classes or attributes
-      const mentionElements = container.querySelectorAll('a[href*="/user/"], span.xngnso2, span[data-hovercard]');
-
-      mentionElements.forEach(element => {
-        const name = element.innerText.trim();
-        let userId = null;
-
-        // Try to extract user ID from different sources
-        if (element.href) {
-          const match = element.href.match(/\/user\/(\d+)|\?id=(\d+)/);
-          if (match) {
-            userId = match[1] || match[2];
-          }
-        } else if (element.getAttribute('data-hovercard')) {
-          const match = element.getAttribute('data-hovercard').match(/id=(\d+)/);
-          if (match) {
-            userId = match[1];
-          }
-        }
-
-        if (name) {
-          mentions.push({
-            name: name,
-            id: userId
-          });
-        }
-      });
-
-      return mentions.length > 0 ? mentions : null;
-    } catch (error) {
-      logger.debug(`Error extracting mentions: ${error.message}`);
-      return null;
-    }
-  }
-
-  /**
-   * Analyzes the context of a message to get additional information
-   * @param {HTMLElement} container - Message container
-   * @param {Object} messageData - Message data
-   */
-  enhanceMessageContext(container, messageData) {
-    try {
-      // 1. Detect if it's a reply
-      const quoteInfo = this.detectQuotedMessage(container);
-      if (quoteInfo) {
-        messageData.context = {
-          ...messageData.context || {},
-          ...quoteInfo
-        };
-        // If it's a reply, update the message type
-        messageData.content.type = messageData.content.type === 'unknown' ? 'reply' : `${messageData.content.type}_reply`;
-      }
-
-      // 2. Extract mentions
-      const mentions = this.extractMentions(container);
-      if (mentions) {
-        messageData.context = {
-          ...messageData.context || {},
-          mentions: mentions
-        };
-      }
-
-      // 3. Detect reactions to the message
-      const reactions = this.detectReactions(container);
-      if (reactions) {
-        messageData.context = {
-          ...messageData.context || {},
-          reactions: reactions
-        };
-      }
-
-      // 4. Detect products or links mentioned
-      const productMention = this.detectProductMention(container);
-      if (productMention) {
-        messageData.context = {
-          ...messageData.context || {},
-          productMention: productMention
-        };
-      }
-    } catch (error) {
-      logger.debug(`Error enhancing message context: ${error.message}`);
-    }
-  }
-
-  /**
-   * Detects reactions to a message (emojis, likes)
-   * @param {HTMLElement} container - Message container
-   * @returns {array|null} Array of reactions or null
-   */
-  detectReactions(container) {
-    try {
-      // Look for reaction containers
-      const reactionContainer = container.querySelector('div.xq8finb, div.x6s0dn4.x78zum5.xl56j7k, div[role="toolbar"][aria-label*="reaction"]');
-
-      if (!reactionContainer) return null;
-
-      const reactions = [];
-
-      // Look for emoji elements
-      const emojiElements = reactionContainer.querySelectorAll('img.emoji, span[aria-label*=":"], div[aria-label*="Reacted"]');
-
-      emojiElements.forEach(element => {
-        let type = 'unknown';
-        let value = '';
-
-        // Get details based on element type
-        if (element.tagName === 'IMG') {
-          type = 'emoji';
-          value = element.alt || element.getAttribute('aria-label') || '';
-        } else {
-          const label = element.getAttribute('aria-label') || '';
-          if (label.includes('Like')) {
-            type = 'like';
-            value = '👍';
-          } else if (label.includes('Love')) {
-            type = 'love';
-            value = '❤️';
-          } else if (label.match(/Reacted with/i)) {
-            type = 'emoji';
-            // Extract emoji from text (format: "Reacted with :emoji:")
-            const match = label.match(/Reacted with :([^:]+):/);
-            if (match) {
-              value = match[1];
-            } else {
-              value = label.replace(/Reacted with\s*/i, '');
-            }
-          } else {
-            value = label;
-          }
-        }
-
-        if (value) {
-          reactions.push({
-            type: type,
-            value: value
-          });
-        }
-      });
-
-      return reactions.length > 0 ? reactions : null;
-    } catch (error) {
-      logger.debug(`Error detecting reactions: ${error.message}`);
-      return null;
-    }
-  }
-
-  /**
-   * Detects product mentions or links in a message
-   * @param {HTMLElement} container - Message container
-   * @returns {object|null} Product information or null
-   */
-  detectProductMention(container) {
-    try {
-      // Look for links to Marketplace products
-      const productLink = container.querySelector('a[href*="/marketplace/item/"]');
-      if (!productLink) return null;
-
-      const href = productLink.href;
-      let productId = null;
-
-      // Extract product ID
-      const match = href.match(/\/marketplace\/item\/(\d+)/);
-      if (match) {
-        productId = match[1];
-      }
-
-      // Extract title and image if available
-      let title = '';
-      let imageUrl = '';
-
-      // Look for elements related to the product
-      const titleElement = productLink.querySelector('span[dir="auto"], div[dir="auto"]');
-      if (titleElement) {
-        title = titleElement.innerText.trim();
-      }
-
-      const imageElement = container.querySelector('a[href*="/marketplace/item/"] img, div.x1ey2m1c img');
-      if (imageElement && imageElement.src) {
-        imageUrl = imageElement.src;
-      }
-
-      return {
-        type: 'product',
-        productId: productId,
-        productUrl: href,
-        title: title,
-        imageUrl: imageUrl
-      };
-    } catch (error) {
-      logger.debug(`Error detecting product mention: ${error.message}`);
-      return null;
-    }
-  }
-
-  /**
-   * PHASE 3: Advanced detector for system messages and important events
-   */
-  detectSpecialSystemEvents(messageText) {
-    if (!messageText) return null;
-
-    // Important events in a Marketplace conversation
-    const eventPatterns = [
-      // Purchase/sale events
-      {
-        pattern: /marked this item as (sold|pending|available)/i,
-        type: 'status_change',
-        action: (match) => match[1].toLowerCase()
-      },
-      // Price changes
-      {
-        pattern: /changed the price from ([\d,\.]+) to ([\d,\.]+)/i,
-        type: 'price_change',
-        action: (match) => ({ oldPrice: match[1], newPrice: match[2] })
-      },
-      // Cancellation or completion
-      {
-        pattern: /(canceled|completed) this sale/i,
-        type: 'sale_event',
-        action: (match) => match[1].toLowerCase()
-      },
-      // Specific requests
-      {
-        pattern: /requested more details about/i,
-        type: 'request',
-        action: () => 'details_request'
-      },
-      // Spanish version
-      {
-        pattern: /marcó este artículo como (vendido|pendiente|disponible)/i,
-        type: 'status_change',
-        action: (match) => {
-          const status = match[1].toLowerCase();
-          return status === 'vendido' ? 'sold' : (status === 'pendiente' ? 'pending' : 'available');
-        }
-      }
-    ];
-
-    // Check each pattern
-    for (const eventDef of eventPatterns) {
-      const match = messageText.match(eventDef.pattern);
-      if (match) {
-        return {
-          type: eventDef.type,
-          action: eventDef.action(match),
-          originalText: messageText
-        };
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * PHASE 3: Extracts enhanced chat history with asynchronous processing and promises
-   * @param {HTMLElement} messagesWrapper - Messages container
-   * @returns {Promise<Array>} Promise that resolves to the messages array
-   */
-  async extractChatHistoryEnhanced(messagesWrapper) {
-    if (this.isProcessingChat) {
-      logger.warn('Chat history extraction already in progress. Skipping.');
-      return [];
-    }
-    if (!messagesWrapper) {
-      logger.error('messagesWrapper element not provided to extractChatHistory.');
-      return [];
-    }
-
-    this.isProcessingChat = true;
-    logger.debug('Starting enhanced chat history extraction...');
-
-    const messages = [];
-    let messageElements = [];
-    let previousMessageBubbleHTML = null;
-
-    try {
-      // Use the improved message row selector
-      messageElements = domUtils.findAllElements(CONFIG.selectors.activeChat.messageRow, messagesWrapper);
-      logger.debug(`Found ${messageElements.length} message row elements`);
-
-      if (messageElements.length === 0) {
-        // Fallback if elements aren't found with main selector
-        const potentialMessages = messagesWrapper.querySelectorAll('div[dir="auto"][role="none"]');
-        if (potentialMessages.length > 0) {
-          messageElements = Array.from(potentialMessages);
-        } else {
-          throw new Error("No message elements found with main or fallback selectors");
-        }
-      }
-
-      // Use batch processing for large messages
-      const BATCH_SIZE = 20;
-      const batches = Math.ceil(messageElements.length / BATCH_SIZE);
-
-      for (let batchIndex = 0; batchIndex < batches; batchIndex++) {
-        const start = batchIndex * BATCH_SIZE;
-        const end = Math.min(start + BATCH_SIZE, messageElements.length);
-        const currentBatch = messageElements.slice(start, end);
-
-        logger.debug(`Processing batch ${batchIndex + 1}/${batches} (${currentBatch.length} messages)`);
-
-        // Process messages in batches and allow the browser to "breathe" between batches
-        const batchMessages = await this.processBatchOfMessages(
-          currentBatch,
-          previousMessageBubbleHTML,
-          batchIndex
-        );
-
-        if (batchMessages.lastProcessed) {
-          previousMessageBubbleHTML = batchMessages.lastProcessed;
-        }
-
-        // Add valid messages from this batch
-        if (batchMessages.messages && batchMessages.messages.length > 0) {
-          messages.push(...batchMessages.messages);
-        }
-
-        // Pause between batches to avoid blocking the interface
-        if (batchIndex < batches - 1) {
-          await new Promise(resolve => setTimeout(resolve, 5));
-        }
-      }
-
-      this.lastProcessedMessageCount = messages.length;
-      logger.log(`Enhanced extraction completed: ${messages.length} messages processed in ${batches} batches`);
-
-      // PHASE 3: Post-processing to add references between messages
-      this.buildMessageReferences(messages);
-
-    } catch (error) {
-      logger.error('Error during enhanced chat history extraction:', {}, error);
-    } finally {
-      this.isProcessingChat = false;
-    }
-
-    return messages;
-  }
-
-  /**
-   * Processes a batch of messages and returns an array with the valid messages
-   * @param {Array<HTMLElement>} elements - Elements to process
-   * @param {string} previousHTML - HTML of the previous message to detect duplicates
-   * @param {number} batchIndex - Index of the current batch
-   * @returns {Promise<Object>} - Object with the messages and the last processed HTML
-   */
-  async processBatchOfMessages(elements, previousHTML, batchIndex) {
-    const batchMessages = [];
-    let lastProcessedHTML = previousHTML;
-
-    for (let i = 0; i < elements.length; i++) {
-      const rowElement = elements[i];
-
-      // The 'messageBubble' is now the row itself for duplicate checking
-      const messageBubble = rowElement;
-      const currentMessageBubbleHTML = messageBubble.outerHTML;
-
-      // Skip duplicates
-      if (currentMessageBubbleHTML === lastProcessedHTML) {
-        continue;
-      }
-      lastProcessedHTML = currentMessageBubbleHTML;
-
-      // The 'contentContainer' is where we will look for the actual message content
-      const contentContainer = domUtils.findElement([
-        'div.x1cy8zhl', // Common container for message bubble
-        'div[data-testid*="message-container"]', // Another possible container
-        'span.x1lliihq.x1plvlek > div[dir="auto"]' // Directly the text div
-      ], rowElement) || rowElement; // Fallback to the row
-
-      // Improved structure - PHASE 3
-      const messageData = {
-        id: `msg_${this.currentChatId}_${batchIndex * 100 + i}`,
-        timestamp: null,
-        sentByUs: false,
-        content: {
-          text: '',
-          type: 'unknown',
-          media: {
-            images: [],
-            audio: null,
-            video: null,
-            files: [],
-            location: null,
-            gif: null
-          }
-        },
-        context: {} // NEW: Contextual information of the message
-      };
-
-      try {
-        // Determine if it was sent by us
-        messageData.sentByUs = this.isMessageSentByUs(messageBubble);
-
-        // Extract text with improved cleaning
-        const textElement = domUtils.findElement(CONFIG.selectors.activeChat.messageContent, contentContainer);
-        let textContent = '';
-        if (textElement) {
-          textContent = (textElement.innerText || textElement.textContent || '').trim();
-
-          // Cleaning of timestamps at the beginning of the text
-          textContent = textContent.replace(/^(\d{1,2}\/\d{1,2}\/\d{2,4},\s*)?\d{1,2}:\d{2}\s*(?:AM|PM)?\s*:\s*/i, '').trim();
-          textContent = textContent.replace(/^(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4},\s*\d{1,2}:\d{2}\s*(?:AM|PM)?\s*:\s*/i, '').trim();
-          textContent = textContent.replace(/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{1,2}:\d{2}\s*(?:AM|PM)?\s*:\s*/i, '').trim();
-          textContent = textContent.replace(/^Sent \d+d ago:\s*/i, '').trim(); // Format "Sent Xd ago: "
-          textContent = textContent.replace(/^\d{1,2}\/\d{1,2}\/\d{2,4},?\s+\d{1,2}:\d{2}\s*(?:AM|PM)?\s*:\s*/i, '').trim(); // Format "DD/MM/YY, HH:MM AM/PM:"
-        }
-
-        const isSys = this.isSystemMessage(textContent);
-        const isDiv = this.isDividerElement(rowElement);
-
-        if (textContent && !isDiv) {
-          messageData.content.text = textContent;
-
-          if (isSys) {
-            // Detect special system events
-            const specialEvent = this.detectSpecialSystemEvents(textContent);
-            if (specialEvent) {
-              messageData.content.type = 'system_event';
-              messageData.context.systemEvent = specialEvent;
-            } else {
-              messageData.content.type = 'system';
-            }
-          } else {
-            messageData.content.type = 'text';
-          }
-        }
-
-        // PHASE 3: Context improvement (mentions, replies, etc.)
-        this.enhanceMessageContext(contentContainer, messageData);
-
-        // Extract timestamp
-        const timestampElement = domUtils.findElement(CONFIG.selectors.activeChat.messageTimestamp, messageBubble);
-        if (timestampElement) {
-          const potentialTimestamp = timestampElement.getAttribute('data-tooltip-content') ||
-            timestampElement.getAttribute('aria-label') ||
-            timestampElement.innerText;
-
-          if (this.isValidTimestamp(potentialTimestamp)) {
-            messageData.timestamp = potentialTimestamp;
-          }
-        }
-
-        // Detection of media types
-        this.detectAndAddImageContent(contentContainer, messageData);
-        this.detectAndAddAudioContent(contentContainer, messageData);
-        this.detectAndAddVideoContent(contentContainer, messageData);
-        this.detectAndAddFileContent(contentContainer, messageData);
-        this.detectAndAddLocationContent(contentContainer, messageData);
-        this.detectAndAddGifContent(contentContainer, messageData);
-
-        // Determine final content type
-        if (messageData.content.type === 'unknown') {
-          if (messageData.content.text) {
-            messageData.content.type = 'text';
-          } else if (messageData.content.media.images.length > 0) {
-            messageData.content.type = 'image';
-          } else if (messageData.content.media.audio) {
-            messageData.content.type = 'audio';
-          } else if (messageData.content.media.video) {
-            messageData.content.type = 'video';
-          } else if (messageData.content.media.files.length > 0) {
-            messageData.content.type = 'file';
-          } else if (messageData.content.media.location) {
-            messageData.content.type = 'location';
-          } else if (messageData.content.media.gif) {
-            messageData.content.type = 'gif';
-          }
-        }
-
-        // Add message only if it has relevant content and is not a divider
-        if (messageData.content.type !== 'unknown' && !isDiv) {
-          batchMessages.push(messageData);
-        }
-
-      } catch (msgError) {
-        logger.error(`Error processing message element in batch ${batchIndex}, item ${i}:`, {}, msgError);
-      }
-    }
-
-    return {
-      messages: batchMessages,
-      lastProcessed: lastProcessedHTML
-    };
-  }
-
-  /**
-   * Builds references between messages (replies, quotes) after processing
-   * @param {Array} messages - List of processed messages
-   */
-  buildMessageReferences(messages) {
-    if (!messages || messages.length === 0) return;
-
-    try {
-      // Create an indexing of messages by text to facilitate searching
-      const textMap = new Map();
-
-      // First pass: index by text
-      for (let i = 0; i < messages.length; i++) {
-        const msg = messages[i];
-        if (msg.content.text) {
-          // Use the first 50 characters as a key to improve partial matches
-          const textKey = msg.content.text.substring(0, 50).toLowerCase();
-          if (!textMap.has(textKey)) {
-            textMap.set(textKey, []);
-          }
-          textMap.get(textKey).push({ index: i, id: msg.id });
-        }
-      }
-
-      // Second pass: set references
-      for (let i = 0; i < messages.length; i++) {
-        const msg = messages[i];
-        if (msg.context && msg.context.type === 'reply' && msg.context.quotedText) {
-          const quotedTextKey = msg.context.quotedText.substring(0, 50).toLowerCase();
-
-          // Search for possible original messages
-          if (textMap.has(quotedTextKey)) {
-            const candidates = textMap.get(quotedTextKey);
-
-            // Prioritize messages prior to this response
-            const validCandidates = candidates.filter(c => c.index < i);
-
-            if (validCandidates.length > 0) {
-              // Use the closest message as the original
-              const originalMsg = validCandidates.reverse()[0];
-              msg.context.referencesMessageId = originalMsg.id;
-
-              // Also add a reverse reference in the original message
-              const originalMsgObj = messages[originalMsg.index];
-              if (originalMsgObj) {
-                originalMsgObj.context = originalMsgObj.context || {};
-                originalMsgObj.context.referencedBy = originalMsgObj.context.referencedBy || [];
-                originalMsgObj.context.referencedBy.push(msg.id);
-              }
-            }
-          }
-        }
-      }
-
-      logger.debug(`Message references built for ${messages.length} messages`);
-    } catch (error) {
-      logger.error('Error building message references:', {}, error);
     }
   }
 
@@ -2422,7 +2269,8 @@ class ChatManager {
 
         this.insertResponseInInputField(replyText);
         showSimpleAlert('Response inserted. Review and send.', 'info');
-        await this.markChatAsRead();
+        // Registrar en historial (nueva línea)
+        this.logResponseToHistory(context, context.role, replyText, CONFIG.operationMode === 'auto');
         return { text: replyText };
       }
       // NO AI SERVICE AVAILABLE
@@ -2470,11 +2318,6 @@ class ChatManager {
 
       // PHASE 1: Previous cleaning with delay to ensure Facebook is ready
       setTimeout(() => {
-        // First try to clean with openaiManager - more aggressive if we are in AUTO
-        if (window.openaiManager && typeof window.openaiManager.clearInputField === 'function') {
-          window.openaiManager.clearInputField();
-          logger.debug('First cleaning phase completed with openaiManager');
-        }
 
         // PHASE 2: Additional direct cleaning, more intense in AUTO
         this.forceCleanInputField(inputField);
@@ -2482,14 +2325,13 @@ class ChatManager {
 
         // PHASE 3: Verify the cleaning status before inserting
         const isContentEditable = inputField.getAttribute('contenteditable') === 'true';
-        const currentContent = isContentEditable ? 
-          (inputField.textContent || '').trim() : 
+        const currentContent = isContentEditable ?
+          (inputField.textContent || '').trim() :
           (inputField.value || '').trim();
 
         if (currentContent) {
           logger.warn(`Field is NOT empty after two cleaning attempts. Current content: "${currentContent.substring(0, 20)}..."`);
           // PHASE 4: Emergency cleaning as a last resort
-          this.emergencyCleanField(inputField);
 
           // In AUTO mode, wait a little longer to ensure complete cleaning
           if (isAutoMode) {
@@ -2566,28 +2408,23 @@ class ChatManager {
    */
   sendMessage(isAfterInsert = false) {
     try {
-      // NEW: Detailed log about the sending attempt
+      let messageSent = false; // Only increment once
+
       logger.debug(`Initiating message sending attempt (${isAfterInsert ? 'after inserting text' : 'direct'})`);
 
       // Strategy 1: Click on the send button with improved selectors
-      // IMPROVEMENT: Use more specific selectors and verify visibility/enablement
       const sendButtonSelectors = [
-        ...CONFIG.selectors.activeChat.sendButton, // Use the configured ones
-        'div[aria-label="Press enter to send"]', // Common button in new version
-        'div[aria-label="Pulsa Intro para enviar"]', // Spanish version
-        'div[role="button"][tabindex="0"][style*="transform: translateY(0px)"]', // Transformed visible button
-        'div.xjbqb8w:not([style*="opacity: 0"])', // Button with visible opacity
-        'div.x1i10hfl[role="button"]:not(.x1hc1fzr)' // Generic non-hidden button
+        ...CONFIG.selectors.activeChat.sendButton,
+        'div[aria-label="Press enter to send"]',
+        'div[aria-label="Pulsa Intro para enviar"]', // Doubt: Should this be translated?
+        'div[role="button"][tabindex="0"][style*="transform: translateY(0px)"]',
+        'div.xjbqb8w:not([style*="opacity: 0"])',
+        'div.x1i10hfl[role="button"]:not(.x1hc1fzr)'
       ];
-
-      // Log for debugging
       logger.debug(`Searching for send button with ${sendButtonSelectors.length} selectors...`);
-
-      // Search for the button with any of the selectors
       const sendButton = domUtils.findElement(sendButtonSelectors);
 
       if (sendButton) {
-        // NEW: Verify that the button is visible and enabled before clicking
         const rect = sendButton.getBoundingClientRect();
         const styles = window.getComputedStyle(sendButton);
         const isVisible = rect.width > 0 && rect.height > 0 &&
@@ -2597,52 +2434,52 @@ class ChatManager {
 
         if (isVisible) {
           logger.debug(`Send button found and visible (${rect.width}x${rect.height}), clicking...`);
-
-          // IMPROVEMENT: Add small delay before the click to give Facebook time
           setTimeout(() => {
             try {
-              // Try a normal click
               sendButton.click();
               logger.log('Message sent by clicking on the button');
-              this.markChatAsRead();
+              if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
+                messageSent = true;
+                window.FBChatMonitor.incrementResponseSent();
+              }
               return true;
             } catch (clickError) {
-              // If the normal click fails, try simulating a click event
-              logger.warn(`Error when doing normal click: ${clickError.message}, trying simulated event...`);
+              logger.warn(`Error on normal click: ${clickError.message}, trying simulated event...`);
               try {
-                sendButton.dispatchEvent(new MouseEvent('click', {
-                  bubbles: true,
-                  cancelable: true,
-                  view: window
-                }));
+                sendButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
                 logger.log('Message sent using simulated click event');
-                this.markChatAsRead();
+                if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
+                  messageSent = true;
+                  window.FBChatMonitor.incrementResponseSent();
+                }
                 return true;
               } catch (eventError) {
                 logger.error(`Error simulating click event: ${eventError.message}`);
               }
             }
-          }, 100); // Small delay before the click
+          }, 100);
+          return true;
         } else {
-          logger.warn(`Send button found but NOT visible/enabled. Using alternative method.`);
+          logger.warn('Send button found but NOT visible/enabled. Using alternative method.');
         }
       } else {
         logger.debug('Send button not found, trying with Enter key...');
       }
 
-      // Strategy 2: Simulate Enter key in the input field
+      // Strategy 2: Simulate Enter key in the field
       const inputField = document.querySelector(CONFIG.selectors.activeChat.messageInput);
       if (inputField) {
         logger.debug('Simulating Enter key in the input field...');
 
-        // Use the simulateKeyPress method from domUtils
         if (domUtils.simulateKeyPress(inputField, 'Enter', 13)) {
           logger.log('Message sent simulating Enter key with domUtils.simulateKeyPress');
-          this.markChatAsRead();
+          if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
+            messageSent = true;
+            window.FBChatMonitor.incrementResponseSent();
+          }
           return true;
         }
 
-        // Alternative strategy if the previous one fails
         inputField.focus();
         const enterEvent = new KeyboardEvent('keydown', {
           key: 'Enter',
@@ -2652,38 +2489,43 @@ class ChatManager {
           bubbles: true,
           cancelable: true
         });
-
         const sent = inputField.dispatchEvent(enterEvent);
 
         if (sent) {
           logger.log('Message sent simulating Enter key with KeyboardEvent');
-          this.markChatAsRead();
+          if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
+            messageSent = true;
+            window.FBChatMonitor.incrementResponseSent();
+          }
           return true;
         } else {
           logger.warn('The event was not sent correctly');
         }
 
-        // Strategy 3: Use execCommand (alternative method)
         try {
           if (document.execCommand('insertText', false, '\n')) {
             logger.log('Message sent using execCommand insertText');
-            this.markChatAsRead();
+            if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
+              messageSent = true;
+              window.FBChatMonitor.incrementResponseSent();
+            }
             return true;
           }
         } catch (execError) {
           logger.error(`Error using execCommand: ${execError.message}`);
         }
 
-        // NEW: Strategy 4 - Try resending after a while if it is the first attempt
+        // Retry once if the first attempt failed
         if (!isAfterInsert) {
           logger.debug('First attempt failed, scheduling retry after 1 second...');
           setTimeout(() => this.sendMessage(true), 1000);
-          return true; // Indicate that the retry has been scheduled
+          return true;
         }
       }
 
       logger.error('Could not send the message after all attempts');
       return false;
+
     } catch (error) {
       logger.error(`Error sending message: ${error.message}`, {}, error);
       return false;
@@ -2693,315 +2535,92 @@ class ChatManager {
   /**
    * Additional method to force cleaning of the input field directly
    * @param {HTMLElement} inputField - Input field to clean
+   * @returns {Promise<Object>} Result of the cleaning operation
    */
   forceCleanInputField(inputField) {
-    try {
-      if (!inputField) return;
+    // New implementation: simulate Ctrl+A and Backspace/Delete to clear Messenger input
+    return new Promise((resolve) => {
+      if (!inputField) return resolve({ success: false, message: "Field not found" });
 
-      const isContentEditable = inputField.getAttribute('contenteditable') === 'true';
+      inputField.focus();
+      const initialContent = inputField.textContent?.trim() || ""; 
 
-      if (isContentEditable) {
-        // Clean HTML and text content
-        inputField.innerHTML = '';
-        inputField.textContent = '';
+      if (!initialContent) return resolve({ success: true, message: "Field already empty" }); 
 
-        // Use selection and delete command
-        try {
-          const selection = window.getSelection();
-          const range = document.createRange();
-          range.selectNodeContents(inputField);
-          selection.removeAllRanges();
-          selection.addRange(range);
-          document.execCommand('delete', false, null);
-        } catch (e) {
-          logger.debug(`Error using selection to clean: ${e.message}`);
-        }
-      } else {
-        inputField.value = '';
-      }
-
-      // Trigger events
-      ['input', 'change', 'keyup'].forEach(eventType => {
-        const event = new Event(eventType, { bubbles: true });
-        inputField.dispatchEvent(event);
+      // Simulate Ctrl+A
+      ['keydown', 'keyup'].forEach(type => {
+        inputField.dispatchEvent(new KeyboardEvent(type, {
+          key: 'Control', code: 'ControlLeft', keyCode: 17, ctrlKey: true, bubbles: true
+        }));
+        inputField.dispatchEvent(new KeyboardEvent(type, {
+          key: 'a', code: 'KeyA', keyCode: 65, ctrlKey: true, bubbles: true
+        }));
       });
-    } catch (error) {
-      logger.debug(`Error in forced cleaning: ${error.message}`);
-    }
-  }
 
-  /**
-   * Emergency method to clean a field that does not respond to normal methods
-   * @param {HTMLElement} inputField - Input field to clean
-   */
-  emergencyCleanField(inputField) {
-    try {
-      // 1. Try replacing the node completely
-      if (inputField.parentNode) {
-        const newField = inputField.cloneNode(false); // Clone without content
-        inputField.parentNode.replaceChild(newField, inputField);
-
-        // 2. Simulate keyboard events to delete content
-        const keyEvents = [
-          new KeyboardEvent('keydown', { key: 'Control', keyCode: 17, bubbles: true }),
-          new KeyboardEvent('keydown', { key: 'a', keyCode: 65, bubbles: true }),
-          new KeyboardEvent('keyup', { key: 'a', keyCode: 65, bubbles: true }),
-          new KeyboardEvent('keyup', { key: 'Control', keyCode: 17, bubbles: true }),
-          new KeyboardEvent('keydown', { key: 'Delete', keyCode: 46, bubbles: true }),
-          new KeyboardEvent('keyup', { key: 'Delete', keyCode: 46, bubbles: true })
-        ];
-
-        keyEvents.forEach(event => newField.dispatchEvent(event));
-        logger.debug('Emergency cleaning applied (node replacement)');
-      } else {
-        logger.warn('Could not apply emergency cleaning: the field has no parent node');
-      }
-    } catch (error) {
-      logger.debug(`Error in emergency cleaning: ${error.message}`);
-    }
-  }
-
-  /**
-   * Sends the message by clicking on the send button or simulating the Enter key
-   * @returns {boolean} - True if the message could be sent
-   */
-  sendMessage() {
-    try {
-      // Strategy 1: Click on the send button
-      const sendButton = domUtils.findElement(CONFIG.selectors.activeChat.sendButton);
-
-      if (sendButton) {
-        logger.debug('Send button found, clicking...');
-        sendButton.click();
-        logger.log('Message sent by clicking on the button');
-        return true;
-      }
-
-      // Strategy 2: Simulate Enter key in the input field
-      const inputField = document.querySelector(CONFIG.selectors.activeChat.messageInput);
-      if (inputField) {
-        logger.debug('Simulating Enter key in the input field...');
-
-        // Use the new simulateKeyPress method from domUtils
-        if (domUtils.simulateKeyPress(inputField, 'Enter', 13)) {
-          logger.log('Message sent simulating Enter key with simulateKeyPress');
-          return true;
-        }
-
-        // Alternative strategy if the previous one fails
-        inputField.focus();
-        const enterEvent = new KeyboardEvent('keydown', {
-          key: 'Enter',
-          code: 'Enter',
-          keyCode: 13,
-          which: 13,
-          bubbles: true,
-          cancelable: true
+      setTimeout(() => {
+        // Simulate Backspace and Delete
+        ['Backspace', 'Delete'].forEach(key => {
+          inputField.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, keyCode: key === 'Backspace' ? 8 : 46, bubbles: true }));
+          inputField.dispatchEvent(new KeyboardEvent('keyup', { key, code: key, keyCode: key === 'Backspace' ? 8 : 46, bubbles: true }));
         });
 
-        const sent = inputField.dispatchEvent(enterEvent);
+        inputField.dispatchEvent(new Event('input', { bubbles: true }));
 
-        if (sent) {
-          logger.log('Message sent simulating Enter key');
-          return true;
-        } else {
-          logger.warn('The keydown event was not processed by the input field');
-        }
-
-        // Strategy 3: Use execCommand (alternative method)
-        try {
-          document.execCommand('insertText', false, '\n');
-          logger.log('Message sent using execCommand');
-          return true;
-        } catch (execError) {
-          logger.debug(`execCommand failed: ${execError.message}`);
-        }
-      }
-
-      logger.error('Could not send the message - send button or input field not found');
-      return false;
-    } catch (error) {
-      logger.error(`Error sending message: ${error.message}`, {}, error);
-      return false;
-    }
+        setTimeout(() => {
+          const finalContent = inputField.textContent?.trim() || ""; 
+          const success = finalContent === ""; 
+          resolve({
+            success, 
+            message: success ? "Field cleaned successfully" : "Could not clean completely", 
+            initialContent, 
+            finalContent 
+          });
+        }, 100);
+      }, 50);
+    });
   }
 
   /**
-   * Processes a chat and decides whether to generate an automatic response
-   * @param {string} chatId 
-   */
-  async processChatAndAutoRespond(chatId) {
+ * Logs a generated response to the history
+ * @param {Object} context - Chat context
+ * @param {string} response - Generated response
+ * @param {boolean} sent - If the response was sent
+ */
+  logResponseToHistory(context, role, response, sent = false) {
     try {
-      logger.log(`Extracting data from chat ${chatId}`);
+      // Get current history
+      const history = storageUtils.get('RESPONSE_LOGS', []);
 
-      // FIX: Correctly verify the operation mode
-      const autoMode = window.CONFIG?.operationMode === 'auto';
+      // Add new entry
+      const logEntry = {
+        timestamp: Date.now(),
+        mode: window.CONFIG?.operationMode || 'manual',
+        context: {
+          chatId: context.chatId,
+          role: role || context.role,
+          username: context.username || ''
+        },
+        response: response,
+        sent: sent
+      };
 
-      // Verify FIRST if automatic mode is enabled
-      // This avoids extracting data unnecessarily when we are in manual mode
-      if (!autoMode) {
-        logger.debug(`Auto-response deactivated for chat ${chatId}. The current mode is: ${window.CONFIG?.operationMode}`);
-        return false;
+      // Add to the beginning to show the most recent ones first
+      history.unshift(logEntry);
+
+      // Limit to 200 entries to avoid taking up too much space
+      const limitedHistory = history.slice(0, 200);
+
+      // Save update
+      storageUtils.set('RESPONSE_LOGS', limitedHistory);
+
+      // Verify that response is a string before calling substring
+      if (typeof response === 'string') {
+        logger.debug(`Response logged to history: ${response.substring(0, 30)}...`);
+      } else {
+        logger.debug(`Response logged to history: ${JSON.stringify(response).substring(0, 30)}...`);
       }
-
-      // FIX: Additional log for diagnosis
-      logger.log(`Automatic mode activated (operationMode: ${window.CONFIG?.operationMode}), processing automatic response...`);
-
-      const chatData = await this.extractChatData(chatId);
-
-      if (!chatData.success) {
-        logger.error(`Error extracting chat data for automatic response: ${chatData.error || 'Unknown error'}`);
-        return false;
-      }
-
-      // We already know that we are in automatic mode, we proceed with the response
-      logger.debug(`AUTO mode activated (${window.CONFIG?.operationMode}), processing automatic response`);
-
-      // Verify that responseManager exists for automatic response
-      if (!window.responseManager) {
-        logger.error('responseManager not found to process automatic response');
-        return false;
-      }
-
-      // Verify availability of OpenAI Manager for automatic mode
-      if (!window.openaiManager) {
-        logger.error('openaiManager not found to process automatic response');
-        return false;
-      }
-
-      // Verify if OpenAI Manager is ready
-      const openaiReady = typeof window.openaiManager.isReady === 'function' ?
-        window.openaiManager.isReady() :
-        (window.openaiManager.apiKey && window.openaiManager.isInitialized);
-
-      if (!openaiReady) {
-        logger.error('OpenAI Manager is not ready to process automatic response');
-        return false;
-      }
-
-      // Call processAutoResponse directly
-      const result = await window.responseManager.processAutoResponse(chatId, chatData.chatData);
-
-      // FIX: Additional log for diagnosis
-      logger.log(`Result of processAutoResponse: ${result ? 'success' : 'failed'}`);
-      return result;
-
     } catch (error) {
-      logger.error(`Error processing chat for automatic response: ${error.message}`, {}, error);
-      showSimpleAlert(`Error processing automatic response: ${error.message}`, 'error');
-      return false;
-    }
-  }
-
-  /**
-   * Marks the current chat as read to avoid duplicate responses
-   * @param {string} chatId - Chat ID to mark as read (optional, uses current if not provided)
-   * @returns {Promise<boolean>} - True if it could be marked as read
-   */
-  async markChatAsRead(chatId = null) {
-    const targetChatId = chatId || this.currentChatId;
-
-    if (!targetChatId) {
-      logger.error('No chat ID to mark as read');
-      return false;
-    }
-
-    logger.log(`Attempting to mark chat as read: ${targetChatId}`);
-
-    try {
-      // Method 1: Find and click the unread message indicator
-      // These selectors may need adjustments depending on Facebook's current structure
-      const unreadIndicatorSelectors = [
-        // Specific "mark as read" buttons/indicators
-        'div[aria-label="Marcar como leído"]',
-        'div[aria-label="Mark as read"]',
-        'div[aria-label*="read"][role="button"]',
-        // General elements that indicate unread messages
-        'div.xuk3077[role="row"] div[aria-label*="unread"]',
-        'div.x78zum5[role="row"] div.xzg4506:not(:empty)',
-        'div[role="grid"] div[role="row"] div.xzg4506:not(:empty)' // Generic unread indicator
-      ];
-
-      // Try to find any unread indicator in this chat
-      let unreadElement = null;
-
-      // If we are in the active chat, search directly in the DOM
-      if (document.querySelector(`[data-thread-id="${targetChatId}"]`) ||
-        document.querySelector(`[href*="${targetChatId}"]`)) {
-
-        for (const selector of unreadIndicatorSelectors) {
-          unreadElement = document.querySelector(selector);
-          if (unreadElement) {
-            logger.debug(`Found unread message indicator with selector: ${selector}`);
-            break;
-          }
-        }
-      }
-
-      // If we found an element, simulate click
-      if (unreadElement) {
-        logger.debug('Simulating click on "mark as read" indicator');
-        this.simulateCompatibleMouseEvents(unreadElement);
-
-        // Verify that the indicator disappeared
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        if (!document.querySelector(unreadIndicatorSelectors.join(', '))) {
-          logger.log('Chat marked as read successfully (indicator disappeared)');
-          return true;
-        }
-      }
-
-      // Method 2: Update an internal Facebook attribute (more advanced)
-      // This approach is more technical and may require adjustments when Facebook changes its implementation
-      try {
-        // Try to find the React data model where Facebook stores read state
-        const chatElements = document.querySelectorAll(`[data-thread-id="${targetChatId}"], [href*="${targetChatId}"]`);
-
-        for (const element of chatElements) {
-          // Access React instance properties
-          const reactKey = Object.keys(element).find(key => key.startsWith('__reactFiber$'));
-          if (reactKey) {
-            const internalInstance = element[reactKey];
-            if (internalInstance) {
-              // Navigate through internal structure to find state
-              const stateNode = internalInstance.return?.stateNode;
-              if (stateNode && typeof stateNode.markRead === 'function') {
-                logger.debug('Found Facebook internal markRead function, attempting to use');
-                stateNode.markRead();
-                logger.log('Chat marked as read using Facebook internal API');
-                return true;
-              }
-            }
-          }
-        }
-      } catch (internalError) {
-        logger.debug(`Error attempting to use internal API: ${internalError.message}`);
-        // Continue with other methods if this fails
-      }
-
-      // Method 3: Simulate complete viewing of chat (usually marks as read)
-      if (this.currentChatId === targetChatId) {
-        // Find messages container
-        const messagesContainer = domUtils.findElement(CONFIG.selectors.activeChat.container);
-        if (messagesContainer) {
-          // Scroll completely to bottom
-          messagesContainer.scrollTop = messagesContainer.scrollHeight;
-
-          // Wait a moment for Facebook to process the action
-          await new Promise(resolve => setTimeout(resolve, 1500));
-          logger.debug('Chat marked as read by scrolling to most recent messages');
-          return true;
-        }
-      }
-
-      // If we get here, we couldn't explicitly mark as read
-      logger.warn(`Could not explicitly mark chat ${targetChatId} as read, but sending response may have done it automatically`);
-
-      // Return true since FB may have marked it automatically when sending message
-      return true;
-    } catch (error) {
-      logger.error(`Error marking chat as read: ${error.message}`);
-      return false;
+      logger.error(`Error logging response to history: ${error.message}`);
     }
   }
 }

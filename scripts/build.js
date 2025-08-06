@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
-const Terser = require('terser');
+const JavaScriptObfuscator = require('javascript-obfuscator');
 
 // Check if we are in production or development mode
 const isProd = process.argv[2] === 'prod';
@@ -20,24 +20,24 @@ if (!fs.existsSync(DIST_DIR)) {
   fs.mkdirSync(DIST_DIR, { recursive: true });
 }
 
-// List of files to combine in order (make sure ChatManager.js is included)
+// List of files to combine in order
 const sourceFiles = [
   // Header will be handled separately now, not in this list
   'config.js',
   'utils.js',
-  'responseManager.js',
-  'human-simulator.js',
-  'ChatManager.js', // Make sure this line exists and matches the exact file name
+  'core/openai/Storage.js',
+  'core/openai/ThreadStore.js',
+  'audioTranscriber.js',
+  'core/ScrollManager.js',
+  'core/EventCoordinator.js',
+  'chatManager.js',
   'product-extractor.js',
-  'openai/api-client.js',
-  'openai/message-utils.js',
-  'openai/timestamp-utils.js',
-  'openai/message-chunker.js',
-  'openai/thread-message-handler.js',
-  'openai/thread-manager.js',
-  'openai/chat-thread-system.js',
+  'core/openai/image-filter-utils.js',
+  'core/openai/timestamp-utils.js',
+  'core/openai/ApiClient.js',
+  'core/openai/MessagePreprocessor.js',
+  'core/openai/AssistantHandler.js',
   'openai-manager.js',
-  'assistant-manager-ui.js',
   'ui.js',
   'main.js',
   'init.js',
@@ -86,80 +86,87 @@ async function build() {
   // Add IIFE end
   combinedCode += '})();';
 
-  // Apply minification in production mode
   if (isProd) {
-    console.log('Minifying code...');
+    console.log('Obfuscating code...');
     try {
-      const minified = await Terser.minify(combinedCode, {
-        compress: {
-          drop_console: false,
-          drop_debugger: true
-        },
-        mangle: {
-          reserved: [
-            // Tampermonkey API
-            'GM_setValue',
-            'GM_getValue',
-            'GM_deleteValue',
-            'GM_listValues',
-            'GM_xmlhttpRequest',
-            'GM_addStyle',
+      const obfuscationResult = JavaScriptObfuscator.obfuscate(combinedCode, {
+        compact: true,
+        controlFlowFlattening: true,
+        controlFlowFlatteningThreshold: 0.6,
+        deadCodeInjection: true,
+        deadCodeInjectionThreshold: 0.1,
+        debugProtection: false,
+        debugProtectionInterval: 0,
+        disableConsoleOutput: false,
+        identifierNamesGenerator: 'hexadecimal',
+        log: false,
+        numbersToExpressions: true,
+        renameGlobals: false,
+        selfDefending: true,
+        simplify: true,
+        splitStrings: true,
+        stringArray: true,
+        stringArrayThreshold: 0.75,
+        transformObjectKeys: false,
+        unicodeEscapeSequence: false,
+        reservedNames: [
+          // Tampermonkey API
+          'GM_setValue',
+          'GM_getValue',
+          'GM_deleteValue',
+          'GM_listValues',
+          'GM_xmlhttpRequest',
+          'GM_addStyle',
 
-            // Config and utilities
-            'CONFIG',
-            'UTILS',
+          // Config and utilities
+          'CONFIG',
+          'UTILS',
 
-            // Main managers
-            'ChatManager',
-            'chatManager',
-            'responseManager',
-            'ResponseManager',
-            'openAIManager',
-            'OpenAIManager',
-            'humanSimulator',
-            'HumanSimulator',
+          // Main managers
+          'ChatManager',
+          'chatManager',
+          'responseManager',
+          'ResponseManager',
+          'openAIManager',
+          'OpenAIManager',
+          'humanSimulator',
+          'HumanSimulator',
 
-            // User interface
-            'ui',
-            'UI',
-            'assistantManagerUI',
-            'AssistantManagerUI',
-            'domUtils',
+          // User interface
+          'ui',
+          'UI',
+          'assistantManagerUI',
+          'AssistantManagerUI',
+          'domUtils',
 
-            // Global classes and objects
-            'FBChatMonitor',
-            'ProductExtractor',
-            'productExtractor',
-            'ConversationAnalyzer',
-            'conversationAnalyzer',
-            'storageUtils',
+          // Global classes and objects
+          'FBChatMonitor',
+          'ProductExtractor',
+          'productExtractor',
+          'ConversationAnalyzer',
+          'conversationAnalyzer',
+          'storageUtils',
 
-            // Specific utilities
-            'logger',
-            'audioTranscriber',
-            'initializeMonitor',
-            'getProductInfo',
-            'extractProductDetails',
+          // Specific utilities
+          'logger',
+          'audioTranscriber',
+          'initializeMonitor',
+          'getProductInfo',
+          'extractProductDetails',
 
-            // Critical properties and methods
-            'initialize',
-            'sendMessage',
-            'processMessage',
-            'analyzeConversation'
-          ]
-        }
-        // Do not configure format.comments here, as we will handle the header separately
+          // Critical properties and methods
+          'initialize',
+          'sendMessage',
+          'processMessage',
+          'analyzeConversation'
+        ]
       });
 
-      if (minified.error) {
-        throw new Error(minified.error);
-      }
-
-      combinedCode = minified.code;
-      console.log('Minification completed successfully.');
+      combinedCode = obfuscationResult.getObfuscatedCode();
+      console.log('Obfuscation completed successfully.');
     } catch (err) {
-      console.error('Error during minification:', err);
-      console.log('Continuing with unminified code...');
+      console.error('Error during obfuscation:', err);
+      console.log('Continuing with non-obfuscated code...');
     }
   }
 

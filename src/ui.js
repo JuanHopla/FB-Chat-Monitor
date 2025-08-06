@@ -455,6 +455,31 @@ function createStyles() {
           visibility: visible;
           opacity: 1;
         }
+        
+        .fb-chat-monitor-tooltip:hover .fb-chat-monitor-tooltiptext {
+          visibility: visible;
+          opacity: 1;
+        }
+
+        .fb-chat-monitor-history-container tr td:nth-child(3) {
+          color: #1877f2;
+          text-decoration: underline;
+          cursor: pointer;
+          transition: color 0.2s;
+        }
+        
+        .fb-chat-monitor-history-container tr td:nth-child(3):hover {
+          color: #166fe5;
+          background-color: rgba(24, 119, 242, 0.05);
+        }
+        
+        .fb-chat-monitor-badge-seller {
+          background-color: #4CAF50;
+        }
+        
+        .fb-chat-monitor-badge-buyer {
+          background-color: #2196F3;
+        }
       `;
 
   domUtils.injectStyles(styles);
@@ -470,7 +495,7 @@ function toggleControlPanel() {
     uiState.isControlPanelVisible = false;
     // Also reset the minimized state when completely closed
     uiState.isControlPanelMinimized = false;
-    
+
     // Update floating button visibility when the panel is closed
     updateFloatingResponseButtonVisibility();
     return;
@@ -479,7 +504,7 @@ function toggleControlPanel() {
   // Create the control panel
   uiState.controlPanel = createControlPanel();
   uiState.isControlPanelVisible = true;
-  
+
   // ADDED: Hide the floating button when the panel is opened
   if (uiState.floatingResponseButton) {
     uiState.floatingResponseButton.style.display = 'none';
@@ -673,6 +698,8 @@ function showTabContent(tabId) {
       refreshLogs();
     } else if (tabId === 'history') {
       refreshHistory();
+    } else if (tabId === 'assistants') {
+      populateAssistantsFromStorage(); // <-- NUEVO: poblar asistentes desde storage al abrir la pestaña
     }
   }
 }
@@ -781,12 +808,18 @@ function createConfigContent() {
           <small style="display:block; margin-top:5px; color:#666;">How often to check for new messages</small>
         </div>
 
+        <!-- REEMPLAZO: Sección de calidad de imagen en lugar de simulación humana -->
         <div class="fb-chat-monitor-form-group">
-          <h4 style="margin-top: 20px; margin-bottom: 10px;">Human Simulation</h4>
-
-          <label for="fb-chat-monitor-typing-speed">Typing speed (characters per second)</label>
-          <input type="number" id="fb-chat-monitor-typing-speed" min="1" max="20" value="${CONFIG.AI?.humanSimulation?.baseTypingSpeed || 5}">
-          <small style="display:block; margin-top:5px; color:#666;">Higher values = faster typing</small>
+          <h4 style="margin-top: 20px; margin-bottom: 10px;">Image Quality Settings</h4>
+          <div id="fb-chat-monitor-image-quality-container">
+            <label for="fb-chat-monitor-image-quality">Image quality for OpenAI</label>
+            <select id="fb-chat-monitor-image-quality">
+              <option value="high" ${CONFIG.images?.quality === 'high' ? 'selected' : ''}>High Quality (Original Size)</option>
+              <option value="medium" ${CONFIG.images?.quality === 'medium' ? 'selected' : ''}>Medium Quality (800px)</option>
+              <option value="low" ${CONFIG.images?.quality === 'low' ? 'selected' : ''}>Low Quality (400px)</option>
+            </select>
+            <small style="display:block; margin-top:5px; color:#666;">Lower quality uses fewer tokens in OpenAI's API</small>
+          </div>
         </div>
 
         <div>
@@ -851,7 +884,7 @@ function createHistoryContent() {
                 <th>Time</th>
                 <th>Mode</th>
                 <th>Content</th>
-                <th>Status</th>
+                <th>Chat Role</th>
               </tr>
             </thead>
             <tbody id="fb-chat-monitor-history-list">
@@ -1046,7 +1079,7 @@ function attachEventHandlers() {
         window.FBChatMonitor.changeOperationMode('auto');
         window.FBChatMonitor.toggleMonitoring(true);
       } else {
-        logger.error('FBChatMonitor no disponible');
+        logger.error('FBChatMonitor not available');
       }
       if (genBtn) genBtn.setAttribute('disabled', ''); // Disable button in auto mode
     } else {
@@ -1055,7 +1088,7 @@ function attachEventHandlers() {
         window.FBChatMonitor.changeOperationMode('manual');
         window.FBChatMonitor.toggleMonitoring(false);
       } else {
-        logger.error('FBChatMonitor no disponible');
+        logger.error('FBChatMonitor not available');
       }
       if (genBtn) genBtn.removeAttribute('disabled'); // Enable button in manual mode
     }
@@ -1253,6 +1286,72 @@ async function refreshAssistantsList() {
 }
 
 /**
+ * Populates the assistant selects using the data stored in Tampermonkey.
+ * This allows showing the previously selected assistants when reloading the page,
+ * without depending on the API or the "Refresh Assistants" button.
+ */
+function populateAssistantsFromStorage() {
+  try {
+    // Get the selects
+    const sellerSelect = document.getElementById('fb-chat-monitor-seller-assistant');
+    const buyerSelect = document.getElementById('fb-chat-monitor-buyer-assistant');
+    if (!sellerSelect || !buyerSelect) return;
+
+    // Read the assistants from Tampermonkey storage
+    let assistants = null;
+    if (typeof GM_getValue === 'function') {
+      assistants = GM_getValue('FB_CHAT_MONITOR_FB_CHAT_ASSISTANTS', null);
+    }
+    if (!assistants && typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem('FB_CHAT_MONITOR_FB_CHAT_ASSISTANTS');
+      if (raw) {
+        try { assistants = JSON.parse(raw); } catch { }
+      }
+    }
+    if (!assistants) return;
+
+    // Clear selects
+    sellerSelect.innerHTML = '';
+    buyerSelect.innerHTML = '';
+
+    // Seller
+    if (assistants.seller && assistants.seller.id) {
+      const opt = document.createElement('option');
+      opt.value = assistants.seller.id;
+      opt.textContent = assistants.seller.name || assistants.seller.id;
+      opt.selected = true;
+      sellerSelect.appendChild(opt);
+    } else {
+      sellerSelect.innerHTML = '<option value="">Select an assistant</option>';
+    }
+
+    // Buyer
+    if (assistants.buyer && assistants.buyer.id) {
+      const opt = document.createElement('option');
+      opt.value = assistants.buyer.id;
+      opt.textContent = assistants.buyer.name || assistants.buyer.id;
+      opt.selected = true;
+      buyerSelect.appendChild(opt);
+    } else {
+      buyerSelect.innerHTML = '<option value="">Select an assistant</option>';
+    }
+
+    // --- NEW: Update the global configuration so the system detects the assistants ---
+    if (window.CONFIG && window.CONFIG.AI && window.CONFIG.AI.assistants) {
+      window.CONFIG.AI.assistants.seller = { ...window.CONFIG.AI.assistants.seller, ...assistants.seller };
+      window.CONFIG.AI.assistants.buyer = { ...window.CONFIG.AI.assistants.buyer, ...assistants.buyer };
+    }
+    // If you have another global reference (window.CONFIG.assistants), update it too:
+    if (window.CONFIG && window.CONFIG.assistants) {
+      window.CONFIG.assistants.seller = { ...window.CONFIG.assistants.seller, ...assistants.seller };
+      window.CONFIG.assistants.buyer = { ...window.CONFIG.assistants.buyer, ...assistants.buyer };
+    }
+  } catch (e) {
+    logger.error('Error populating assistants from storage', {}, e);
+  }
+}
+
+/**
  * Saves configuration to persistent storage
  */
 function saveConfig() {
@@ -1260,20 +1359,51 @@ function saveConfig() {
     logger.warn('GM_setValue not available. Cannot save persistent configuration.');
     return;
   }
-  
+
   try {
-    // Only save options that still exist
+    // Save scan interval configuration
+    const scanInterval = document.getElementById('fb-chat-monitor-scan-interval');
+    if (scanInterval && scanInterval.value) {
+      const interval = parseInt(scanInterval.value, 10) * 1000;
+      if (!isNaN(interval) && interval >= 5000) {
+        window.CONFIG.scanInterval = interval;
+        GM_setValue('CONFIG_scanInterval', interval);
+      }
+    }
+
+    // NEW: Save image quality configuration
+    const imageQualitySelect = document.getElementById('fb-chat-monitor-image-quality');
+    if (imageQualitySelect) {
+      const quality = imageQualitySelect.value;
+      if (quality && ['high', 'medium', 'low'].includes(quality)) {
+        // We use the specific CONFIG function to ensure it is saved correctly
+        if (window.CONFIG.saveImageQuality) {
+          window.CONFIG.saveImageQuality(quality);
+        } else {
+          // Alternative method if the specific function does not exist
+          if (!window.CONFIG.images) window.CONFIG.images = {};
+          window.CONFIG.images.quality = quality;
+          GM_setValue('FB_CHAT_IMAGE_QUALITY', quality);
+          logger.log(`[Config] Image quality changed to: ${quality}`);
+        }
+      }
+    }
+
+    // Save the operation mode
     GM_setValue('CONFIG_operationMode', window.CONFIG.operationMode || 'manual');
     GM_setValue('CONFIG_autoSendMessages', window.CONFIG.autoSendMessages || false);
-    
+
     // Save API key if it exists
     if (window.CONFIG.AI && window.CONFIG.AI.apiKey) {
       GM_setValue('CONFIG_AI_apiKey', window.CONFIG.AI.apiKey);
     }
-    
+
+    // Show confirmation message
+    showSimpleAlert('Configuration saved successfully', 'success');
     logger.log('Configuration saved to persistent storage');
   } catch (error) {
     logger.error(`Error saving configuration: ${error.message}`);
+    showSimpleAlert('Error saving configuration', 'error');
   }
 }
 
@@ -1285,19 +1415,27 @@ function loadConfig() {
     logger.warn('GM_getValue not available. Using default configuration.');
     return;
   }
-  
+
   try {
-    // Only load options that still exist
+    // Load previous configuration
     window.CONFIG.operationMode = GM_getValue('CONFIG_operationMode', 'manual');
     window.CONFIG.autoSendMessages = GM_getValue('CONFIG_autoSendMessages', false);
-    
+    window.CONFIG.scanInterval = GM_getValue('CONFIG_scanInterval', 30000);
+
+    // NEW: Load image quality configuration
+    const savedQuality = GM_getValue('FB_CHAT_IMAGE_QUALITY', 'high');
+    if (savedQuality && ['high', 'medium', 'low'].includes(savedQuality)) {
+      if (!window.CONFIG.images) window.CONFIG.images = {};
+      window.CONFIG.images.quality = savedQuality;
+    }
+
     // Load API key if it exists
     if (!window.CONFIG.AI) window.CONFIG.AI = {};
     window.CONFIG.AI.apiKey = GM_getValue('CONFIG_AI_apiKey', '');
-    
+
     logger.log('Configuration loaded from persistent storage');
-    
-    // Update UI with the loaded configuration
+
+    // Update the UI with the loaded configuration
     updateUIWithLoadedConfig();
   } catch (error) {
     logger.error(`Error loading configuration: ${error.message}`);
@@ -1308,8 +1446,26 @@ function loadConfig() {
  * Updates the UI with the loaded configuration
  */
 function updateUIWithLoadedConfig() {
-  // Update operation mode in the UI
+  // Update the operation mode in the UI
   updateUIForConfigChange('operationMode', window.CONFIG.operationMode);
+
+  // Update the scan interval
+  const scanIntervalInput = document.getElementById('fb-chat-monitor-scan-interval');
+  if (scanIntervalInput && window.CONFIG.scanInterval) {
+    scanIntervalInput.value = Math.floor(window.CONFIG.scanInterval / 1000);
+  }
+
+  // NEW: Update the image quality selector
+  const imageQualitySelect = document.getElementById('fb-chat-monitor-image-quality');
+  if (imageQualitySelect && window.CONFIG.images && window.CONFIG.images.quality) {
+    const options = imageQualitySelect.options;
+    for (let i = 0; i < options.length; i++) {
+      if (options[i].value === window.CONFIG.images.quality) {
+        imageQualitySelect.selectedIndex = i;
+        break;
+      }
+    }
+  }
 }
 
 /**
@@ -1411,6 +1567,16 @@ function exportLogs() {
   }
 }
 
+function formatDateTime(timestamp) {
+  const date = new Date(timestamp);
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
 /**
  * Refresh conversation history display
  */
@@ -1430,38 +1596,87 @@ function refreshHistory() {
     historyList.innerHTML = '';
     history.slice(0, 50).forEach(item => {
       const row = document.createElement('tr');
-      row.addEventListener('click', () => showConversationDetails(item));
 
       // Time column
       const timeCell = document.createElement('td');
       const date = new Date(item.timestamp);
-      timeCell.textContent = timeUtils.formatDate(date).split(',')[1].trim(); // Just the time part
+      // Show full date and time with appropriate formatting
+      timeCell.textContent = formatDateTime(item.timestamp);
 
-      // Mode column
+      // Mode column (Auto/Manual)
       const modeCell = document.createElement('td');
       const modeBadge = document.createElement('span');
-      modeBadge.textContent = item.mode;
+      modeBadge.textContent = item.mode === 'auto' ? 'Auto' : 'Manual';
       modeBadge.className = `fb-chat-monitor-badge fb-chat-monitor-badge-${item.mode}`;
       modeCell.appendChild(modeBadge);
 
-      // Content column
+      // Content column with the generated response and click event for redirection
       const contentCell = document.createElement('td');
-      const content = item.context?.lastMessage || 'No content';
-      contentCell.textContent = typeof content === 'string' ?
-        content.substring(0, 30) + (content.length > 30 ? '...' : '') :
-        'Complex content';
+      contentCell.style.cursor = 'pointer'; // Indicate that it is clickable
 
-      // Status column
-      const statusCell = document.createElement('td');
-      const statusBadge = document.createElement('span');
-      statusBadge.textContent = item.sent ? 'Sent' : 'Not sent';
-      statusBadge.className = `fb-chat-monitor-badge fb-chat-monitor-badge-${item.sent ? 'sent' : 'notsent'}`;
-      statusCell.appendChild(statusBadge);
+      // Use the generated response
+      const content = item.response || 'No response';
+      contentCell.textContent = content.substring(0, 30) + (content.length > 30 ? '...' : '');
+      contentCell.style.color = '#2196F3'; // Blue color to indicate that it is clickable
 
+      // Add click event to redirect to the chat
+      if (item.context && item.context.chatId) {
+        contentCell.addEventListener('click', () => {
+          try {
+            // Search for the chat in the chat list by ID
+            const chatId = item.context.chatId;
+
+            // Search for the chat element in the chat list
+            const chatElement = findChatElementById(chatId);
+
+            if (chatElement) {
+              // Scroll to make it visible
+              chatElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+              // Notify the user
+              showSimpleAlert('Opening chat...', 'info');
+
+              // Wait a moment and click
+              setTimeout(() => {
+                chatElement.click();
+              }, 500);
+            } else {
+              // Fallback: if we don't find the element, use direct navigation
+              // but warn the user that the page will be refreshed
+              if (confirm('Chat not found in the current list. Do you want to navigate directly? (This will refresh the page)')) {
+                const chatUrl = `https://www.facebook.com/messages/t/${chatId}/`;
+                window.location.href = chatUrl;
+              }
+            }
+          } catch (e) {
+            showSimpleAlert('Could not navigate to chat: ' + e.message, 'error');
+          }
+        });
+
+        // Tooltip to indicate the action
+        contentCell.title = 'Click to open this conversation';
+      }
+
+      // Chat role column (instead of contact)
+      const roleCell = document.createElement('td');
+
+      // Determine the role in the chat
+      let role = 'Unknown';
+      if (item.context && item.context.role) {
+        // Show the role with visual formatting
+        const roleBadge = document.createElement('span');
+        roleBadge.textContent = item.context.role === 'seller' ? 'Seller' : 'Buyer';
+        roleBadge.className = `fb-chat-monitor-badge fb-chat-monitor-badge-${item.context.role === 'seller' ? 'seller' : 'buyer'}`;
+        roleCell.appendChild(roleBadge);
+      } else {
+        roleCell.textContent = role;
+      }
+
+      // Add cells to the row
       row.appendChild(timeCell);
       row.appendChild(modeCell);
       row.appendChild(contentCell);
-      row.appendChild(statusCell);
+      row.appendChild(roleCell);
       historyList.appendChild(row);
     });
   } catch (error) {
@@ -1472,123 +1687,40 @@ function refreshHistory() {
 }
 
 /**
- * Show details of a conversation
- * @param {Object} conversation - The conversation data
+ * Searches for a chat element by ID in the chat list
+ * @param {string} chatId - ID of the chat to search for
+ * @returns {HTMLElement|null} - Chat element or null if not found
  */
-function showConversationDetails(conversation) {
-  // Create modal to show details
-  const modalOverlay = document.createElement('div');
-  modalOverlay.style.position = 'fixed';
-  modalOverlay.style.top = '0';
-  modalOverlay.style.left = '0';
-  modalOverlay.style.width = '100%';
-  modalOverlay.style.height = '100%';
-  modalOverlay.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
-  modalOverlay.style.display = 'flex';
-  modalOverlay.style.justifyContent = 'center';
-  modalOverlay.style.alignItems = 'center';
-  modalOverlay.style.zIndex = '10000';
+function findChatElementById(chatId) {
+  try {
+    // Search in the chat list using the configuration selectors
+    const chatContainer = domUtils.findElement(CONFIG.selectors.chatList.container);
+    if (!chatContainer) return null;
 
-  const modalContent = document.createElement('div');
-  modalContent.style.backgroundColor = 'white';
-  modalContent.style.borderRadius = '8px';
-  modalContent.style.padding = '20px';
-  modalContent.style.width = '600px';
-  modalContent.style.maxWidth = '90%';
-  modalContent.style.maxHeight = '80%';
-  modalContent.style.overflowY = 'auto';
-  modalContent.style.position = 'relative';
+    // Get all chat elements
+    const chatItems = domUtils.findAllElements(CONFIG.selectors.chatList.chatItem, chatContainer);
 
-  // Close button
-  const closeButton = document.createElement('button');
-  closeButton.innerHTML = '&times;';
-  closeButton.style.position = 'absolute';
-  closeButton.style.top = '10px';
-  closeButton.style.right = '10px';
-  closeButton.style.background = 'none';
-  closeButton.style.border = 'none';
-  closeButton.style.fontSize = '24px';
-  closeButton.style.cursor = 'pointer';
-  closeButton.addEventListener('click', () => document.body.removeChild(modalOverlay));
-  modalContent.appendChild(closeButton);
+    // Search for the chat with the corresponding ID
+    for (const chatItem of chatItems) {
+      const href = chatItem.getAttribute('href');
+      if (href && href.includes(`/marketplace/t/${chatId}/`)) {
+        return chatItem;
+      }
 
-  // Title
-  const title = document.createElement('h2');
-  title.textContent = 'Conversation Details';
-  title.style.marginTop = '0';
-  title.style.marginBottom = '20px';
-  modalContent.appendChild(title);
-
-  // Details
-  const details = document.createElement('div');
-
-  // Format and add basic details
-  const date = new Date(conversation.timestamp);
-  details.innerHTML = `
-        <p><strong>Time:</strong> ${timeUtils.formatDate(date)}</p>
-        <p><strong>Mode:</strong> ${conversation.mode}</p>
-        <p><strong>Status:</strong> ${conversation.sent ? 'Sent' : 'Not sent'}</p>
-      `;
-
-  // Add context details if available
-  if (conversation.context) {
-    const contextDiv = document.createElement('div');
-    contextDiv.style.marginTop = '15px';
-    contextDiv.style.marginBottom = '15px';
-    contextDiv.innerHTML = `<h3 style="margin-top:0;">Context</h3>`;
-
-    if (conversation.context.role) {
-      contextDiv.innerHTML += `<p><strong>Role:</strong> ${conversation.context.role}</p>`;
+      // Search also in secondary links
+      const childLinks = chatItem.querySelectorAll('a[href*="/marketplace/t/"]');
+      for (const link of childLinks) {
+        const childHref = link.getAttribute('href');
+        if (childHref && childHref.includes(`/marketplace/t/${chatId}/`)) {
+          return chatItem; // Returns the parent element of the chat
+        }
+      }
     }
 
-    if (conversation.context.productDetails) {
-      const product = conversation.context.productDetails;
-      contextDiv.innerHTML += `
-            <div style="margin-top: 10px; margin-bottom: 15px;">
-              <h4 style="margin-top: 0; margin-bottom: 5px;">Product Details</h4>
-              <p style="margin: 2px 0;"><strong>Title:</strong> ${product.title || 'N/A'}</p>
-              <p style="margin: 2px 0;"><strong>Price:</strong> ${product.price || 'N/A'}</p>
-              ${product.id ? `<p style="margin: 2px 0;"><strong>ID:</strong> ${product.id}</p>` : ''}
-            </div>
-          `;
-    }
-
-    if (conversation.context.lastMessage) {
-      contextDiv.innerHTML += `
-            <div style="margin-top: 10px;">
-              <h4 style="margin-top: 0; margin-bottom: 5px;">Last Message</h4>
-              <div style="background-color: #f5f5f5; padding: 10px; border-radius: 4px; white-space: pre-wrap;">${conversation.context.lastMessage}</div>
-            </div>
-          `;
-    }
-
-    details.appendChild(contextDiv);
-  }
-
-  // Add response
-  if (conversation.response) {
-    const responseDiv = document.createElement('div');
-    responseDiv.style.marginTop = '15px';
-    responseDiv.innerHTML = `
-          <h3 style="margin-top: 0;">Response</h3>
-          <div style="background-color: #e9f5ff; padding: 10px; border-radius: 4px; white-space: pre-wrap; margin-bottom: 15px; border: 1px solid #2196F3;">${conversation.response}</div>
-          <button id="copy-response-btn" style="padding: 5px 10px; background-color: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer;">Copy Response</button>
-        `;
-    details.appendChild(responseDiv);
-  }
-
-  modalContent.appendChild(details);
-  modalOverlay.appendChild(modalContent);
-  document.body.appendChild(modalOverlay);
-
-  // Add event listener for copy button
-  const copyButton = document.getElementById('copy-response-btn');
-  if (copyButton && conversation.response) {
-    copyButton.addEventListener('click', () => {
-      navigator.clipboard.writeText(conversation.response);
-      copyButton.textContent = 'Copied!';
-      setTimeout(() => copyButton.textContent = 'Copy Response', 2000);
-    });
+    return null; // Not found
+  } catch (error) {
+    console.error('Error searching chat by ID:', error);
+    return null;
   }
 }
 
@@ -1737,7 +1869,7 @@ function createFloatingResponseButton() {
   button.id = 'fbChatMonitorQuickResponse';
   button.classList.add('fb-chat-monitor-floating-button');
   button.textContent = '✨ Generate Response';
-  
+
   // Styles to position near the message input field
   button.style.position = 'fixed';
   button.style.bottom = '20px';
@@ -1753,7 +1885,7 @@ function createFloatingResponseButton() {
   button.style.fontWeight = 'bold';
   button.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
   button.style.display = 'none'; // Hidden by default
-  
+
   // Hover effect
   button.addEventListener('mouseenter', () => {
     button.style.backgroundColor = '#166fe5';
@@ -1761,7 +1893,7 @@ function createFloatingResponseButton() {
   button.addEventListener('mouseleave', () => {
     button.style.backgroundColor = '#1877f2';
   });
-  
+
   // Generate response on click
   button.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1773,7 +1905,7 @@ function createFloatingResponseButton() {
       showSimpleAlert('Error: Could not generate response. Try opening the full panel.', 'error');
     }
   });
-  
+
   return button;
 }
 
@@ -1785,34 +1917,34 @@ function updateFloatingResponseButtonVisibility() {
   if (!uiState.floatingResponseButton) {
     return;
   }
-  
+
   // Verify if we are in manual mode (OFF)
   const isManualMode = window.CONFIG && window.CONFIG.operationMode === 'manual';
-  
+
   // Only show the button if:
   // 1. We are in manual mode
   // 2. The panel is closed or minimized
   // 3. There is an active chat
-  const shouldShow = isManualMode && 
-                     !uiState.isControlPanelVisible && 
-                     window.chatManager && 
-                     window.chatManager.currentChatId;
-  
+  const shouldShow = isManualMode &&
+    !uiState.isControlPanelVisible &&
+    window.chatManager &&
+    window.chatManager.currentChatId;
+
   // Reposition the button to appear near the chat input field
   if (shouldShow) {
     // Find the input field or send button to better position the floating button
     const inputField = document.querySelector(CONFIG.selectors.activeChat.messageInput);
     const sendButton = domUtils.findElement(CONFIG.selectors.activeChat.sendButton);
-    
+
     if (inputField || sendButton) {
       const referenceElement = inputField || sendButton;
       const rect = referenceElement.getBoundingClientRect();
-      
+
       // Position just above the input field
       uiState.floatingResponseButton.style.bottom = `${window.innerHeight - rect.top + 10}px`;
       uiState.floatingResponseButton.style.right = '20px';
     }
-    
+
     uiState.floatingResponseButton.style.display = 'block';
   } else {
     uiState.floatingResponseButton.style.display = 'none';
@@ -1829,10 +1961,10 @@ function showSimpleAlert(message, type = 'info', duration = 3000) {
   // Create alert element
   const alert = document.createElement('div');
   alert.className = 'fb-chat-monitor-alert';
-  
+
   // Determine the optimal position for the alert
   const positionInfo = getOptimalAlertPosition();
-  
+
   // Apply base styles
   alert.style.position = 'fixed';
   alert.style.zIndex = '10000';
@@ -1844,13 +1976,13 @@ function showSimpleAlert(message, type = 'info', duration = 3000) {
   alert.style.opacity = '0';
   alert.style.transform = 'translateY(20px)';
   alert.style.pointerEvents = 'none'; // So it doesn't interfere with clicks
-  
+
   // Position the alert according to the calculated position
   alert.style.left = positionInfo.left;
   alert.style.top = positionInfo.top;
   alert.style.right = positionInfo.right;
   alert.style.maxWidth = '300px';
-  
+
   // Apply styles according to alert type
   switch (type) {
     case 'success':
@@ -1869,24 +2001,24 @@ function showSimpleAlert(message, type = 'info', duration = 3000) {
       alert.style.backgroundColor = '#2196F3';
       alert.style.color = 'white';
   }
-  
+
   // Add text
   alert.textContent = message;
-  
+
   // Add to the DOM
   document.body.appendChild(alert);
-  
+
   // Animate entry
   setTimeout(() => {
     alert.style.opacity = '1';
     alert.style.transform = 'translateY(0)';
   }, 50);
-  
+
   // Remove after the specified duration
   setTimeout(() => {
     alert.style.opacity = '0';
     alert.style.transform = 'translateY(-20px)';
-    
+
     // Remove from the DOM after the animation
     setTimeout(() => {
       if (alert.parentElement) {
@@ -1904,14 +2036,14 @@ function getOptimalAlertPosition() {
   // Check if the panel is open or closed
   const panel = document.getElementById('fbChatMonitorPanel');
   const mainButton = document.getElementById('fbChatMonitorButton');
-  
+
   // Default values (standard position in the upper right)
   const defaultPosition = {
     top: '60px',
     right: '20px',
     left: 'auto'
   };
-  
+
   // If the panel is open, position below the panel
   if (panel && uiState.isControlPanelVisible) {
     const panelRect = panel.getBoundingClientRect();
@@ -1921,7 +2053,7 @@ function getOptimalAlertPosition() {
       left: 'auto'
     };
   }
-  
+
   // If the main button is visible, position below the button
   if (mainButton) {
     const buttonRect = mainButton.getBoundingClientRect();
@@ -1931,7 +2063,7 @@ function getOptimalAlertPosition() {
       left: 'auto'
     };
   }
-  
+
   // If there are no references, use the default position
   return defaultPosition;
 }
