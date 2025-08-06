@@ -1,6 +1,6 @@
 /**
  * Message Preprocessor - "The Translator"
- * 
+ *
  * Responsibilities:
  * - Prepare messages for OpenAI Assistants API
  * - Sanitize text content
@@ -14,31 +14,38 @@ class MessagePreprocessor {
     this.config = {
       maxMessagesInNewThread: 50,
       maxItemsPerChunk: 10,
-      sanitizationRules: [
-        { pattern: /\b(https?:\/\/)[^\s]+\.(png|jpe?g|gif|webp|bmp)/gi, replacement: '[Image URL]' },
-        { pattern: /\b(https?:\/\/)[^\s]+/gi, replacement: '[Link]' },
-        { pattern: /(\+\d{1,3}|\b\d{3}[-.])\d{3}[-.]?\d{4}\b/g, replacement: '[Phone]' },
-        { pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, replacement: '[Email]' }
-      ]
+      sanitizationRules: [{
+        pattern: /\b(https?:\/\/)[^\s]+\.(png|jpe?g|gif|webp|bmp)/gi,
+        replacement: '[Image URL]'
+      }, {
+        pattern: /\b(https?:\/\/)[^\s]+/gi,
+        replacement: '[Link]'
+      }, {
+        pattern: /(\+\d{1,3}|\b\d{3}[-.])\d{3}[-.]?\d{4}\b/g,
+        replacement: '[Phone]'
+      }, {
+        pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+        replacement: '[Email]'
+      }]
     };
   }
 
   /**
- * Gets new messages since the last processed message without formatting them
- * @param {Array} messages - All messages in the chat
- * @param {string} lastMessageId - ID of the last processed message
- * @returns {Array} New messages since lastMessageId (without formatting)
- */
+   * Gets new messages since the last processed message without formatting them
+   * @param {Array} messages - All messages in the chat
+   * @param {string} lastMessageId - ID of the last processed message
+   * @returns {Array} New messages since lastMessageId (without formatting)
+   */
   getNewMessagesSinceNoFormat(messages, lastMessageId) {
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      console.log(`[MessagePreprocessor][ERROR] Array de mensajes inválido proporcionado a getNewMessagesSinceNoFormat`);
+      console.log(`[MessagePreprocessor][ERROR] Invalid message array provided to getNewMessagesSinceNoFormat`);
       logger.error('Invalid messages array provided to getNewMessagesSinceNoFormat');
       return [];
     }
 
     // If no lastMessageId, return all messages (up to limit)
     if (!lastMessageId) {
-      console.log(`[MessagePreprocessor][DEBUG] No se proporcionó lastMessageId, usando todos los mensajes`);
+      console.log(`[MessagePreprocessor][DEBUG] No lastMessageId provided, using all messages`);
       return messages.slice(-this.config.maxMessagesInNewThread);
     }
 
@@ -46,19 +53,19 @@ class MessagePreprocessor {
     const lastIndex = messages.findIndex(msg => msg.id === lastMessageId);
 
     if (lastIndex === -1) {
-      console.log(`[MessagePreprocessor][WARN] Último ID ${lastMessageId} no encontrado, usando fallback por timestamp`);
+      console.log(`[MessagePreprocessor][WARN] Last ID ${lastMessageId} not found, using timestamp fallback`);
       logger.warn(`Last message ID ${lastMessageId} not found, using timestamp-based fallback`);
       return this.getNewMessagesUsingTimestampFallbackNoFormat(messages, lastMessageId);
     }
 
     // Get messages after the last processed one
     const newMessages = messages.slice(lastIndex + 1);
-    console.log(`[MessagePreprocessor][DEBUG] Encontrados ${newMessages.length} mensajes nuevos desde ${lastMessageId}`);
+    console.log(`[MessagePreprocessor][DEBUG] Found ${newMessages.length} new messages since ${lastMessageId}`);
 
     // If no new messages, return just the last message for context
     if (newMessages.length === 0) {
       const lastMessage = messages[messages.length - 1];
-      console.log(`[MessagePreprocessor][DEBUG] No hay mensajes nuevos, devolviendo solo el último mensaje para contexto`);
+      console.log(`[MessagePreprocessor][DEBUG] No new messages, returning only the last message for context`);
       return [lastMessage];
     }
 
@@ -73,14 +80,14 @@ class MessagePreprocessor {
    */
   getNewMessagesSince(messages, lastMessageId) {
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      console.log(`[MessagePreprocessor][ERROR] Array de mensajes inválido proporcionado a getNewMessagesSince`);
+      console.log(`[MessagePreprocessor][ERROR] Invalid message array provided to getNewMessagesSince`);
       logger.error('Invalid messages array provided to getNewMessagesSince');
       return [];
     }
 
     // If no lastMessageId, return all messages (up to limit)
     if (!lastMessageId) {
-      console.log(`[MessagePreprocessor][DEBUG] No se proporcionó lastMessageId, usando todos los mensajes`);
+      console.log(`[MessagePreprocessor][DEBUG] No lastMessageId provided, using all messages`);
       return this.formatMessagesForOpenAI(
         messages.slice(-this.config.maxMessagesInNewThread)
       );
@@ -90,19 +97,19 @@ class MessagePreprocessor {
     const lastIndex = messages.findIndex(msg => msg.id === lastMessageId);
 
     if (lastIndex === -1) {
-      console.log(`[MessagePreprocessor][WARN] Último ID ${lastMessageId} no encontrado, usando fallback por timestamp`);
+      console.log(`[MessagePreprocessor][WARN] Last ID ${lastMessageId} not found, using timestamp fallback`);
       logger.warn(`Last message ID ${lastMessageId} not found, using timestamp-based fallback`);
       return this.getNewMessagesUsingTimestampFallback(messages, lastMessageId);
     }
 
     // Get messages after the last processed one
     const newMessages = messages.slice(lastIndex + 1);
-    console.log(`[MessagePreprocessor][DEBUG] Encontrados ${newMessages.length} mensajes nuevos desde ${lastMessageId}`);
+    console.log(`[MessagePreprocessor][DEBUG] Found ${newMessages.length} new messages since ${lastMessageId}`);
 
     // If no new messages, return just the last message for context
     if (newMessages.length === 0) {
       const lastMessage = messages[messages.length - 1];
-      console.log(`[MessagePreprocessor][DEBUG] No hay mensajes nuevos, devolviendo solo el último mensaje para contexto`);
+      console.log(`[MessagePreprocessor][DEBUG] No new messages, returning only the last message for context`);
       return this.formatMessagesForOpenAI([lastMessage]);
     }
 
@@ -182,12 +189,12 @@ class MessagePreprocessor {
   }
 
   /**
- * Fallback method using timestamps when message ID is not found (without formatting)
- * @param {Array} messages - All messages in the chat
- * @param {string} lastMessageId - ID of the last processed message (contains timestamp info)
- * @returns {Array} New messages without formatting
- * @private
- */
+   * Fallback method using timestamps when message ID is not found (without formatting)
+   * @param {Array} messages - All messages in the chat
+   * @param {string} lastMessageId - ID of the last processed message (contains timestamp info)
+   * @returns {Array} New messages without formatting
+   * @private
+   */
   getNewMessagesUsingTimestampFallbackNoFormat(messages, lastMessageId) {
     // Uses TimestampUtils if available
     let lastTimestamp = 0;
@@ -246,7 +253,7 @@ class MessagePreprocessor {
       return [lastMessage];
     }
 
-    // Retorna los mensajes sin formatear para OpenAI (diferencia clave con el otro método)
+    // Return messages without formatting for OpenAI (key difference with the other method)
     return newMessages;
   }
 
@@ -291,73 +298,72 @@ class MessagePreprocessor {
   }
 
   /**
-   * Adjunta transcripciones a mensajes de audio usando AudioTranscriber
-   * @param {Array|Object} messageData - Mensajes o objeto {messages, timeBlocks} a procesar
-   * @returns {Promise<Array>} Mensajes con transcripciones adjuntas
+   * Attaches transcriptions to audio messages using AudioTranscriber
+   * @param {Array|Object} messageData - Messages or {messages, timeBlocks} object to process
+   * @returns {Promise<Array>} Messages with attached transcriptions
    */
   async attachTranscriptions(messageData) {
-    // Compatibilidad con diferentes formatos de entrada
+    // Compatibility with different input formats
     let messages = Array.isArray(messageData) ? messageData : messageData?.messages;
     const timeBlocks = messageData?.timeBlocks || [];
 
     if (!messages || !Array.isArray(messages)) {
-      console.log("[MessagePreprocessor][ERROR] Array de mensajes inválido proporcionado a attachTranscriptions");
+      console.log("[MessagePreprocessor][ERROR] Invalid message array provided to attachTranscriptions");
       return messageData;
     }
 
-    // Verificar que AudioTranscriber está disponible
+    // Check if AudioTranscriber is available
     if (!window.audioTranscriber) {
-      console.log("[MessagePreprocessor][WARN] AudioTranscriber no disponible para transcripciones");
+      console.log("[MessagePreprocessor][WARN] AudioTranscriber not available for transcriptions");
       return messageData;
     }
 
-    // Asegurar que AudioTranscriber está inicializado
+    // Ensure AudioTranscriber is initialized
     if (!window.audioTranscriber.initialized && typeof window.audioTranscriber.initialize === 'function') {
       await window.audioTranscriber.initialize();
     }
 
-    // Encontrar mensajes que necesitan transcripción
+    // Find messages that need transcription
     const messagesToTranscribe = messages.filter(message =>
     (message.content?.hasAudio &&
       (!message.content.transcribedAudio || message.content.transcribedAudio === '[Transcription Pending]'))
     );
 
-    // Usar logger en lugar de console.log directo
+    // Use logger instead of direct console.log
     if (window.logger && typeof window.logger.debug === 'function') {
       window.logger.debug(
-        `attachTranscriptions - Encontrados ${messagesToTranscribe.length} mensajes que necesitan transcripción`,
-        {},
+        `attachTranscriptions - Found ${messagesToTranscribe.length} messages needing transcription`, {},
         'MessagePreprocessor'
       );
     } else {
-      console.log(`[MessagePreprocessor][DEBUG] attachTranscriptions - Encontrados ${messagesToTranscribe.length} mensajes que necesitan transcripción`);
+      console.log(`[MessagePreprocessor][DEBUG] attachTranscriptions - Found ${messagesToTranscribe.length} messages needing transcription`);
     }
 
     if (messagesToTranscribe.length === 0) {
-      return messageData; // No hay mensajes para transcribir
+      return messageData; // No messages to transcribe
     }
 
-    // NUEVO: Esperar brevemente para permitir que algunas transcripciones se completen
-    console.log("[MessagePreprocessor][DEBUG] Esperando brevemente para permitir transcripciones en proceso...");
+    // NEW: Wait briefly to allow in-progress transcriptions to complete
+    console.log("[MessagePreprocessor][DEBUG] Waiting briefly to allow in-progress transcriptions...");
     await new Promise(resolve => setTimeout(resolve, 1500));
 
     try {
-      // MODIFICACIÓN IMPORTANTE: Pasar el objeto completo con timeBlocks
+      // IMPORTANT MODIFICATION: Pass the complete object with timeBlocks
       if (timeBlocks && timeBlocks.length > 0) {
-        // Crear una nueva estructura para pasar a audioTranscriber
+        // Create a new structure to pass to audioTranscriber
         const fullMessageData = {
           messages: messages,
           timeBlocks: timeBlocks
         };
         await window.audioTranscriber.associateTranscriptionsWithMessagesFIFO(fullMessageData);
       } else {
-        // Mantener compatibilidad con la versión anterior
+        // Maintain compatibility with the previous version
         await window.audioTranscriber.associateTranscriptionsWithMessagesFIFO(messages);
       }
 
       return messages;
     } catch (error) {
-      console.error("[MessagePreprocessor][ERROR] Error al asociar transcripciones:", error);
+      console.error("[MessagePreprocessor][ERROR] Error associating transcriptions:", error);
       return messages;
     }
   }
@@ -384,38 +390,38 @@ class MessagePreprocessor {
   }
 
   /**
- * Procesa imágenes para OpenAI, usando el proxy y la calidad configurada
- * @param {Array} imageUrls - URLs de imágenes a procesar
- * @returns {Promise<Array>} - URLs procesadas
- * @private
- */
+   * Processes images for OpenAI, using the proxy and configured quality
+   * @param {Array} imageUrls - URLs of images to process
+   * @returns {Promise<Array>} - Processed URLs
+   * @private
+   */
   async processImagesForOpenAI(imageUrls) {
     try {
       if (!imageUrls || !Array.isArray(imageUrls) || imageUrls.length === 0) {
         return [];
       }
 
-      // Obtener la calidad de imagen de la configuración
+      // Get image quality from configuration
       const imageQuality = window.CONFIG?.images?.quality || 'high';
-      logger.debug(`[MessagePreprocessor] Procesando ${imageUrls.length} imágenes con calidad: ${imageQuality}`);
+      logger.debug(`[MessagePreprocessor] Processing ${imageUrls.length} images with quality: ${imageQuality}`);
 
-      // Usar ImageFilterUtils para procesar las imágenes con la calidad especificada
+      // Use ImageFilterUtils to process images with the specified quality
       if (window.ImageFilterUtils && typeof window.ImageFilterUtils.processImageUrls === 'function') {
         return await window.ImageFilterUtils.processImageUrls(imageUrls, imageQuality);
       } else {
-        logger.warn('[MessagePreprocessor] ImageFilterUtils no disponible, devolviendo URLs originales');
+        logger.warn('[MessagePreprocessor] ImageFilterUtils not available, returning original URLs');
         return imageUrls;
       }
     } catch (error) {
-      logger.error('[MessagePreprocessor] Error procesando imágenes:', error);
-      return imageUrls; // Devolver las originales en caso de error
+      logger.error('[MessagePreprocessor] Error processing images:', error);
+      return imageUrls; // Return originals in case of error
     }
   }
 
   /**
-   * Construye el mensaje de detalles de producto en formato OpenAI
-   * @param {Object} product - Detalles del producto
-   * @returns {Object|null} Mensaje OpenAI o null si no hay producto
+   * Builds the product details message in OpenAI format
+   * @param {Object} product - Product details
+   * @returns {Object|null} OpenAI message or null if no product
    */
   async buildProductDetailMessage(product) {
     if (!product) {
@@ -423,7 +429,7 @@ class MessagePreprocessor {
     }
     const content = [];
 
-    // 1. Obtener el resumen textual del producto primero.
+    // 1. Get the textual summary of the product first.
     let summary = '';
     if (window.productExtractor && typeof window.productExtractor.getRelevantProductSummary === 'function') {
       summary = window.productExtractor.getRelevantProductSummary(product);
@@ -436,9 +442,12 @@ class MessagePreprocessor {
         product.description ? `Description: ${product.description}` : ''
       ].filter(Boolean).join('\n');
     }
-    content.push({ type: "text", text: "PRODUCT DETAILS:\n" + summary });
+    content.push({
+      type: "text",
+      text: "PRODUCT DETAILS:\n" + summary
+    });
 
-    // 2. Obtener las URLs de las imágenes originales.
+    // 2. Get the original image URLs.
     let originalImageUrls = [];
     if (Array.isArray(product.allImages) && product.allImages.length > 0) {
       originalImageUrls = product.allImages;
@@ -446,14 +455,14 @@ class MessagePreprocessor {
       originalImageUrls = product.images;
     }
 
-    // 3. MODIFICADO: Procesar las URLs con la calidad configurada
+    // 3. MODIFIED: Process URLs with the configured quality
     let processedImageUrls = [];
     if (originalImageUrls.length > 0) {
-      // Usar el nuevo método centralizado para procesar imágenes
+      // Use the new centralized method to process images
       processedImageUrls = await this.processImagesForOpenAI(originalImageUrls);
     }
 
-    // 4. Añadir las URLs procesadas al mensaje
+    // 4. Add the processed URLs to the message
     const maxImages = CONFIG.threadSystem?.newThreads?.maxProductImages || 5;
     for (const imgUrl of processedImageUrls.slice(0, maxImages)) {
       if (!imgUrl || typeof imgUrl !== 'string' || imgUrl.trim() === '') continue;
@@ -461,7 +470,7 @@ class MessagePreprocessor {
         type: "image_url",
         image_url: {
           url: imgUrl,
-          // Usar la calidad configurada para el detalle de la imagen
+          // Use the configured quality for the image detail
           detail: CONFIG.images?.quality || "auto"
         }
       });
@@ -474,14 +483,14 @@ class MessagePreprocessor {
   }
 
   //===================================================================
-  // FORMATEO PARA OPENAI
+  // FORMATTING FOR OPENAI
   //===================================================================
 
   /**
-   * Formatea mensajes para OpenAI
-   * @param {Array} messages - Mensajes del chat
-   * @param {Object} productDetails - Detalles del producto (opcional)
-   * @returns {Array} Mensajes formateados para OpenAI
+   * Formats messages for OpenAI
+   * @param {Array} messages - Chat messages
+   * @param {Object} productDetails - Product details (optional)
+   * @returns {Array} Messages formatted for OpenAI
    */
   async formatMessagesForOpenAI(messages, productDetails = null) {
     if (!messages || !Array.isArray(messages)) {
@@ -489,13 +498,13 @@ class MessagePreprocessor {
       return [];
     }
 
-    // NUEVO: Log para diagnóstico
-    console.log(`[MessagePreprocessor][DEBUG] formatMessagesForOpenAI recibió ${messages.length} mensajes`);
+    // NEW: Log for diagnostics
+    console.log(`[MessagePreprocessor][DEBUG] formatMessagesForOpenAI received ${messages.length} messages`);
 
-    // Array para mensajes OpenAI
+    // Array for OpenAI messages
     const openaiMessages = [];
 
-    // Añadir detalles del producto si están disponibles
+    // Add product details if available
     if (productDetails) {
       try {
         const productMessage = await this.buildProductDetailMessage(productDetails);
@@ -503,17 +512,17 @@ class MessagePreprocessor {
           openaiMessages.push(productMessage);
         }
       } catch (error) {
-        console.error('[MessagePreprocessor][ERROR] Error al construir mensaje de producto:', error);
+        console.error('[MessagePreprocessor][ERROR] Error building product message:', error);
       }
     }
 
-    // MODIFICADO: Agrupar mensajes pero preservando elementos importantes
+    // MODIFIED: Group messages but preserve important elements
     const messageGroups = this.groupMessagesByRoleImproved(messages);
 
-    // NUEVO: Log para diagnóstico de grupos
-    console.log(`[MessagePreprocessor][DEBUG] Mensajes agrupados en ${messageGroups.length} grupos`);
+    // NEW: Log for group diagnostics
+    console.log(`[MessagePreprocessor][DEBUG] Messages grouped into ${messageGroups.length} groups`);
 
-    // Convertir grupos a formato OpenAI
+    // Convert groups to OpenAI format
     for (const messageGroup of messageGroups) {
       if (messageGroup.length === 0) continue;
 
@@ -523,21 +532,21 @@ class MessagePreprocessor {
       }
     }
 
-    // Si hay audioTranscriber, mostrar resumen de transcripciones
+    // If audioTranscriber is present, show transcription summary
     if (window.audioTranscriber && typeof window.audioTranscriber.showTranscriptionLogs === 'function') {
       window.audioTranscriber.showTranscriptionLogs();
     }
 
-    // NUEVO: Log detallado del resultado final
-    console.log(`[MessagePreprocessor][PAYLOAD] Contenido completo a enviar: `, JSON.parse(JSON.stringify(openaiMessages)));
+    // NEW: Detailed log of the final result
+    console.log(`[MessagePreprocessor][PAYLOAD] Full content to be sent: `, JSON.parse(JSON.stringify(openaiMessages)));
 
     return openaiMessages;
   }
 
   /**
-   * Versión mejorada que agrupa por remitente pero preserva elementos importantes como audios
-   * @param {Array} messages - Mensajes a agrupar
-   * @returns {Array<Array>} Mensajes agrupados
+   * Improved version that groups by sender but preserves important elements like audio
+   * @param {Array} messages - Messages to group
+   * @returns {Array<Array>} Grouped messages
    */
   groupMessagesByRoleImproved(messages) {
     if (!messages || !Array.isArray(messages)) {
@@ -548,7 +557,7 @@ class MessagePreprocessor {
     let currentGroup = [];
     let currentSender = null;
 
-    // Contadores para estadísticas
+    // Counters for statistics
     const stats = {
       totalGroups: 0,
       userGroups: 0,
@@ -558,18 +567,18 @@ class MessagePreprocessor {
       groupSizes: []
     };
 
-    // Log único al inicio
-    console.log(`[MessagePreprocessor][DEBUG] Procesando ${messages.length} mensajes para agrupar`);
+    // Single log at the beginning
+    console.log(`[MessagePreprocessor][DEBUG] Processing ${messages.length} messages for grouping`);
 
     for (let i = 0; i < messages.length; i++) {
       const message = messages[i];
       const isSentByUs = message.sentByUs;
 
-      // MODIFICADO: Iniciar un nuevo grupo si:
-      // 1. Es el primer mensaje
-      // 2. El remitente cambió
-      // 3. El mensaje actual tiene contenido multimedia (audio, imagen, etc.)
-      // 4. El mensaje anterior tenía contenido multimedia
+      // MODIFIED: Start a new group if:
+      // 1. It's the first message
+      // 2. The sender changed
+      // 3. The current message has multimedia content (audio, image, etc.)
+      // 4. The previous message had multimedia content
       const hasMultimedia =
         message.content?.hasAudio ||
         message.content?.type === 'image' ||
@@ -590,11 +599,11 @@ class MessagePreprocessor {
         prevHasMultimedia;
 
       if (shouldStartNewGroup) {
-        // Guardar grupo anterior si existe
+        // Save previous group if it exists
         if (currentGroup.length > 0) {
           groups.push([...currentGroup]);
 
-          // Actualizar estadísticas en vez de hacer log
+          // Update statistics instead of logging
           stats.totalGroups++;
           stats.groupSizes.push(currentGroup.length);
 
@@ -611,15 +620,15 @@ class MessagePreprocessor {
         currentSender = isSentByUs;
       }
 
-      // Añadir mensaje al grupo actual
+      // Add message to the current group
       currentGroup.push(message);
     }
 
-    // No olvidar el último grupo
+    // Don't forget the last group
     if (currentGroup.length > 0) {
       groups.push([...currentGroup]);
 
-      // Actualizar estadísticas del último grupo
+      // Update statistics for the last group
       stats.totalGroups++;
       stats.groupSizes.push(currentGroup.length);
 
@@ -632,14 +641,14 @@ class MessagePreprocessor {
       }
     }
 
-    // Log ÚNICO y resumido en vez de múltiples logs
-    console.log(`[MessagePreprocessor][DEBUG] Mensajes agrupados: ${messages.length} → ${groups.length} grupos (${stats.userGroups} usuario, ${stats.assistantGroups} asistente)`);
+    // SINGLE, summarized log instead of multiple logs
+    console.log(`[MessagePreprocessor][DEBUG] Messages grouped: ${messages.length} → ${groups.length} groups (${stats.userGroups} user, ${stats.assistantGroups} assistant)`);
 
-    // Solo en modo debug mostramos detalles expandibles
+    // Only show expandable details in debug mode
     if (window.CONFIG?.logging?.level === 'debug') {
-      console.groupCollapsed('[MessagePreprocessor][DEBUG] Detalle de grupos (expandir para ver)');
+      console.groupCollapsed('[MessagePreprocessor][DEBUG] Group details (expand to view)');
       groups.forEach((group, i) => {
-        //console.log(`Grupo ${i+1}: ${group.length} mensajes, sentByUs=${group[0].sentByUs}`);
+        //console.log(`Group ${i+1}: ${group.length} messages, sentByUs=${group[0].sentByUs}`);
       });
       console.groupEnd();
     }
@@ -648,43 +657,43 @@ class MessagePreprocessor {
   }
 
   /**
-     * Convierte un grupo de mensajes al formato de OpenAI, manejando correctamente
-     * texto, transcripciones de audio e imágenes a través del proxy personalizado.
-     * @param {Array} messageGroup - Grupo de mensajes del mismo remitente.
-     * @returns {Promise<Object|null>} Mensaje formateado para OpenAI o null si está vacío.
-     */
+   * Converts a message group to the OpenAI format, correctly handling
+   * text, audio transcriptions, and images through the custom proxy.
+   * @param {Array} messageGroup - Group of messages from the same sender.
+   * @returns {Promise<Object|null>} Formatted message for OpenAI or null if empty.
+   */
   async convertMessageGroupToOpenAIFormat(messageGroup) {
     const isSentByUs = messageGroup[0].sentByUs;
     const role = isSentByUs ? 'assistant' : 'user';
     const contentParts = [];
     let combinedText = '';
 
-    // Recopilamos primero todas las imágenes para procesarlas en lote
+    // First, we collect all images to process them in a batch
     const imagesToProcess = [];
 
     for (const message of messageGroup) {
-      // 1. Texto del mensaje - sanitizamos y combinamos
+      // 1. Message text - we sanitize and combine
       if (message.content?.text) {
         combinedText += `${message.content.text}\n`;
       }
 
-      // 2. Transcripción de audio
+      // 2. Audio transcription
       if (message.content?.hasAudio) {
         let audioTranscription = null;
 
-        // Opción 1: Ya tiene transcripción asignada
+        // Option 1: Already has an assigned transcription
         if (
           message.content.transcribedAudio &&
           message.content.transcribedAudio !== '[Transcription Pending]'
         ) {
           audioTranscription = message.content.transcribedAudio;
         }
-        // Opción 2: Tiene URL de audio, intentar obtener transcripción directamente
+        // Option 2: Has an audio URL, try to get transcription directly
         else if (message.content.audioUrl) {
           const cleanUrl = message.content.audioUrl.split('?')[0];
           audioTranscription = window.audioTranscriber?.getTranscription(cleanUrl);
         }
-        // Opción 3: Tiene audioMarkerId, buscar en completedTranscriptions
+        // Option 3: Has audioMarkerId, search in completedTranscriptions
         else if (
           message.content.audioMarkerId &&
           window.audioTranscriber?.completedTranscriptions
@@ -697,7 +706,7 @@ class MessagePreprocessor {
           }
         }
 
-        // Añadir transcripción al texto si está disponible
+        // Add transcription to the text if available
         if (audioTranscription && audioTranscription !== '[Transcription Pending]') {
           combinedText += `\n[Audio transcription: "${audioTranscription.trim()}"]\n`;
         } else {
@@ -705,7 +714,7 @@ class MessagePreprocessor {
         }
       }
 
-      // 3. Recopilamos las imágenes para procesarlas juntas
+      // 3. We collect the images to process them together
       if (message.content?.media?.images && message.content.media.images.length > 0) {
         for (const image of message.content.media.images) {
           if (image.url) {
@@ -715,7 +724,7 @@ class MessagePreprocessor {
       }
     }
 
-    // 4. Procesar todas las imágenes juntas con la calidad configurada
+    // 4. Process all images together with the configured quality
     if (imagesToProcess.length > 0) {
       const processedImageUrls = await this.processImagesForOpenAI(imagesToProcess);
 
@@ -730,7 +739,7 @@ class MessagePreprocessor {
       }
     }
 
-    // 5. Añadir el texto combinado al principio del contenido
+    // 5. Add the combined text at the beginning of the content
     const sanitizedText = this.sanitizeText(combinedText.trim());
     if (sanitizedText) {
       contentParts.unshift({
@@ -739,7 +748,7 @@ class MessagePreprocessor {
       });
     }
 
-    // Si después de todo el proceso no hay contenido, ignorar este grupo
+    // If after the whole process there is no content, ignore this group
     if (contentParts.length === 0) {
       return null;
     }

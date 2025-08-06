@@ -27,14 +27,14 @@ Object.assign(CONFIG, {
   },
 
   images: {
-    quality: 'high',     // Valores posibles: 'high', 'medium', 'low'
+    quality: 'high',     // Possible values: 'high', 'medium', 'low'
     sizes: {
-      medium: 800,       // Tamaño máximo para calidad media
-      low: 400           // Tamaño máximo para calidad baja
+      medium: 800,       // Maximum size for medium quality
+      low: 400           // Maximum size for low quality
     },
     compression: {
-      medium: 0.8,       // Nivel de compresión JPEG para calidad media (0-1)
-      low: 0.6           // Nivel de compresión JPEG para calidad baja (0-1)
+      medium: 0.8,       // JPEG compression level for medium quality (0-1)
+      low: 0.6           // JPEG compression level for low quality (0-1)
     }
   },
 
@@ -44,8 +44,8 @@ Object.assign(CONFIG, {
     fileOutput: false,
     level: 'normal', // 'minimal', 'normal', 'detailed', 'debug'
     showTimestamps: true,
-    saveLogs: true, // Si se deben guardar los logs en localStorage
-    maxEntries: 1000 // Máximo número de entradas de log a mantener
+    saveLogs: true, // Whether to save logs to localStorage
+    maxEntries: 1000 // Maximum number of log entries to keep
   },
 
   // Audio transcription settings
@@ -54,8 +54,8 @@ Object.assign(CONFIG, {
     model: 'whisper-1',
     language: 'es',
     cacheResults: true,
-    maxCacheSize: 100, // Número máximo de transcripciones en caché
-    autoTranscribe: true // Si se deben transcribir automáticamente los audios detectados
+    maxCacheSize: 100, // Maximum number of transcriptions in cache
+    autoTranscribe: true // Whether to automatically transcribe detected audios
   },
 
   autoResponseDelay: 5000,
@@ -124,7 +124,7 @@ Object.assign(CONFIG, {
         'span[title][aria-label*=":"]',
         'span.x1lliihq.x1plvlek.xryxfnj[aria-label]',
         'span[aria-label*="sent at"]',
-        'span[aria-label*="enviado a las"]' // Kept Spanish for specific cases if needed, or translate to "sent at"
+        'span[aria-label*="enviado a las"]' 
       ],
       // Updated image selectors
       messageImageElement: [
@@ -142,7 +142,7 @@ Object.assign(CONFIG, {
         'div[role="button"][aria-label="Play"]',
         'div[aria-label="Play"][role="button"]',
         'div[role="button"][aria-label*="audio"]',
-        'div[aria-label*="reproducir"][role="button"]',
+        'div[aria-label*="reproducir"][role="button"]', 
         'div[aria-label*="Audio message"]',
         'div.xzg4506 > div.x1qjc9v5 > div[role="button"]',
         'div[aria-label*="Play" i][role="button"]'
@@ -168,7 +168,7 @@ Object.assign(CONFIG, {
         'a[href*="cdn.fbsbx.com"][download]',
         'div[data-testid="attachment"]',
         'div[role="button"][aria-label*="file"]',
-        'div[aria-label*="archivo adjunto"]'
+        'div[aria-label*="archivo adjunto"]' 
       ],
 
       // Selectors for location (new)
@@ -177,7 +177,7 @@ Object.assign(CONFIG, {
         'a[href*="l.facebook.com/l.php"][href*="maps"]',
         'a[href*="google.com/maps"]',
         'div[aria-label*="location"]',
-        'div[aria-label*="ubicación"]'
+        'div[aria-label*="ubicación"]' 
       ],
 
       // Selectors for GIFs and stickers (new)

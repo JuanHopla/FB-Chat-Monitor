@@ -110,41 +110,41 @@ class OpenAIManager {
   async generateResponse(context) {
     if (!this.isReady()) throw new Error('OpenAI API not ready');
 
-    // Verificar estructura del contexto
+    // Verify context structure
     if (!context || typeof context !== 'object') {
       throw new Error('Invalid context object provided');
     }
     
-    // NUEVO: Verificar si es una solicitud de regeneración
+    // NEW: Verify if it is a regeneration request
     const isRegenerationRequest = context.forceNewGeneration === true;
 
-    // Extraer los mensajes, soportando tanto el formato antiguo (array) como el nuevo (objeto)
+    // Extract messages, supporting both the old (array) and new (object) formats
     let messagesArray;
     if (Array.isArray(context.messages)) {
       messagesArray = context.messages;
-      console.log('[OpenAIManager] Detectado formato antiguo de mensajes (array directo)');
+      console.log('[OpenAIManager] Detected old message format (direct array)');
     } else if (context.messages && Array.isArray(context.messages.messages)) {
       messagesArray = context.messages.messages;
-      console.log('[OpenAIManager] Detectado nuevo formato de mensajes (objeto con messages y timeBlocks)');
+      console.log('[OpenAIManager] Detected new message format (object with messages and timeBlocks)');
     } else {
-      console.error('[OpenAIManager] Formato de mensajes inválido:', context.messages);
+      console.error('[OpenAIManager] Invalid message format:', context.messages);
       throw new Error('Invalid message format in context');
     }
 
-    // NUEVO: Primero aplicamos transcripciones a los mensajes
+    // NEW: First, apply transcriptions to the messages
     if (window.messagePreprocessor && typeof window.messagePreprocessor.attachTranscriptions === 'function') {
-      console.log('[OpenAIManager] Aplicando transcripciones a mensajes del contexto...');
+      console.log('[OpenAIManager] Applying transcriptions to context messages...');
       messagesArray = await window.messagePreprocessor.attachTranscriptions(messagesArray);
     }
 
-    // Logs originales
+    // Original logs
     console.log('[OpenAIManager] Step 3.1: Received context for response generation:', {
       ...context,
       messages: messagesArray
     });
     console.log('[OpenAIManager] Step 3.2: Calling assistantHandler.generateResponse...');
 
-    // Actualizar el contexto con el array procesado y la flag de regeneración
+    // Update the context with the processed array and the regeneration flag
     const contextToSend = {
       ...context,
       messages: messagesArray,
@@ -195,27 +195,27 @@ class OpenAIManager {
     console.log(`[OpenAIManager][DEBUG] generateAssistantResponse - threadId: ${fbThreadId}, role: ${role}, hasMessages: ${!!messages}, hasProduct: ${!!productData}`);
 
     try {
-      // Extraer los mensajes, soportando tanto el formato antiguo (array) como el nuevo (objeto)
+      // Extract messages, supporting both the old (array) and new (object) formats
       let messagesArray;
 
       if (Array.isArray(messages)) {
-        // Formato antiguo: messages es directamente un array
+        // Old format: messages is directly an array
         messagesArray = messages;
       } else if (messages && Array.isArray(messages.messages)) {
-        // Nuevo formato: messages es un objeto {messages: [...], timeBlocks: [...]}
+        // New format: messages is an object {messages: [...], timeBlocks: [...]}
         messagesArray = messages.messages;
       } else {
-        console.error('[OpenAIManager][ERROR] Formato de mensajes inválido:', messages);
+        console.error('[OpenAIManager][ERROR] Invalid message format:', messages);
         throw new Error('Invalid message format');
       }
       // 1. Ensure required components are initialized
-      console.log(`[OpenAIManager][DEBUG] Verificando inicialización de componentes`);
+      console.log(`[OpenAIManager][DEBUG] Verifying component initialization`);
       if (!window.assistantHandler || !window.assistantHandler.initialized) {
-        console.log(`[OpenAIManager][DEBUG] AssistantHandler necesita inicialización`);
+        console.log(`[OpenAIManager][DEBUG] AssistantHandler needs initialization`);
         if (window.assistantHandler && typeof window.assistantHandler.initialize === 'function') {
           await window.assistantHandler.initialize();
         } else {
-          console.log(`[OpenAIManager][ERROR] AssistantHandler no disponible`);
+          console.log(`[OpenAIManager][ERROR] AssistantHandler not available`);
           throw new Error('AssistantHandler not available');
         }
       }
@@ -223,13 +223,13 @@ class OpenAIManager {
       // Initialize AudioTranscriber to enable parallel transcription
       if (window.audioTranscriber && typeof window.audioTranscriber.initialize === 'function'
         && !window.audioTranscriber.initialized) {
-        console.log(`[OpenAIManager][DEBUG] Inicializando AudioTranscriber`);
+        console.log(`[OpenAIManager][DEBUG] Initializing AudioTranscriber`);
         await window.audioTranscriber.initialize();
       }
 
       // 2. If forceNewThread, delete any existing thread
       if (forceNewThread && window.threadStore && window.threadStore.hasThread(fbThreadId)) {
-        console.log(`[OpenAIManager][DEBUG] Forzando nuevo thread para ${fbThreadId}`);
+        console.log(`[OpenAIManager][DEBUG] Forcing new thread for ${fbThreadId}`);
         logger.debug(`Forcing new thread for ${fbThreadId}`);
         // Get the existing thread info before deletion
         const existingThread = window.threadStore.getThreadInfo(fbThreadId);
@@ -237,11 +237,11 @@ class OpenAIManager {
         // Delete from thread store
         window.threadStore.threads.delete(fbThreadId);
         window.threadStore.saveThreads();
-        console.log(`[OpenAIManager][DEBUG] Thread antiguo eliminado del ThreadStore`);
+        console.log(`[OpenAIManager][DEBUG] Old thread deleted from ThreadStore`);
       }
 
       // 3. Generate response using AssistantHandler
-      console.log(`[OpenAIManager][DEBUG] Llamando a assistantHandler.generateResponse`);
+      console.log(`[OpenAIManager][DEBUG] Calling assistantHandler.generateResponse`);
       const response = await window.assistantHandler.generateResponse(
         fbThreadId,
         messages,
@@ -249,10 +249,10 @@ class OpenAIManager {
         productData
       );
 
-      console.log(`[OpenAIManager][DEBUG] Respuesta generada: "${response.substring(0, 50)}${response.length > 50 ? '...' : ''}"`);
+      console.log(`[OpenAIManager][DEBUG] Response generated: "${response.substring(0, 50)}${response.length > 50 ? '...' : ''}"`);
       return response;
     } catch (error) {
-      console.log(`[OpenAIManager][ERROR] Error generando respuesta: ${error.message}`, error);
+      console.log(`[OpenAIManager][ERROR] Error generating response: ${error.message}`, error);
       logger.error(`Error generating assistant response: ${error.message}`, {}, error);
       throw error;
     }
@@ -312,11 +312,11 @@ class OpenAIManager {
     if (!this.config.assistants) this.config.assistants = {};
     this.config.assistants[role] = this.config.assistants[role] || {};
     this.config.assistants[role].id = assistantId;
-    // También actualizar en CONFIG global si es necesario
+    // Also update in global CONFIG if necessary
     if (window.CONFIG && window.CONFIG.AI && window.CONFIG.AI.assistants) {
       window.CONFIG.AI.assistants[role].id = assistantId;
     }
-    // Opcional: guardar en storage
+    // Optional: save in storage
     if (window.storageUtils) {
       const assistants = window.CONFIG?.AI?.assistants || this.config.assistants;
       window.storageUtils.set('FB_CHAT_ASSISTANTS', assistants);

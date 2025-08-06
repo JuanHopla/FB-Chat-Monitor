@@ -326,7 +326,7 @@ function incrementResponseSent() {
 }
 
 /**
- * Incrementa el contador de chats procesados
+ * Increments the processed chats counter
  */
 function incrementChatsProcessed() {
   appState.stats.chatsProcessed++;

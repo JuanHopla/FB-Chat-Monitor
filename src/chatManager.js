@@ -26,7 +26,7 @@ class ChatManager {
     // Configure URL monitoring for manual chat changes
     this._setupUrlChangeDetection();
 
-    // Inicializa el sistema de asociación de audio (si está disponible)
+    // Initializes the audio association system (if available)
     if (window.audioTranscriber && typeof window.audioTranscriber.init === 'function') {
       window.audioTranscriber.init();
     }
@@ -60,22 +60,22 @@ class ChatManager {
    * @private
    * @param {string} url - The new URL
    */
-  // En el método que maneja cambios de chat (_handleUrlChange o similar)
+  // In the method that handles chat changes (_handleUrlChange or similar)
   _handleUrlChange(url) {
     try {
       const oldChatId = this.currentChatId;
 
-      // Extraer nuevo chatId de la URL
+      // Extract new chatId from the URL
       const chatIdMatch = url.match(/\/t\/(\d+)/);
       if (chatIdMatch && chatIdMatch[1]) {
         const newChatId = chatIdMatch[1];
 
-        // Si es un cambio real de chat
+        // If it's a real chat change
         if (newChatId !== oldChatId) {
           this.currentChatId = newChatId;
-          console.log(`[ChatManager] Cambio de chat detectado: ${oldChatId} -> ${newChatId}`);
+          console.log(`[ChatManager] Chat change detected: ${oldChatId} -> ${newChatId}`);
 
-          // NUEVO: Resetear estado de transcripciones para el nuevo chat
+          // NEW: Reset transcription state for the new chat
           if (window.audioTranscriber && typeof window.audioTranscriber.resetForNewChat === 'function') {
             window.audioTranscriber.resetForNewChat(newChatId);
           }
@@ -427,9 +427,9 @@ class ChatManager {
         return false;
       }
 
-      window.logManager.phase(window.logManager.phases.GENERATION, 'Extrayendo datos del chat actual');
+      window.logManager.phase(window.logManager.phases.GENERATION, 'Extracting data from current chat');
 
-      // Incrementar el contador de chats procesados en modo manual
+      // Increment the counter of processed chats in manual mode
       if (window.FBChatMonitor && typeof window.FBChatMonitor.incrementChatsProcessed === 'function') {
         window.FBChatMonitor.incrementChatsProcessed();
       }
@@ -440,7 +440,7 @@ class ChatManager {
       if (!chatData || !chatData.success) {
         logger.error('Failed to extract chat data for response generation');
         window.logManager.phase(window.logManager.phases.GENERATION, 'ERROR',
-          'No se pudieron extraer datos del chat');
+          'Could not extract chat data');
         return false;
       }
 
@@ -448,7 +448,7 @@ class ChatManager {
       if (!window.openaiManager) {
         logger.error('OpenAI Manager not available');
         window.logManager.phase(window.logManager.phases.GENERATION, 'ERROR',
-          'OpenAI Manager no está disponible');
+          'OpenAI Manager is not available');
         return false;
       }
 
@@ -457,11 +457,11 @@ class ChatManager {
         role: chatData.chatData.isSeller ? 'seller' : 'buyer',
         messages: chatData.chatData.messages,
         productDetails: chatData.chatData.productDetails,
-        forceNewGeneration: true // NUEVO: Añadir flag para forzar nueva generación
+        forceNewGeneration: true // NEW: Add flag to force new generation
       };
 
       window.logManager.step(window.logManager.phases.GENERATION, 'CONTEXT_BUILT',
-        `Contexto construido para generación de respuesta como ${context.role}`,
+        `Context built for response generation as ${context.role}`,
         {
           chatId: context.chatId,
           role: context.role,
@@ -472,33 +472,33 @@ class ChatManager {
 
       // Log before calling openaiManager
       window.logManager.step(window.logManager.phases.GENERATION, 'API_CALL',
-        'Llamando a openaiManager.generateResponse(context) con forceNewGeneration=true');
+        'Calling openaiManager.generateResponse(context) with forceNewGeneration=true');
 
       const response = await window.openaiManager.generateResponse(context);
 
       // Log after receiving the response
       window.logManager.step(window.logManager.phases.GENERATION, 'RESPONSE_RECEIVED',
-        `Respuesta recibida del asistente (${response?.length || 0} caracteres)`,
+        `Response received from assistant (${response?.length || 0} characters)`,
         { responsePreview: response?.substring(0, 100) });
 
       if (response && typeof response === 'string' && response.trim()) {
         this.insertResponseInInputField(response);
         window.logManager.phase(window.logManager.phases.GENERATION,
-          'Respuesta generada e insertada en el campo de entrada');
+          'Response generated and inserted into the input field');
 
-        // Registrar en historial (nueva línea)
+        // Log to history (new line)
         this.logResponseToHistory(context, context.role, response, false);
         return true;
       } else {
         window.logManager.phase(window.logManager.phases.GENERATION, 'ERROR',
-          'No se generó respuesta por OpenAI');
+          'No response was generated by OpenAI');
 
         showSimpleAlert('No response generated by OpenAI.', 'warning');
         return false;
       }
     } catch (error) {
       window.logManager.phase(window.logManager.phases.GENERATION, 'ERROR',
-        `Error al generar respuesta: ${error.message}`, error);
+        `Error generating response: ${error.message}`, error);
 
       showSimpleAlert(`Error generating response: ${error.message}`, 'error');
       return false;
@@ -542,61 +542,61 @@ class ChatManager {
       // Get the messages container
       const messagesWrapper = await domUtils.waitForElement(CONFIG.selectors.activeChat.messageWrapper);
 
-      // NUEVA INTEGRACIÓN: Usar ScrollManager para gestionar el scroll según tipo de hilo
-      // Determinar si es un hilo nuevo o existente
+      // NEW INTEGRATION: Use ScrollManager to manage scroll depending on thread type
+      // Determine if it's a new or existing thread
       const threadInfo = window.threadStore?.getThreadInfo?.(this.currentChatId);
       const isNewThread = !threadInfo;
       logger.log(`Thread type: ${isNewThread ? 'new' : 'existing'}`);
 
-      // Extraer mensajes según el tipo de hilo
+      // Extract messages depending on thread type
       let messages = [];
 
       if (window.scrollManager) {
         if (isNewThread) {
-          // Para hilos nuevos: hacer scroll completo al inicio
+          // For new threads: perform a full scroll to the beginning
           logger.log('New thread: performing complete scroll to beginning');
           await window.scrollManager.scrollToBeginning({
             onScroll: () => {
-              // Detectar audios mientras se hace scroll
+              // Detect audios while scrolling
               if (window.audioTranscriber) {
                 window.audioTranscriber.checkForAudioResources();
               }
             }
           });
 
-          // Extraer mensajes después del scroll completo
+          // Extract messages after the full scroll
           messages = await this.extractChatHistory(messagesWrapper);
 
-          // Restaurar posición original (al final de la conversación)
+          // Restore original position (at the end of the conversation)
           await window.scrollManager.restorePosition();
 
-          // Verificar si realmente volvimos al final, si no, forzar scroll
+          // Check if we really returned to the end, if not, force scroll
           const scrollContainer = domUtils.findElement(CONFIG.selectors.activeChat.scrollbar, messagesWrapper);
           if (scrollContainer) {
-            // Esperar un momento para que se estabilice el DOM
+            // Wait a moment for the DOM to stabilize
             await new Promise(resolve => setTimeout(resolve, 100));
 
-            // Si el scroll no está en la posición correcta, forzar scroll al final
+            // If the scroll is not in the correct position, force scroll to the end
             if (Math.abs(scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight) > 50) {
               logger.debug('Forcing scroll to bottom after restoration');
               scrollContainer.scrollTop = scrollContainer.scrollHeight;
             }
           }
         } else {
-          // Para hilos existentes: intentar cargar hasta el último mensaje conocido
+          // For existing threads: try to load up to the last known message
           if (threadInfo?.lastMessageId) {
             logger.log(`Existing thread: scrolling to last known message: ${threadInfo.lastMessageId}`);
             await window.scrollManager.scrollToMessage(threadInfo.lastMessageId);
           }
 
-          // Extraer mensajes visibles
+          // Extract visible messages
           messages = await this.extractChatHistory(messagesWrapper);
 
-          // NUEVA IMPLEMENTACIÓN: También restaurar posición para hilos existentes
+          // NEW IMPLEMENTATION: Also restore position for existing threads
           logger.log('Existing thread: restoring original scroll position');
           await window.scrollManager.restorePosition();
 
-          // También verificar para hilos existentes si volvimos a la posición correcta
+          // Also check for existing threads if we returned to the correct position
           const scrollContainer = domUtils.findElement(CONFIG.selectors.activeChat.scrollbar, messagesWrapper);
           if (scrollContainer) {
             await new Promise(resolve => setTimeout(resolve, 100));
@@ -608,20 +608,20 @@ class ChatManager {
           }
         }
       } else {
-        // Fallback al método antiguo si scrollManager no está disponible
+        // Fallback to the old method if scrollManager is not available
         logger.warn('ScrollManager not available, using legacy scroll method');
         const scrollContainer = domUtils.findElement(
           CONFIG.selectors.activeChat.scrollbar,
           messagesWrapper
         ) || messagesWrapper;
 
-        // Guardar posición original
+        // Save original position
         const originalPosition = scrollContainer.scrollTop;
 
         await domUtils.scrollToTop(scrollContainer);
         messages = await this.extractChatHistory(messagesWrapper);
 
-        // Restaurar posición (al final de la conversación)
+        // Restore position (at the end of the conversation)
         scrollContainer.scrollTop = scrollContainer.scrollHeight;
       }
 
@@ -894,24 +894,24 @@ class ChatManager {
   }
 
   /**
- * Busca separadores de fecha/hora en el DOM usando múltiples métodos
- * @returns {Array<Object>} Array de separadores encontrados
- */
+   * Finds date/time separators in the DOM using multiple methods
+   * @returns {Array<Object>} Array of separators found
+   */
   findDateSeparators() {
     const separators = [];
 
     try {
-      // Array de selectores a probar en orden de prioridad
+      // Array of selectors to test in order of priority
       const selectors = [
-        'div[data-scope="date_break"]',           // Selector específico de FB Messenger
-        'span.x186z157.xk50ysn',                  // Selector alternativo identificado
-        'h4 span.xdj266r',                        // Selector para encabezados
-        'div[role="row"] div[aria-hidden="true"]', // Posible selector para separadores
-        'div[role="separator"]',                  // Selector genérico para separadores
-        'h4'                                      // Encabezados de sección (podría contener fechas)
+        'div[data-scope="date_break"]',           // Specific FB Messenger selector
+        'span.x186z157.xk50ysn',                  // Alternative selector identified
+        'h4 span.xdj266r',                        // Selector for headers
+        'div[role="row"] div[aria-hidden="true"]', // Possible selector for separators
+        'div[role="separator"]',                  // Generic selector for separators
+        'h4'                                      // Section headers (could contain dates)
       ];
 
-      // Intentar cada selector
+      // Try each selector
       let elementsFound = [];
       let successfulSelector = null;
 
@@ -920,52 +920,52 @@ class ChatManager {
         if (elements.length > 0) {
           elementsFound = Array.from(elements);
           successfulSelector = selector;
-          logger.debug(`Encontrados ${elements.length} posibles separadores de fecha usando ${selector}`);
+          logger.debug(`Found ${elements.length} possible date separators using ${selector}`);
           break;
         }
       }
 
-      // Si no encontramos nada con selectores, intentar búsqueda por contenido
+      // If we didn't find anything with selectors, try searching by content
       if (elementsFound.length === 0) {
-        // Buscar elementos que podrían contener textos de fecha (patrones como "10/8/24" o "Today")
+        // Search for elements that could contain date texts (patterns like "10/8/24" or "Today")
         const datePatterns = [
           /\d{1,2}\/\d{1,2}\/\d{2,4}/,          // 10/8/24, 01/15/2024
           /^(Today|Yesterday|Ayer|Hoy)/i,        // Today, Yesterday, etc
           /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i // Jan 15, Oct 8, etc
         ];
 
-        // Buscar span o div con textos que coincidan con estos patrones
+        // Search for span or div with texts that match these patterns
         const allTextElements = document.querySelectorAll('span, div[role="row"]');
 
         elementsFound = Array.from(allTextElements).filter(el => {
           const text = el.textContent.trim();
-          return datePatterns.some(pattern => pattern.test(text)) && text.length < 50; // Evitar textos largos
+          return datePatterns.some(pattern => pattern.test(text)) && text.length < 50; // Avoid long texts
         });
 
         if (elementsFound.length > 0) {
-          logger.debug(`Encontrados ${elementsFound.length} posibles separadores de fecha por patrón de texto`);
+          logger.debug(`Found ${elementsFound.length} possible date separators by text pattern`);
           successfulSelector = 'content-pattern';
         }
       }
 
-      // Procesar los elementos encontrados
+      // Process the elements found
       elementsFound.forEach((element, index) => {
         try {
-          // Obtener el texto
+          // Get the text
           const dateText = element.textContent.trim();
 
-          // Ignorar si no parece una fecha
+          // Ignore if it doesn't look like a date
           if (!dateText || dateText.length < 5) return;
 
-          // Verificar si contiene un patrón de fecha
+          // Verify if it contains a date pattern
           const hasDatePattern = /\d{1,2}\/\d{1,2}\/\d{2,4}|\d{1,2}:\d{2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i.test(dateText);
           if (!hasDatePattern) return;
 
-          // Intentar parsear la fecha
+          // Try to parse the date
           const timestamp = this.parseDateString(dateText);
           if (!timestamp) return;
 
-          // Encontrar el elemento padre (fila) si existe
+          // Find the parent element (row) if it exists
           const parentRow = element.closest('div[role="row"]');
 
           separators.push({
@@ -975,90 +975,90 @@ class ChatManager {
             index
           });
 
-          logger.debug(`Separador de fecha #${index + 1}: "${dateText}" (${new Date(timestamp).toLocaleString()})`);
+          logger.debug(`Date separator #${index + 1}: "${dateText}" (${new Date(timestamp).toLocaleString()})`);
         } catch (e) {
-          logger.warn(`Error procesando posible separador de fecha: ${e.message}`);
+          logger.warn(`Error processing possible date separator: ${e.message}`);
         }
       });
 
-      // Ordenar por timestamp
+      // Sort by timestamp
       separators.sort((a, b) => a.timestamp - b.timestamp);
 
-      logger.log(`Se encontraron ${separators.length} bloques temporales usando ${successfulSelector || 'ningún selector'}`);
+      logger.log(`Found ${separators.length} time blocks using ${successfulSelector || 'no selector'}`);
       return separators;
     } catch (error) {
-      logger.error(`Error buscando separadores de fecha: ${error.message}`);
+      logger.error(`Error searching for date separators: ${error.message}`);
       return [];
     }
   }
 
   /**
-   * Extrae el historial de chat completo - VERSIÓN MEJORADA con soporte para bloques temporales
-   * @param {HTMLElement} messagesWrapper - Contenedor de mensajes
-   * @returns {Promise<Array>} Array de mensajes extraídos
+   * Extracts the complete chat history - IMPROVED VERSION with support for time blocks
+   * @param {HTMLElement} messagesWrapper - Message container
+   * @returns {Promise<Array>} Array of extracted messages
    */
   async extractChatHistory(messagesWrapper) {
     if (this.isProcessingChat) {
-      logger.warn('Extracción de historial ya en progreso. Omitiendo.');
+      logger.warn('History extraction already in progress. Skipping.');
       return [];
     }
     if (!messagesWrapper) {
-      logger.error('No se proporcionó elemento messagesWrapper a extractChatHistory.');
+      logger.error('No messagesWrapper element provided to extractChatHistory.');
       return [];
     }
 
     this.isProcessingChat = true;
-    logger.debug('Iniciando extracción del historial de chat...');
+    logger.debug('Starting chat history extraction...');
 
     const messages = [];
-    const timeBlocks = []; // Array para registrar bloques de tiempo
-    let currentTimeBlock = null; // Bloque de tiempo actual
+    const timeBlocks = []; // Array to record time blocks
+    let currentTimeBlock = null; // Current time block
     let messageElements = [];
 
     try {
-      // 1) Obtener selectores desde CONFIG o usar fallback
+      // 1) Get selectors from CONFIG or use fallback
       const selectors = window.CONFIG?.selectors?.activeChat || {
         messageWrapper: 'div.x4k7w5x > div > div > div, div[role="main"] > div > div > div:last-child > div',
         messageRow: 'div[role="row"]',
         senderAvatar: 'img.x1rg5ohu[alt]:not([alt="Open photo"])'
       };
 
-      // 2) Obtener todas las filas de mensajes
+      // 2) Get all message rows
       messageElements = domUtils.findAllElements(selectors.messageRow, messagesWrapper);
-      logger.log(`Analizando ${messageElements.length} mensajes en el DOM actual`);
+      logger.log(`Analyzing ${messageElements.length} messages in the current DOM`);
 
       if (messageElements.length === 0) {
-        logger.warn('No se encontraron filas de mensajes con selector:', selectors.messageRow);
+        logger.warn('No message rows found with selector:', selectors.messageRow);
         return [];
       }
 
-      // NUEVO: Buscar separadores de fecha antes de procesar mensajes
+      // NEW: Find date separators before processing messages
       const dateSeparators = this.findDateSeparators();
 
-      // Convertir separadores a bloques temporales
+      // Convert separators to time blocks
       dateSeparators.forEach((separator, idx) => {
         timeBlocks.push({
           timestamp: separator.timestamp,
           element: separator.element,
           text: separator.text,
           index: idx,
-          messages: [] // Se llenarán durante el procesamiento
+          messages: [] // Will be filled during processing
         });
       });
 
-      // Para debugging
+      // For debugging
       if (timeBlocks.length > 0) {
-        logger.debug('Bloques temporales encontrados:');
+        logger.debug('Time blocks found:');
         timeBlocks.forEach((block, idx) => {
-          logger.debug(`  Bloque #${idx + 1}: ${block.text} (${new Date(block.timestamp).toLocaleString()})`);
+          logger.debug(`  Block #${idx + 1}: ${block.text} (${new Date(block.timestamp).toLocaleString()})`);
         });
       }
 
-      // 3) Procesar cada fila de mensaje
-      let currentBlockIndex = 0; // Para seguimiento del bloque actual mientras procesamos mensajes
+      // 3) Process each message row
+      let currentBlockIndex = 0; // For tracking the current block while processing messages
 
       messageElements.forEach((el, idx) => {
-        // Extraer y limpiar texto único
+        // Extract and clean unique text
         const nodes = Array.from(el.querySelectorAll('span[dir="auto"], div[dir="auto"]'));
         const texts = [...new Set(
           nodes.map(n => n.textContent.trim())
@@ -1066,24 +1066,24 @@ class ChatManager {
         )];
         const text = texts.join(' ').trim();
 
-        // Determinar tipos especiales
+        // Determine special types
         const isDiv = this.isDividerElement(el);
         const isSys = !isDiv && this.isSystemMessage(text);
         const isReply = !isDiv && !isSys && !!this.detectQuotedMessage(el);
 
-        // --- ACTUALIZADO: Manejo de bloques temporales ---
-        // Si tenemos bloques temporales y este elemento es un separador
+        // --- UPDATED: Time block handling ---
+        // If we have time blocks and this element is a separator
         if (timeBlocks.length > 0 && isDiv) {
-          // Ver si este elemento coincide con alguno de nuestros separadores
+          // See if this element matches any of our separators
           for (let i = 0; i < timeBlocks.length; i++) {
             if (timeBlocks[i].element === el || el.contains(timeBlocks[i].element) || timeBlocks[i].element.contains(el)) {
-              currentBlockIndex = i; // Actualizar el índice del bloque actual
+              currentBlockIndex = i; // Update the index of the current block
               break;
             }
           }
         }
 
-        // Determinar remitente
+        // Determine sender
         let sentByUs = false, type = 'UNKNOWN';
         if (isDiv) type = 'DIVIDER 📅';
         else if (isSys) type = 'SYSTEM 🤖';
@@ -1095,7 +1095,7 @@ class ChatManager {
           type = sentByUs ? 'OWN ✅' : 'EXTERNAL ❌';
         }
 
-        // OMITIR si es separador o mensaje del sistema
+        // SKIP if it is a separator or system message
         if (!isDiv && !isSys) {
           const messageData = {
             id: `msg_${this.currentChatId}_${idx}`,
@@ -1105,11 +1105,11 @@ class ChatManager {
               type: "unknown",
               media: {}
             },
-            // ACTUALIZADO: Asignar el índice del bloque temporal actual
+            // UPDATED: Assign the index of the current time block
             timeBlockIndex: timeBlocks.length > 0 ? currentBlockIndex : null
           };
 
-          // Detectar y añadir contenido multimedia
+          // Detect and add multimedia content
           this.detectAndAddImageContent(el, messageData);
           this.detectAndAddAudioContent(el, messageData);
           this.detectAndAddVideoContent(el, messageData);
@@ -1118,24 +1118,24 @@ class ChatManager {
 
           messages.push(messageData);
 
-          // Agregar también al array del bloque temporal si existe
+          // Also add to the time block array if it exists
           if (timeBlocks.length > 0 && currentBlockIndex < timeBlocks.length) {
             timeBlocks[currentBlockIndex].messages.push(messageData);
           }
 
           logger.debug(`#${idx + 1}: ${messageData.content.type} – ${text.substring(0, 30)}${text.length > 30 ? '…' : ''}`);
         } else {
-          logger.debug(`#${idx + 1}: Omitido mensaje ${isDiv ? 'SEPARADOR' : 'SISTEMA'}`);
+          logger.debug(`#${idx + 1}: Omitted message ${isDiv ? 'SEPARATOR' : 'SYSTEM'}`);
         }
       });
 
       this.lastProcessedMessageCount = messages.length;
-      logger.log(`Extracción completada: ${messages.length} mensajes encontrados en ${timeBlocks.length} bloques temporales`);
+      logger.log(`Extraction completed: ${messages.length} messages found in ${timeBlocks.length} time blocks`);
 
-      // NUEVO: Mostrar logs de fechas acumulados
+      // NEW: Show accumulated date logs
       this.showDateParseLogs();
 
-      // Contar mensajes de audio y transcripciones
+      // Count audio messages and transcriptions
       const messagesWithAudio = messages.filter(m => m.content?.hasAudio).length;
       const messagesWithTranscription = messages.filter(m =>
         m.content?.hasAudio &&
@@ -1143,9 +1143,9 @@ class ChatManager {
         m.content.transcribedAudio !== '[Transcription Pending]'
       ).length;
 
-      logger.debug(`Extracción completa: ${messages.length} mensajes (${messagesWithAudio} con audio, ${messagesWithTranscription} con transcripción)`);
+      logger.debug(`Extraction complete: ${messages.length} messages (${messagesWithAudio} with audio, ${messagesWithTranscription} with transcription)`);
 
-      // Emitir evento de extracción completada con los bloques temporales
+      // Emit extraction completed event with time blocks
       const result = {
         messages: messages,
         timeBlocks: timeBlocks
@@ -1159,7 +1159,7 @@ class ChatManager {
 
     } catch (error) {
       window.logManager.phase(window.logManager.phases.EXTRACTION, 'ERROR',
-        'Error durante la extracción del historial del chat', error);
+        'Error during chat history extraction', error);
     } finally {
       this.isProcessingChat = false;
     }
@@ -1167,482 +1167,482 @@ class ChatManager {
     return { messages: messages, timeBlocks: timeBlocks };
   }
 
-  /**
-   * Parsea una cadena de fecha de Messenger a timestamp y acumula logs
-   * @param {string} dateText - Texto de fecha a parsear
-   * @returns {number|null} Timestamp o null si no es válido
-   */
-  parseDateString(dateText) {
-    if (!dateText) return null;
+    /**
+     * Parses a Messenger date string to timestamp and accumulates logs
+     * @param {string} dateText - Date text to parse
+     * @returns {number|null} Timestamp or null if not valid
+     */
+    parseDateString(dateText) {
+      if (!dateText) return null;
 
-    // Inicializar el array de logs si no existe
-    if (!this.dateParseLogs) {
-      this.dateParseLogs = [];
-    }
-
-    try {
-      // Formato de Facebook: "10/8/24, 12:23 AM"
-      const dateTimeMatch = dateText.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:,\s*(\d{1,2}):(\d{2})(?:\s*(AM|PM))?)?/i);
-
-      if (dateTimeMatch) {
-        const [, month, day, yearShort, hour = '0', minute = '0', ampm = ''] = dateTimeMatch;
-
-        // Convertir año de 2 dígitos a 4 dígitos
-        const year = yearShort.length === 2 ? 2000 + parseInt(yearShort, 10) : parseInt(yearShort, 10);
-
-        // Convertir hora al formato 24h si es necesario
-        let hours = parseInt(hour, 10);
-        if (ampm.toUpperCase() === 'PM' && hours < 12) hours += 12;
-        if (ampm.toUpperCase() === 'AM' && hours === 12) hours = 0;
-
-        // Crear fecha
-        const date = new Date(year, parseInt(month, 10) - 1, parseInt(day, 10), hours, parseInt(minute, 10));
-
-        // Crear log y añadirlo al array acumulativo (SIN mostrar inmediatamente)
-        this.dateParseLogs.push({
-          phase: window.logManager.phases.EXTRACTION,
-          type: 'DATE_PARSE',
-          message: `Fecha parseada: "${dateText}" → ${date.toISOString()}`,
-          data: { originalText: dateText, timestamp: date.getTime() }
-        });
-
-        return date.getTime();
+      // Initialize the logs array if it doesn't exist
+      if (!this.dateParseLogs) {
+        this.dateParseLogs = [];
       }
 
-      // Intentar con el formato "October 8, 2024"
-      const timestamp = new Date(dateText).getTime();
+      try {
+        // Facebook format: "10/8/24, 12:23 AM"
+        const dateTimeMatch = dateText.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:,\s*(\d{1,2}):(\d{2})(?:\s*(AM|PM))?)?/i);
 
-      if (!isNaN(timestamp)) {
-        // Añadir log al array acumulativo (SIN mostrar inmediatamente)
-        this.dateParseLogs.push({
-          phase: window.logManager.phases.EXTRACTION,
-          type: 'DATE_PARSE',
-          message: `Fecha parseada (formato alternativo): "${dateText}" → ${new Date(timestamp).toISOString()}`,
-          data: { originalText: dateText, timestamp }
-        });
+        if (dateTimeMatch) {
+          const [, month, day, yearShort, hour = '0', minute = '0', ampm = ''] = dateTimeMatch;
 
-        return timestamp;
-      }
+          // Convert 2-digit year to 4-digit year
+          const year = yearShort.length === 2 ? 2000 + parseInt(yearShort, 10) : parseInt(yearShort, 10);
 
-      // Añadir log de fallo al array acumulativo (SIN mostrar inmediatamente)
-      this.dateParseLogs.push({
-        phase: window.logManager.phases.EXTRACTION,
-        type: 'DATE_PARSE_FAIL',
-        message: `No se pudo parsear la fecha: "${dateText}"`,
-        data: { originalText: dateText }
-      });
+          // Convert hour to 24h format if necessary
+          let hours = parseInt(hour, 10);
+          if (ampm.toUpperCase() === 'PM' && hours < 12) hours += 12;
+          if (ampm.toUpperCase() === 'AM' && hours === 12) hours = 0;
 
-      return null;
-    } catch (error) {
-      // Añadir log de error al array acumulativo (SIN mostrar inmediatamente)
-      this.dateParseLogs.push({
-        phase: window.logManager.phases.EXTRACTION,
-        type: 'DATE_PARSE_ERROR',
-        message: `Error parseando fecha "${dateText}": ${error.message}`,
-        data: { originalText: dateText, error: error.message }
-      });
+          // Create date
+          const date = new Date(year, parseInt(month, 10) - 1, parseInt(day, 10), hours, parseInt(minute, 10));
 
-      return null;
-    }
-  }
-
-  /**
-   * Muestra los logs acumulados de parseo de fechas
-   */
-  showDateParseLogs() {
-    if (!this.dateParseLogs || this.dateParseLogs.length === 0) {
-      console.log('[ChatManager] No hay logs de parseo de fechas');
-      return;
-    }
-
-    // Mostrar un resumen
-    console.log(`[ChatManager][EXTRACTION] Procesadas ${this.dateParseLogs.length} fechas encontradas`);
-
-    // Mostrar detalles en un grupo colapsado
-    console.groupCollapsed(`[ChatManager][EXTRACTION] Detalle de fechas parseadas (${this.dateParseLogs.length})`);
-
-    this.dateParseLogs.forEach((log, index) => {
-      const isSuccess = !log.message.includes('Error') && !log.message.includes('No se pudo');
-      console.log(`[${index + 1}/${this.dateParseLogs.length}] ${log.message}`, log.data);
-    });
-
-    console.groupEnd();
-  }
-
-  /**
-   * PHASE 2: New functions to detect and add content types
-   */
-
-  /**
-   * Improved image detection
-   * @param {HTMLElement} container - Message container
-   * @param {Object} messageData - Message data to update
-   */
-  detectAndAddImageContent(container, messageData) {
-    try {
-      const imageSelectors = Array.isArray(CONFIG.selectors.activeChat.messageImageElement) ?
-        CONFIG.selectors.activeChat.messageImageElement.join(', ') :
-        CONFIG.selectors.activeChat.messageImageElement;
-
-      const imgElements = container.querySelectorAll(imageSelectors);
-
-      if (imgElements.length > 0) {
-        const validImages = Array.from(imgElements).filter(img => {
-          const src = img.src || '';
-          // Filter small icons/base64/emojis/avatars
-          return src &&
-            !src.startsWith('data:') &&
-            (img.width > 30 || !img.width) &&
-            (img.height > 30 || !img.height) &&
-            !src.includes('/emoji.') &&
-            !src.includes('/avatar/');
-        });
-
-        if (validImages.length > 0) {
-          // Backward compatibility
-          messageData.content.imageUrls = validImages.map(img => img.src);
-
-          // New improved structure
-          messageData.content.media.images = validImages.map(img => ({
-            url: img.src,
-            alt: img.alt || '',
-            width: img.width || 0,
-            height: img.height || 0
-          }));
-
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'image';
-          }
-
-          window.logManager.collect('mediaDetection', {
-            type: 'image',
-            messageId: messageData.id,
-            count: validImages.length,
-            urls: validImages.map(img => img.src).slice(0, 3) // Primeras 3 URLs como muestra
+          // Create log and add it to the cumulative array (WITHOUT showing immediately)
+          this.dateParseLogs.push({
+            phase: window.logManager.phases.EXTRACTION,
+            type: 'DATE_PARSE',
+            message: `Parsed date: "${dateText}" → ${date.toISOString()}`,
+            data: { originalText: dateText, timestamp: date.getTime() }
           });
+
+          return date.getTime();
         }
+
+        // Try with the format "October 8, 2024"
+        const timestamp = new Date(dateText).getTime();
+
+        if (!isNaN(timestamp)) {
+          // Add log to the cumulative array (WITHOUT showing immediately)
+          this.dateParseLogs.push({
+            phase: window.logManager.phases.EXTRACTION,
+            type: 'DATE_PARSE',
+            message: `Parsed date (alternative format): "${dateText}" → ${new Date(timestamp).toISOString()}`,
+            data: { originalText: dateText, timestamp }
+          });
+
+          return timestamp;
+        }
+
+        // Add failure log to the cumulative array (WITHOUT showing immediately)
+        this.dateParseLogs.push({
+          phase: window.logManager.phases.EXTRACTION,
+          type: 'DATE_PARSE_FAIL',
+          message: `Could not parse date: "${dateText}"`,
+          data: { originalText: dateText }
+        });
+
+        return null;
+      } catch (error) {
+        // Add error log to the cumulative array (WITHOUT showing immediately)
+        this.dateParseLogs.push({
+          phase: window.logManager.phases.EXTRACTION,
+          type: 'DATE_PARSE_ERROR',
+          message: `Error parsing date "${dateText}": ${error.message}`,
+          data: { originalText: dateText, error: error.message }
+        });
+
+        return null;
+      }
+    }
+
+    /**
+     * Shows the accumulated date parsing logs
+     */
+    showDateParseLogs() {
+      if (!this.dateParseLogs || this.dateParseLogs.length === 0) {
+        console.log('[ChatManager] No date parsing logs');
+        return;
       }
 
-      // Additional search for images in divs with background-image
-      const bgImageDivs = container.querySelectorAll('div[style*="background-image"]');
-      if (bgImageDivs.length > 0) {
-        for (const div of bgImageDivs) {
-          const style = div.getAttribute('style') || '';
-          const urlMatch = style.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
+      // Show a summary
+      console.log(`[ChatManager][EXTRACTION] Processed ${this.dateParseLogs.length} dates found`);
 
-          if (urlMatch && urlMatch[1] && !urlMatch[1].startsWith('data:')) {
-            const imageUrl = urlMatch[1];
+      // Show details in a collapsed group
+      console.groupCollapsed(`[ChatManager][EXTRACTION] Parsed dates detail (${this.dateParseLogs.length})`);
 
-            // Add only if not already in the list
-            if (!messageData.content.imageUrls.includes(imageUrl)) {
-              messageData.content.imageUrls.push(imageUrl);
+      this.dateParseLogs.forEach((log, index) => {
+        const isSuccess = !log.message.includes('Error') && !log.message.includes('Could not');
+        console.log(`[${index + 1}/${this.dateParseLogs.length}] ${log.message}`, log.data);
+      });
 
-              messageData.content.media.images.push({
-                url: imageUrl,
-                alt: "Background Image",
-                width: div.clientWidth || 0,
-                height: div.clientHeight || 0
-              });
+      console.groupEnd();
+    }
 
-              if (messageData.content.type === 'unknown') {
-                messageData.content.type = 'image';
+    /**
+     * PHASE 2: New functions to detect and add content types
+     */
+
+    /**
+     * Improved image detection
+     * @param {HTMLElement} container - Message container
+     * @param {Object} messageData - Message data to update
+     */
+    detectAndAddImageContent(container, messageData) {
+      try {
+        const imageSelectors = Array.isArray(CONFIG.selectors.activeChat.messageImageElement) ?
+          CONFIG.selectors.activeChat.messageImageElement.join(', ') :
+          CONFIG.selectors.activeChat.messageImageElement;
+
+        const imgElements = container.querySelectorAll(imageSelectors);
+
+        if (imgElements.length > 0) {
+          const validImages = Array.from(imgElements).filter(img => {
+            const src = img.src || '';
+            // Filter small icons/base64/emojis/avatars
+            return src &&
+              !src.startsWith('data:') &&
+              (img.width > 30 || !img.width) &&
+              (img.height > 30 || !img.height) &&
+              !src.includes('/emoji.') &&
+              !src.includes('/avatar/');
+          });
+
+          if (validImages.length > 0) {
+            // Backward compatibility
+            messageData.content.imageUrls = validImages.map(img => img.src);
+
+            // New improved structure
+            messageData.content.media.images = validImages.map(img => ({
+              url: img.src,
+              alt: img.alt || '',
+              width: img.width || 0,
+              height: img.height || 0
+            }));
+
+            if (messageData.content.type === 'unknown') {
+              messageData.content.type = 'image';
+            }
+
+            window.logManager.collect('mediaDetection', {
+              type: 'image',
+              messageId: messageData.id,
+              count: validImages.length,
+              urls: validImages.map(img => img.src).slice(0, 3) // First 3 URLs as sample
+            });
+          }
+        }
+
+        // Additional search for images in divs with background-image
+        const bgImageDivs = container.querySelectorAll('div[style*="background-image"]');
+        if (bgImageDivs.length > 0) {
+          for (const div of bgImageDivs) {
+            const style = div.getAttribute('style') || '';
+            const urlMatch = style.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
+
+            if (urlMatch && urlMatch[1] && !urlMatch[1].startsWith('data:')) {
+              const imageUrl = urlMatch[1];
+
+              // Add only if not already in the list
+              if (!messageData.content.imageUrls.includes(imageUrl)) {
+                messageData.content.imageUrls.push(imageUrl);
+
+                messageData.content.media.images.push({
+                  url: imageUrl,
+                  alt: "Background Image",
+                  width: div.clientWidth || 0,
+                  height: div.clientHeight || 0
+                });
+
+                if (messageData.content.type === 'unknown') {
+                  messageData.content.type = 'image';
+                }
               }
             }
           }
         }
-      }
-    } catch (error) {
-      logger.error(`Error detecting images: ${error.message}`, {}, error);
-    }
-  }
-
-  /**
-   * Mejorada la detección de audio en mensajes
-   * @param {HTMLElement} container - Message container
-   * @param {Object} messageData - Message data to update
-   */
-  detectAndAddAudioContent(container, messageData) {
-    // Usar todos los selectores de botones de audio para mejor detección
-    const audioButtonSelectors = CONFIG.selectors.activeChat.messageAudioPlayButton;
-    let audioButton = null;
-
-    // Intentar cada selector hasta encontrar un botón de audio
-    for (const selector of audioButtonSelectors) {
-      const buttons = container.querySelectorAll(selector);
-      if (buttons.length > 0) {
-        audioButton = buttons[0];
-        break;
+      } catch (error) {
+        logger.error(`Error detecting images: ${error.message}`, {}, error);
       }
     }
 
-    if (!audioButton) return;
+    /**
+     * Improved audio detection in messages
+     * @param {HTMLElement} container - Message container
+     * @param {Object} messageData - Message data to update
+     */
+    detectAndAddAudioContent(container, messageData) {
+      // Use all audio button selectors for better detection
+      const audioButtonSelectors = CONFIG.selectors.activeChat.messageAudioPlayButton;
+      let audioButton = null;
 
-    // Si encontramos un botón de audio, marcar este mensaje como contenedor de audio
-    messageData.content.hasAudio = true;
-
-    /*window.logManager.step(window.logManager.phases.EXTRACTION, 'AUDIO_DETECT', 
-      `Audio detectado en mensaje ${messageData.id}`);*/
-
-    // Intentar obtener URL directa (rara vez disponible en el DOM)
-    const audioElement = container.querySelector('audio[src]');
-    if (audioElement && audioElement.src) {
-      messageData.content.audioUrl = audioElement.src;
-      window.logManager.step(window.logManager.phases.EXTRACTION, 'AUDIO_URL',
-        `URL de audio encontrada directamente en el DOM`,
-        { messageId: messageData.id, url: audioElement.src });
-    } else {
-      // Si no hay URL directa, generar un marcador único para este audio
-      // que podemos usar para asociar más tarde con las transcripciones
-      const audioMarkerId = `audio_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      messageData.content.audioMarkerId = audioMarkerId;
-
-      // Añadir al DOM como atributo de datos para facilitar la asociación posterior
-      if (audioButton) {
-        audioButton.setAttribute('data-audio-marker-id', audioMarkerId);
-
-        // Registrar que estamos esperando este audio para cuando se detecte
-        if (window.audioTranscriber) {
-          window.audioTranscriber.expectingAudioForMessageId = messageData.id;
-          window.audioTranscriber.expectingAudioTimestamp = Date.now();
+      // Try each selector until an audio button is found
+      for (const selector of audioButtonSelectors) {
+        const buttons = container.querySelectorAll(selector);
+        if (buttons.length > 0) {
+          audioButton = buttons[0];
+          break;
         }
       }
 
-      /*window.logManager.step(window.logManager.phases.EXTRACTION, 'AUDIO_MARKER', 
-        `Marcador generado para audio pendiente`, 
-        {messageId: messageData.id, audioMarkerId});*/
-    }
+      if (!audioButton) return;
 
-    // Extraer duración si está disponible
-    messageData.content.audioDuration = this.extractAudioDuration(container);
-    messageData.content.transcribedAudio = '[Transcription Pending]';
+      // If we find an audio button, mark this message as containing audio
+      messageData.content.hasAudio = true;
 
-    window.logManager.collect('audioMessages', {
-      messageId: messageData.id,
-      hasUrl: !!messageData.content.audioUrl,
-      duration: messageData.content.audioDuration,
-      markerId: messageData.content.audioMarkerId
-    });
-  }
+      /*window.logManager.step(window.logManager.phases.EXTRACTION, 'AUDIO_DETECT', 
+        `Audio detected in message ${messageData.id}`);*/
 
-  /**
-   * Extracts audio duration if available
-   * @param {HTMLElement} container - Message container
-   * @returns {string|null} Audio duration (format "M:SS") or null
-   */
-  extractAudioDuration(container) {
-    try {
-      const durationSelectors = [
-        'span[style*="color: rgba"]',
-        'span.x193iq5w',
-        'div[dir="auto"] > span'
-      ];
-
-      for (const selector of durationSelectors) {
-        const elements = container.querySelectorAll(selector);
-        for (const el of elements) {
-          const text = el.textContent.trim();
-          // Check format MM:SS or M:SS
-          if (/^\d{1,2}:\d{2}$/.test(text)) {
-            return text;
-          }
-        }
-      }
-
-      return null;
-    } catch (error) {
-      logger.debug(`Error extracting audio duration: ${error.message}`);
-      return null;
-    }
-  }
-
-  /**
-   * Tries to extract the audio URL
-   * @param {HTMLElement} container - Message container
-   * @returns {string|null} Audio URL or null
-   */
-  extractAudioUrl(container) {
-    try {
+      // Try to get direct URL (rarely available in the DOM)
       const audioElement = container.querySelector('audio[src]');
       if (audioElement && audioElement.src) {
-        return audioElement.src;
-      }
-
-      // Check for links to audio files
-      const audioLink = container.querySelector('a[href*=".mp3"], a[href*=".m4a"], a[href*=".wav"], a[href*=".ogg"]');
-      if (audioLink && audioLink.href) {
-        return audioLink.href;
-      }
-
-      return null;
-    } catch (error) {
-      logger.debug(`Error extracting audio URL: ${error.message}`);
-      return null;
-    }
-  }
-
-  /**
-   * Detects video content
-   * @param {HTMLElement} container - Message container
-   * @param {Object} messageData - Message data to update
-   */
-  detectAndAddVideoContent(container, messageData) {
-    try {
-      // Detect explicit video (<video> or links)
-      const videoElement = container.querySelector('video, a[href*="video_redirect"]');
-
-      if (videoElement) {
-        if (videoElement.tagName === 'VIDEO') {
-          const videoInfo = {
-            exists: true,
-            url: videoElement.src || null,
-            type: 'video',
-            thumbnail: this.extractVideoThumbnail(videoElement) || null,
-            duration: videoElement.duration ? `${Math.round(videoElement.duration)}s` : null
-          };
-
-          messageData.content.media.video = videoInfo;
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'video';
-          }
-        } else if (videoElement.tagName === 'A' && videoElement.href) {
-          const videoInfo = {
-            exists: true,
-            url: videoElement.href,
-            type: 'video_link',
-            thumbnail: null,
-            duration: null
-          };
-
-          messageData.content.media.video = videoInfo;
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'video';
-          }
-        }
+        messageData.content.audioUrl = audioElement.src;
+        window.logManager.step(window.logManager.phases.EXTRACTION, 'AUDIO_URL',
+          `Audio URL found directly in the DOM`,
+          { messageId: messageData.id, url: audioElement.src });
       } else {
-        // Look for video containers
-        const videoSelectors = Array.isArray(CONFIG.selectors.activeChat.messageVideoElement) ?
-          CONFIG.selectors.activeChat.messageVideoElement.join(', ') :
-          CONFIG.selectors.activeChat.messageVideoElement;
+        // If there is no direct URL, generate a unique marker for this audio
+        // that we can use to associate later with the transcriptions
+        const audioMarkerId = `audio_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        messageData.content.audioMarkerId = audioMarkerId;
 
-        const potentialVideoContainer = container.querySelector(videoSelectors);
+        // Add to the DOM as a data attribute to facilitate later association
+        if (audioButton) {
+          audioButton.setAttribute('data-audio-marker-id', audioMarkerId);
 
-        if (potentialVideoContainer) {
-          const label = potentialVideoContainer.getAttribute('aria-label') || 'Video Player';
-          const isThumbnail = potentialVideoContainer.style.backgroundImage ||
-            potentialVideoContainer.querySelector('div[style*="background-image"]');
-
-          const videoInfo = {
-            exists: true,
-            url: null,
-            type: isThumbnail ? 'video_thumbnail' : 'video_player',
-            thumbnail: this.extractBackgroundImage(potentialVideoContainer),
-            label: label
-          };
-
-          messageData.content.media.video = videoInfo;
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'video';
+          // Register that we are waiting for this audio for when it is detected
+          if (window.audioTranscriber) {
+            window.audioTranscriber.expectingAudioForMessageId = messageData.id;
+            window.audioTranscriber.expectingAudioTimestamp = Date.now();
           }
         }
+
+        /*window.logManager.step(window.logManager.phases.EXTRACTION, 'AUDIO_MARKER', 
+          `Marker generated for pending audio`, 
+          {messageId: messageData.id, audioMarkerId});*/
       }
-    } catch (error) {
-      logger.error(`Error detecting video: ${error.message}`, {}, error);
+
+      // Extract duration if available
+      messageData.content.audioDuration = this.extractAudioDuration(container);
+      messageData.content.transcribedAudio = '[Transcription Pending]';
+
+      window.logManager.collect('audioMessages', {
+        messageId: messageData.id,
+        hasUrl: !!messageData.content.audioUrl,
+        duration: messageData.content.audioDuration,
+        markerId: messageData.content.audioMarkerId
+      });
     }
-  }
 
-  /**
-   * Extracts background image for video
-   * @param {HTMLElement} element - Element with possible background image
-   * @returns {string|null} URL of background image or null
-   */
-  extractBackgroundImage(element) {
-    try {
-      const style = element.getAttribute('style') || '';
-      const urlMatch = style.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
-      if (urlMatch && urlMatch[1]) {
-        return urlMatch[1];
-      }
+    /**
+     * Extracts audio duration if available
+     * @param {HTMLElement} container - Message container
+     * @returns {string|null} Audio duration (format "M:SS") or null
+     */
+    extractAudioDuration(container) {
+      try {
+        const durationSelectors = [
+          'span[style*="color: rgba"]',
+          'span.x193iq5w',
+          'div[dir="auto"] > span'
+        ];
 
-      const childWithBg = element.querySelector('div[style*="background-image"]');
-      if (childWithBg) {
-        const childStyle = childWithBg.getAttribute('style') || '';
-        const childUrlMatch = childStyle.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
-        if (childUrlMatch && childUrlMatch[1]) {
-          return childUrlMatch[1];
-        }
-      }
-
-      return null;
-    } catch (error) {
-      logger.debug(`Error extracting background image: ${error.message}`);
-      return null;
-    }
-  }
-
-  /**
-   * Extracts video thumbnail
-   * @param {HTMLVideoElement} videoElement - Video element
-   * @returns {string|null} URL of thumbnail or null
-   */
-  extractVideoThumbnail(videoElement) {
-    try {
-      if (videoElement.poster) {
-        return videoElement.poster;
-      }
-
-      const source = videoElement.querySelector('source[type^="video/"]');
-      if (source && source.src) {
-        return source.src.replace(/\.mp4$/, '.jpg'); // Common approximation
-      }
-
-      return null;
-    } catch (error) {
-      logger.debug(`Error extracting video thumbnail: ${error.message}`);
-      return null;
-    }
-  }
-
-  /**
-   * Detects file attachments
-   * @param {HTMLElement} container - Message container
-   * @param {Object} messageData - Message data to update
-   */
-  detectAndAddFileContent(container, messageData) {
-    try {
-      const fileSelectors = Array.isArray(CONFIG.selectors.activeChat.messageFileElement) ?
-        CONFIG.selectors.activeChat.messageFileElement.join(', ') :
-        CONFIG.selectors.activeChat.messageFileElement;
-
-      const fileElements = Array.from(container.querySelectorAll(fileSelectors));
-
-      if (fileElements.length > 0) {
-        const files = [];
-
-        fileElements.forEach(fileElement => {
-          const url = fileElement.href || null;
-          const fileName = this.extractFileName(fileElement);
-          const fileType = this.detectFileType(fileElement, fileName);
-
-          if (url || fileName) {
-            files.push({
-              url: url,
-              name: fileName,
-              type: fileType
-            });
-          }
-        });
-
-        if (files.length > 0) {
-          messageData.content.media.files = files;
-          if (messageData.content.type === 'unknown') {
-            messageData.content.type = 'file';
+        for (const selector of durationSelectors) {
+          const elements = container.querySelectorAll(selector);
+          for (const el of elements) {
+            const text = el.textContent.trim();
+            // Check format MM:SS or M:SS
+            if (/^\d{1,2}:\d{2}$/.test(text)) {
+              return text;
+            }
           }
         }
+
+        return null;
+      } catch (error) {
+        logger.debug(`Error extracting audio duration: ${error.message}`);
+        return null;
       }
-    } catch (error) {
-      logger.error(`Error detecting files: ${error.message}`, {}, error);
     }
-  }
+
+    /**
+     * Tries to extract the audio URL
+     * @param {HTMLElement} container - Message container
+     * @returns {string|null} Audio URL or null
+     */
+    extractAudioUrl(container) {
+      try {
+        const audioElement = container.querySelector('audio[src]');
+        if (audioElement && audioElement.src) {
+          return audioElement.src;
+        }
+
+        // Check for links to audio files
+        const audioLink = container.querySelector('a[href*=".mp3"], a[href*=".m4a"], a[href*=".wav"], a[href*=".ogg"]');
+        if (audioLink && audioLink.href) {
+          return audioLink.href;
+        }
+
+        return null;
+      } catch (error) {
+        logger.debug(`Error extracting audio URL: ${error.message}`);
+        return null;
+      }
+    }
+
+    /**
+     * Detects video content
+     * @param {HTMLElement} container - Message container
+     * @param {Object} messageData - Message data to update
+     */
+    detectAndAddVideoContent(container, messageData) {
+      try {
+        // Detect explicit video (<video> or links)
+        const videoElement = container.querySelector('video, a[href*="video_redirect"]');
+
+        if (videoElement) {
+          if (videoElement.tagName === 'VIDEO') {
+            const videoInfo = {
+              exists: true,
+              url: videoElement.src || null,
+              type: 'video',
+              thumbnail: this.extractVideoThumbnail(videoElement) || null,
+              duration: videoElement.duration ? `${Math.round(videoElement.duration)}s` : null
+            };
+
+            messageData.content.media.video = videoInfo;
+            if (messageData.content.type === 'unknown') {
+              messageData.content.type = 'video';
+            }
+          } else if (videoElement.tagName === 'A' && videoElement.href) {
+            const videoInfo = {
+              exists: true,
+              url: videoElement.href,
+              type: 'video_link',
+              thumbnail: null,
+              duration: null
+            };
+
+            messageData.content.media.video = videoInfo;
+            if (messageData.content.type === 'unknown') {
+              messageData.content.type = 'video';
+            }
+          }
+        } else {
+          // Look for video containers
+          const videoSelectors = Array.isArray(CONFIG.selectors.activeChat.messageVideoElement) ?
+            CONFIG.selectors.activeChat.messageVideoElement.join(', ') :
+            CONFIG.selectors.activeChat.messageVideoElement;
+
+          const potentialVideoContainer = container.querySelector(videoSelectors);
+
+          if (potentialVideoContainer) {
+            const label = potentialVideoContainer.getAttribute('aria-label') || 'Video Player';
+            const isThumbnail = potentialVideoContainer.style.backgroundImage ||
+              potentialVideoContainer.querySelector('div[style*="background-image"]');
+
+            const videoInfo = {
+              exists: true,
+              url: null,
+              type: isThumbnail ? 'video_thumbnail' : 'video_player',
+              thumbnail: this.extractBackgroundImage(potentialVideoContainer),
+              label: label
+            };
+
+            messageData.content.media.video = videoInfo;
+            if (messageData.content.type === 'unknown') {
+              messageData.content.type = 'video';
+            }
+          }
+        }
+      } catch (error) {
+        logger.error(`Error detecting video: ${error.message}`, {}, error);
+      }
+    }
+
+    /**
+     * Extracts background image for video
+     * @param {HTMLElement} element - Element with possible background image
+     * @returns {string|null} URL of background image or null
+     */
+    extractBackgroundImage(element) {
+      try {
+        const style = element.getAttribute('style') || '';
+        const urlMatch = style.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
+        if (urlMatch && urlMatch[1]) {
+          return urlMatch[1];
+        }
+
+        const childWithBg = element.querySelector('div[style*="background-image"]');
+        if (childWithBg) {
+          const childStyle = childWithBg.getAttribute('style') || '';
+          const childUrlMatch = childStyle.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
+          if (childUrlMatch && childUrlMatch[1]) {
+            return childUrlMatch[1];
+          }
+        }
+
+        return null;
+      } catch (error) {
+        logger.debug(`Error extracting background image: ${error.message}`);
+        return null;
+      }
+    }
+
+    /**
+     * Extracts video thumbnail
+     * @param {HTMLVideoElement} videoElement - Video element
+     * @returns {string|null} URL of thumbnail or null
+     */
+    extractVideoThumbnail(videoElement) {
+      try {
+        if (videoElement.poster) {
+          return videoElement.poster;
+        }
+
+        const source = videoElement.querySelector('source[type^="video/"]');
+        if (source && source.src) {
+          return source.src.replace(/\.mp4$/, '.jpg'); // Common approximation
+        }
+
+        return null;
+      } catch (error) {
+        logger.debug(`Error extracting video thumbnail: ${error.message}`);
+        return null;
+      }
+    }
+
+    /**
+     * Detects file attachments
+     * @param {HTMLElement} container - Message container
+     * @param {Object} messageData - Message data to update
+     */
+    detectAndAddFileContent(container, messageData) {
+      try {
+        const fileSelectors = Array.isArray(CONFIG.selectors.activeChat.messageFileElement) ?
+          CONFIG.selectors.activeChat.messageFileElement.join(', ') :
+          CONFIG.selectors.activeChat.messageFileElement;
+
+        const fileElements = Array.from(container.querySelectorAll(fileSelectors));
+
+        if (fileElements.length > 0) {
+          const files = [];
+
+          fileElements.forEach(fileElement => {
+            const url = fileElement.href || null;
+            const fileName = this.extractFileName(fileElement);
+            const fileType = this.detectFileType(fileElement, fileName);
+
+            if (url || fileName) {
+              files.push({
+                url: url,
+                name: fileName,
+                type: fileType
+              });
+            }
+          });
+
+          if (files.length > 0) {
+            messageData.content.media.files = files;
+            if (messageData.content.type === 'unknown') {
+              messageData.content.type = 'file';
+            }
+          }
+        }
+      } catch (error) {
+        logger.error(`Error detecting files: ${error.message}`, {}, error);
+      }
+    }
 
   /**
    * Extracts file name
@@ -1664,7 +1664,7 @@ class ChatManager {
       if (fileElement.hasAttribute('title')) return fileElement.getAttribute('title');
       if (fileElement.hasAttribute('aria-label')) {
         const label = fileElement.getAttribute('aria-label');
-        if (label.includes('file') || label.includes('archivo')) {
+        if (label.includes('file') || label.includes('archivo')) { // Doubt: Should "archivo" be translated?
           const parts = label.split(':');
           if (parts.length > 1) return parts[1].trim();
         }
@@ -1793,7 +1793,7 @@ class ChatManager {
     try {
       if (locationElement.hasAttribute('aria-label')) {
         return locationElement.getAttribute('aria-label')
-          .replace(/location|ubicación|shared/i, '')
+          .replace(/location|ubicación|shared/i, '') // Doubt: Should "ubicación" be translated?
           .trim();
       }
 
@@ -1850,75 +1850,75 @@ class ChatManager {
     // Common patterns for system messages - ADDITIONAL ADDITIONS
     const systemPatterns = [
       // ─── Conversation start ─────────────────────────────
-      /^(You|Tú|[A-Z][a-z]+) started this chat\.?( View (seller|buyer) profile)?$/i,
-      /^([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+) inició el chat\.?( Ver (perfil del vendedor|perfil del comprador))?$/i,
+      /^(You|Tú|[A-Z][a-z]+) started this chat\.?( View (seller|buyer) profile)?$/i, // Doubt: Should "Tú" be translated?
+      /^([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+) inició el chat\.?( Ver (perfil del vendedor|perfil del comprador))?$/i, // Doubt: Should "inició el chat", "Ver perfil del vendedor", "perfil del comprador" be translated?
 
       // ─── Participants added or removed ────────────────
       /^You added .* to the group\.$/i,
-      /^Agregaste a .* al grupo\.$/i,
+      /^Agregaste a .* al grupo\.$/i, // Doubt: Should "Agregaste a", "al grupo" be translated?
       /^You removed .* from the group\.$/i,
-      /^Eliminaste a .* del grupo\.$/i,
+      /^Eliminaste a .* del grupo\.$/i, // Doubt: Should "Eliminaste a", "del grupo" be translated?
 
       // ─── Users leaving the group ──────────────────────
-      /^.* (left|salió del) grupo\.$/i,
+      /^.* (left|salió del) grupo\.$/i, // Doubt: Should "salió del" be translated?
 
       // ─── Name or color changes ─────────────────────────
       /^You named the group .*$/i,
-      /^Nombraste al grupo .*$/i,
+      /^Nombraste al grupo .*$/i, // Doubt: Should "Nombraste al grupo" be translated?
       /^You changed the chat colors\.$/i,
-      /^Cambiaste los colores del chat\.$/i,
+      /^Cambiaste los colores del chat\.$/i, // Doubt: Should "Cambiaste los colores del chat" be translated?
       /^You set the nickname for .* to .*$/i,
-      /^Definiste el apodo de .* como .*$/i,
+      /^Definiste el apodo de .* como .*$/i, // Doubt: Should "Definiste el apodo de", "como" be translated?
 
       // ─── Changes in group photo/name with dynamic name
       /^Changed the group photo\.$/i,
-      /^Cambió la foto del grupo\.$/i,
-      /cambió la foto del grupo\.$/i,
+      /^Cambió la foto del grupo\.$/i, // Doubt: Should "Cambió la foto del grupo" be translated?
+      /cambió la foto del grupo\.$/i, // Doubt: Should "cambió la foto del grupo" be translated?
       /named the group .+\.$/i,
-      /nombró al grupo .+\.$/i,
+      /nombró al grupo .+\.$/i, // Doubt: Should "nombró al grupo" be translated?
       /^[A-Z][a-z]+(?: [A-Z][a-z]+)? changed the group photo\.$/i,
       /^[A-Z][a-z]+(?: [A-Z][a-z]+)? named the group .+\.$/i,
 
       // ─── Media sent ───────────────────────────────────
       /^You sent (a )?(GIF|photo|video|attachment)\.$/i,
-      /^Enviaste (un|una) (GIF|foto|video|adjunto)\.$/i,
+      /^Enviaste (un|una) (GIF|foto|video|adjunto)\.$/i, // Doubt: Should "Enviaste", "un", "una", "foto", "video", "adjunto" be translated?
       /^You shared a location\.$/i,
-      /^Compartiste una ubicación\.$/i,
+      /^Compartiste una ubicación\.$/i, // Doubt: Should "Compartiste una ubicación" be translated?
 
       // ─── Calls ──────────────────────────────────────────
       /^Missed call$/i,
       /^You missed a call from .*$/i,
-      /^Llamada perdida$/i,
-      /^Llamada perdida de .*$/i,
+      /^Llamada perdida$/i, // Doubt: Should "Llamada perdida" be translated?
+      /^Llamada perdida de .*$/i, // Doubt: Should "Llamada perdida de" be translated?
 
       // ─── Listing statuses ───────────────────────────────
       /^.* marked the listing as (Available|Pending)\.$/i,
-      /^Marcó este artículo como (vendido|pendiente|disponible)\.?$/i,
+      /^Marcó este artículo como (vendido|pendiente|disponible)\.?$/i, // Doubt: Should "Marcó este artículo como", "vendido", "pendiente", "disponible" be translated?
       /^.* sold .+\.$/i,
-      /^Vendió .+\.$/i,
+      /^Vendió .+\.$/i, // Doubt: Should "Vendió" be translated?
       /^[A-Z][a-z]+ marked the listing as (Available|Pending)\.$/i,
       /^[A-Z][a-z]+ changed the listing description\.$/i,
       /^[A-Z][a-z]+ sold .+\.$/i,
 
       // ─── System messages / UI ─────────────────────────
       /^.* bumped their message:?$/i,
-      /^Mensaje enviado$/i,
-      /^Ver anuncios similares$/i,
+      /^Mensaje enviado$/i, // Doubt: Should "Mensaje enviado" be translated?
+      /^Ver anuncios similares$/i, // Doubt: Should "Ver anuncios similares" be translated?
       /^See similar listings$/i,
-      /^Ver perfil del comprador$/i,
+      /^Ver perfil del comprador$/i, // Doubt: Should "Ver perfil del comprador" be translated?
       /^View buyer profile$/i,
-      /^Ver perfil del vendedor$/i,
+      /^Ver perfil del vendedor$/i, // Doubt: Should "Ver perfil del vendedor" be translated?
       /^View seller profile$/i,
-      /^Ver detalles del comprador$/i,
+      /^Ver detalles del comprador$/i, // Doubt: Should "Ver detalles del comprador" be translated?
       /^View buyer details$/i,
-      /detalles del comprador$/i,
+      /detalles del comprador$/i, // Doubt: Should "detalles del comprador" be translated?
       /buyer details$/i,
 
       // ─── Alerts / informative messages ───────────────────
-      /^Estás recibiendo muchos mensajes sobre este anuncio/i,
+      /^Estás recibiendo muchos mensajes sobre este anuncio/i, // Doubt: Should "Estás recibiendo muchos mensajes sobre este anuncio" be translated?
       /^To help identify and reduce scams and fraud, Meta may use technology to review Marketplace messages\./i,
       /^You're receiving a lot of messages about this listing/i,
-      /^Estás esperando tu respuesta sobre este anuncio\.\s*Ver anuncio$/i,
+      /^Estás esperando tu respuesta sobre este anuncio\.\s*Ver anuncio$/i, // Doubt: Should "Estás esperando tu respuesta sobre este anuncio", "Ver anuncio" be translated?
       /^You're waiting for a response about this listing\.\s*View listing$/i,
       /^Is getting a lot of messages about this listing/i,
       /^Is waiting for your response about this listing\.\s*View listing$/i,
@@ -1928,12 +1928,12 @@ class ChatManager {
 
       // ─── Ratings ────────────────────────────────────
       /^You can now rate each other.*Rate [A-Z][a-z]+$/i,
-      /^Ahora pueden calificarse.*Califica a [A-ZÁÉÍÓÚÑ][a-záéíóúñ]+$/i,
+      /^Ahora pueden calificarse.*Califica a [A-ZÁÉÍÓÚÑ][a-záéíóúñ]+$/i, // Doubt: Should "Ahora pueden calificarse", "Califica a" be translated?
 
       // ─── Profile information ─────────────────────────────
       /^Joined facebook in \d{4}$/i,
-      /^Se unió a Facebook en \d{4}$/i,
-      /se unió a Facebook en \d{4}/i,
+      /^Se unió a Facebook en \d{4}$/i, // Doubt: Should "Se unió a Facebook en" be translated?
+      /se unió a Facebook en \d{4}/i, // Doubt: Should "se unió a Facebook en" be translated?
 
       // ─── Dates / timestamps ───────────────────────────────
       /^\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}(\u2009|\u202F)?\s*(AM|PM)?$/i,
@@ -1973,7 +1973,7 @@ class ChatManager {
       }
 
       // 2. Check text that are usually dividers (dates, etc.)
-      if (/^(Today|Yesterday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Hoy|Ayer|Lunes|Martes|Miércoles|Jueves|Viernes|Sábado|Domingo)$/i.test(text)) {
+      if (/^(Today|Yesterday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Hoy|Ayer|Lunes|Martes|Miércoles|Jueves|Viernes|Sábado|Domingo)$/i.test(text)) { // Doubt: Should "Hoy", "Ayer", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo" be translated?
         logger.debug(`[isDivider] Element with day text: ${text}`);
         return true;
       }
@@ -1981,7 +1981,7 @@ class ChatManager {
       // 3. Check date patterns (DD/MM/YYYY, etc.)
       if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(text) ||
         /^\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(\w*)(\s+\d{2,4})?$/i.test(text) ||
-        /^\d{1,2}\s+(Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Sep|Oct|Nov|Dic)(\w*)(\s+\d{2,4})?$/i.test(text)) {
+        /^\d{1,2}\s+(Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Sep|Oct|Nov|Dic)(\w*)(\s+\d{2,4})?$/i.test(text)) { // Doubt: Should "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic" be translated?
         logger.debug(`[isDivider] Element with date text: ${text}`);
         return true;
       }
@@ -2408,15 +2408,15 @@ class ChatManager {
    */
   sendMessage(isAfterInsert = false) {
     try {
-      let messageSent = false; // Solo incrementar una vez
+      let messageSent = false; // Only increment once
 
       logger.debug(`Initiating message sending attempt (${isAfterInsert ? 'after inserting text' : 'direct'})`);
 
-      // Strategy 1: Click on the send button con selectores mejorados
+      // Strategy 1: Click on the send button with improved selectors
       const sendButtonSelectors = [
         ...CONFIG.selectors.activeChat.sendButton,
         'div[aria-label="Press enter to send"]',
-        'div[aria-label="Pulsa Intro para enviar"]',
+        'div[aria-label="Pulsa Intro para enviar"]', // Doubt: Should this be translated?
         'div[role="button"][tabindex="0"][style*="transform: translateY(0px)"]',
         'div.xjbqb8w:not([style*="opacity: 0"])',
         'div.x1i10hfl[role="button"]:not(.x1hc1fzr)'
@@ -2466,7 +2466,7 @@ class ChatManager {
         logger.debug('Send button not found, trying with Enter key...');
       }
 
-      // Strategy 2: Simular tecla Enter en el campo
+      // Strategy 2: Simulate Enter key in the field
       const inputField = document.querySelector(CONFIG.selectors.activeChat.messageInput);
       if (inputField) {
         logger.debug('Simulating Enter key in the input field...');
@@ -2515,7 +2515,7 @@ class ChatManager {
           logger.error(`Error using execCommand: ${execError.message}`);
         }
 
-        // Reintentar una vez si falló el primer intento
+        // Retry once if the first attempt failed
         if (!isAfterInsert) {
           logger.debug('First attempt failed, scheduling retry after 1 second...');
           setTimeout(() => this.sendMessage(true), 1000);
@@ -2540,12 +2540,12 @@ class ChatManager {
   forceCleanInputField(inputField) {
     // New implementation: simulate Ctrl+A and Backspace/Delete to clear Messenger input
     return new Promise((resolve) => {
-      if (!inputField) return resolve({ exito: false, mensaje: "Campo no encontrado" });
+      if (!inputField) return resolve({ success: false, message: "Field not found" });
 
       inputField.focus();
-      const contenidoInicial = inputField.textContent?.trim() || "";
+      const initialContent = inputField.textContent?.trim() || ""; 
 
-      if (!contenidoInicial) return resolve({ exito: true, mensaje: "Campo ya vacío" });
+      if (!initialContent) return resolve({ success: true, message: "Field already empty" }); 
 
       // Simulate Ctrl+A
       ['keydown', 'keyup'].forEach(type => {
@@ -2567,13 +2567,13 @@ class ChatManager {
         inputField.dispatchEvent(new Event('input', { bubbles: true }));
 
         setTimeout(() => {
-          const contenidoFinal = inputField.textContent?.trim() || "";
-          const exito = contenidoFinal === "";
+          const finalContent = inputField.textContent?.trim() || ""; 
+          const success = finalContent === ""; 
           resolve({
-            exito,
-            mensaje: exito ? "Campo limpiado con éxito" : "No se pudo limpiar completamente",
-            contenidoInicial,
-            contenidoFinal
+            success, 
+            message: success ? "Field cleaned successfully" : "Could not clean completely", 
+            initialContent, 
+            finalContent 
           });
         }, 100);
       }, 50);
@@ -2581,17 +2581,17 @@ class ChatManager {
   }
 
   /**
- * Registra una respuesta generada en el historial
- * @param {Object} context - Contexto del chat
- * @param {string} response - Respuesta generada
- * @param {boolean} sent - Si la respuesta fue enviada
+ * Logs a generated response to the history
+ * @param {Object} context - Chat context
+ * @param {string} response - Generated response
+ * @param {boolean} sent - If the response was sent
  */
   logResponseToHistory(context, role, response, sent = false) {
     try {
-      // Obtener historial actual
+      // Get current history
       const history = storageUtils.get('RESPONSE_LOGS', []);
 
-      // Añadir nueva entrada
+      // Add new entry
       const logEntry = {
         timestamp: Date.now(),
         mode: window.CONFIG?.operationMode || 'manual',
@@ -2604,16 +2604,16 @@ class ChatManager {
         sent: sent
       };
 
-      // Añadir al inicio para mostrar los más recientes primero
+      // Add to the beginning to show the most recent ones first
       history.unshift(logEntry);
 
-      // Limitar a 200 entradas para no ocupar demasiado espacio
+      // Limit to 200 entries to avoid taking up too much space
       const limitedHistory = history.slice(0, 200);
 
-      // Guardar actualización
+      // Save update
       storageUtils.set('RESPONSE_LOGS', limitedHistory);
 
-      // Verificar que response sea un string antes de llamar a substring
+      // Verify that response is a string before calling substring
       if (typeof response === 'string') {
         logger.debug(`Response logged to history: ${response.substring(0, 30)}...`);
       } else {

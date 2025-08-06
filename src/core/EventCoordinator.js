@@ -1,11 +1,11 @@
 /**
- * EventCoordinator - Sistema centralizado de eventos para coordinar componentes
+ * EventCoordinator - Centralized event system to coordinate components
  * 
  * Responsibilities:
- * - Coordinar eventos entre distintos componentes
- * - Proporcionar un bus de eventos unificado
- * - Permitir comunicación desacoplada
- * - Facilitar diagnóstico de flujos
+ * - Coordinate events between different components
+ * - Provide a unified event bus
+ * - Allow decoupled communication
+ * - Facilitate flow diagnostics
  */
 class EventCoordinator {
   constructor() {
@@ -16,10 +16,10 @@ class EventCoordinator {
   }
 
   /**
-   * Registra un listener para un evento
-   * @param {string} eventName - Nombre del evento
-   * @param {Function} callback - Función a ejecutar
-   * @returns {Object} Objeto con método para cancelar suscripción
+   * Registers a listener for an event
+   * @param {string} eventName - Name of the event
+   * @param {Function} callback - Function to execute
+   * @returns {Object} Object with a method to unsubscribe
    */
   on(eventName, callback) {
     if (!this.listeners.has(eventName)) {
@@ -28,69 +28,69 @@ class EventCoordinator {
     
     this.listeners.get(eventName).add(callback);
     
-    // Devolver objeto con método de cancelación
+    // Return object with an unsubscribe method
     return {
       unsubscribe: () => this.off(eventName, callback)
     };
   }
 
   /**
-   * Elimina un listener
-   * @param {string} eventName - Nombre del evento
-   * @param {Function} callback - Función a eliminar
+   * Removes a listener
+   * @param {string} eventName - Name of the event
+   * @param {Function} callback - Function to remove
    */
   off(eventName, callback) {
     if (!this.listeners.has(eventName)) return;
     
     this.listeners.get(eventName).delete(callback);
     
-    // Eliminar el set si está vacío
+    // Delete the set if it's empty
     if (this.listeners.get(eventName).size === 0) {
       this.listeners.delete(eventName);
     }
   }
 
   /**
-   * Emite un evento
-   * @param {string} eventName - Nombre del evento
-   * @param {Object} data - Datos asociados al evento
+   * Emits an event
+   * @param {string} eventName - Name of the event
+   * @param {Object} data - Data associated with the event
    */
   emit(eventName, data = {}) {
-    // Registrar evento en historial
+    // Record event in history
     this.recordEvent(eventName, data);
     
-    // Log de depuración
+    // Debug log
     if (this.debug) {
-      //console.log(`[EventCoordinator] Evento emitido: ${eventName}`, data);
+      //console.log(`[EventCoordinator] Event emitted: ${eventName}`, data);
     }
     
-    // Notificar a los listeners
+    // Notify listeners
     if (this.listeners.has(eventName)) {
       this.listeners.get(eventName).forEach(callback => {
         try {
           callback(data);
         } catch (error) {
-          console.error(`[EventCoordinator] Error en listener de ${eventName}:`, error);
+          console.error(`[EventCoordinator] Error in listener for ${eventName}:`, error);
         }
       });
     }
     
-    // También notificar a los listeners de '*' (todos los eventos)
+    // Also notify '*' listeners (all events)
     if (this.listeners.has('*')) {
       this.listeners.get('*').forEach(callback => {
         try {
           callback({ event: eventName, data });
         } catch (error) {
-          console.error(`[EventCoordinator] Error en listener global:`, error);
+          console.error(`[EventCoordinator] Error in global listener:`, error);
         }
       });
     }
   }
 
   /**
-   * Registra un evento en el historial
-   * @param {string} eventName - Nombre del evento
-   * @param {Object} data - Datos del evento
+   * Records an event in the history
+   * @param {string} eventName - Name of the event
+   * @param {Object} data - Event data
    * @private
    */
   recordEvent(eventName, data) {
@@ -100,21 +100,21 @@ class EventCoordinator {
       timestamp: Date.now()
     });
     
-    // Mantener el historial limitado
+    // Keep the history limited
     if (this.eventHistory.length > this.maxHistoryLength) {
       this.eventHistory = this.eventHistory.slice(0, this.maxHistoryLength);
     }
   }
 
   /**
-   * Obtiene el historial de eventos
-   * @param {Object} options - Opciones de filtrado
-   * @returns {Array} Historial de eventos filtrado
+   * Gets the event history
+   * @param {Object} options - Filtering options
+   * @returns {Array} Filtered event history
    */
   getEventHistory(options = {}) {
     let events = [...this.eventHistory];
     
-    // Aplicar filtros
+    // Apply filters
     if (options.eventName) {
       events = events.filter(e => e.event === options.eventName);
     }
@@ -132,55 +132,55 @@ class EventCoordinator {
   }
 
   /**
-   * Emite un evento una vez que se cumplen ciertas condiciones
-   * @param {string} eventName - Nombre del evento a emitir
-   * @param {Array<Object>} conditions - Condiciones a cumplir
-   * @param {Object} eventData - Datos a incluir en el evento
-   * @param {Object} options - Opciones adicionales
-   * @returns {Object} Objeto con método para cancelar
+   * Emits an event once certain conditions are met
+   * @param {string} eventName - Name of the event to emit
+   * @param {Array<Object>} conditions - Conditions to be met
+   * @param {Object} eventData - Data to include in the event
+   * @param {Object} options - Additional options
+   * @returns {Object} Object with a method to cancel
    */
   emitWhen(eventName, conditions, eventData = {}, options = {}) {
     const pendingEvents = new Set();
     const completedEvents = new Set();
     const timeout = options.timeout || 30000;
     
-    // Convertir condiciones en un array si no lo es
+    // Convert conditions to an array if it isn't one
     const conditionsArray = Array.isArray(conditions) ? conditions : [conditions];
     
-    // Registrar cada condición
+    // Register each condition
     const subscriptions = conditionsArray.map(condition => {
       pendingEvents.add(condition.event);
       
       return this.on(condition.event, (data) => {
-        // Verificar si cumple la condición
+        // Check if the condition is met
         if (!condition.check || condition.check(data)) {
           pendingEvents.delete(condition.event);
           completedEvents.add(condition.event);
           
-          // Si se cumplieron todas las condiciones, emitir evento
+          // If all conditions are met, emit the event
           if (pendingEvents.size === 0) {
             this.emit(eventName, { ...eventData, triggeredBy: Array.from(completedEvents) });
-            // Cancelar todas las suscripciones
+            // Cancel all subscriptions
             subscriptions.forEach(sub => sub.unsubscribe());
           }
         }
       });
     });
     
-    // Configurar timeout
+    // Set up timeout
     const timeoutId = setTimeout(() => {
       if (pendingEvents.size > 0) {
-        // Emitir evento de timeout
+        // Emit timeout event
         this.emit(`${eventName}.timeout`, {
           pending: Array.from(pendingEvents),
           completed: Array.from(completedEvents)
         });
-        // Cancelar todas las suscripciones
+        // Cancel all subscriptions
         subscriptions.forEach(sub => sub.unsubscribe());
       }
     }, timeout);
     
-    // Devolver objeto para cancelar
+    // Return object to cancel
     return {
       unsubscribe: () => {
         clearTimeout(timeoutId);

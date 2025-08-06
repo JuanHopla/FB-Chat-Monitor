@@ -1,11 +1,11 @@
 /**
- * ScrollManager - Sistema inteligente para gestión de scroll en conversaciones
+ * ScrollManager - Intelligent system for managing scroll in conversations
  * 
  * Responsibilities:
- * - Realizar scroll a inicio de conversación para hilos nuevos
- * - Realizar scroll parcial hasta último mensaje conocido para hilos existentes
- * - Mantener la posición actual y poder restaurarla
- * - Notificar eventos de scroll para coordinar con otros componentes
+ * - Scroll to the beginning of the conversation for new threads
+ * - Perform a partial scroll to the last known message for existing threads
+ * - Maintain the current position and be able to restore it
+ * - Notify scroll events to coordinate with other components
  */
 class ScrollManager {
   constructor() {
@@ -13,11 +13,11 @@ class ScrollManager {
       'div[style*="overflow-y: auto"][style*="height"]';
     
     this.options = {
-      scrollPauseMs: 300,       // Pausa entre iteraciones de scroll
-      maxAttempts: 25,          // Intentos máximos para scroll
-      noChangeThreshold: 3,     // Cuántas iteraciones sin cambios indican fin
-      smoothScrollToPosition: true, // Activar scroll suave al restaurar posición
-      detectLoadingIndicator: true, // Detectar indicadores de carga
+      scrollPauseMs: 300,       // Pause between scroll iterations
+      maxAttempts: 25,          // Maximum scroll attempts
+      noChangeThreshold: 3,     // How many iterations without change indicate the end
+      smoothScrollToPosition: true, // Enable smooth scroll when restoring position
+      detectLoadingIndicator: true, // Detect loading indicators
     };
 
     this.eventListeners = {
@@ -38,26 +38,26 @@ class ScrollManager {
       consecutiveNoChange: 0
     };
     
-    // Observable para otros componentes
+    // Observable for other components
     this._scrollObservable = null;
   }
 
   /**
-   * Realiza scroll hasta el inicio de la conversación
-   * @param {Object} options - Opciones adicionales 
-   * @returns {Promise<Object>} Resultado de la operación
+   * Scrolls to the beginning of the conversation
+   * @param {Object} options - Additional options 
+   * @returns {Promise<Object>} Result of the operation
    */
   async scrollToBeginning(options = {}) {
     const container = this._getScrollContainer();
     if (!container) {
-      console.error('[ScrollManager] No se encontró contenedor de scroll');
+      console.error('[ScrollManager] Scroll container not found');
       return { success: false, error: 'No scroll container found' };
     }
 
-    // Fusionar opciones
+    // Merge options
     const scrollOptions = { ...this.options, ...options };
     
-    // Guardar posición original
+    // Save original position
     this.state.originalPosition = container.scrollTop;
     this.state.isScrolling = true;
     this.state.scrollDirection = 'up';
@@ -65,28 +65,28 @@ class ScrollManager {
     this.state.scrollAttempts = 0;
     this.state.consecutiveNoChange = 0;
     
-    // Notificar inicio de scroll
+    // Notify scroll start
     this._notifyEvent('beforeScroll', { direction: 'up', type: 'beginning' });
-    console.log('[ScrollManager] Iniciando scroll hacia el principio de la conversación');
+    console.log('[ScrollManager] Starting scroll to the beginning of the conversation');
 
     try {
-      // Empezar proceso de scroll
+      // Start scroll process
       while (this.state.scrollAttempts < scrollOptions.maxAttempts) {
         this.state.scrollAttempts++;
         const prevScrollHeight = this.state.lastScrollHeight;
         const prevScrollTop = container.scrollTop;
         
-        // Realizar scroll hacia arriba
+        // Scroll up
         container.scrollTop = 0;
         
-        // Esperar para que carguen los mensajes
+        // Wait for messages to load
         await new Promise(resolve => setTimeout(resolve, scrollOptions.scrollPauseMs));
         
-        // Verificar cambios
+        // Check for changes
         const currentScrollHeight = container.scrollHeight;
         const currentScrollTop = container.scrollTop;
         
-        // Notificar durante el scroll (para que otros componentes puedan procesar elementos)
+        // Notify during scroll (so other components can process elements)
         if (scrollOptions.onScroll && typeof scrollOptions.onScroll === 'function') {
           scrollOptions.onScroll({
             attempt: this.state.scrollAttempts,
@@ -103,14 +103,14 @@ class ScrollManager {
           scrollPosition: currentScrollTop
         });
         
-        // Detectar fin del scroll
+        // Detect end of scroll
         if (currentScrollTop === 0 && 
             (prevScrollHeight === currentScrollHeight || currentScrollTop === prevScrollTop)) {
           this.state.consecutiveNoChange++;
           
-          // Si tenemos varios intentos sin cambios, asumimos que llegamos al inicio
+          // If we have several attempts without changes, we assume we've reached the beginning
           if (this.state.consecutiveNoChange >= scrollOptions.noChangeThreshold) {
-            console.log('[ScrollManager] Llegamos al inicio de la conversación');
+            console.log('[ScrollManager] Reached the beginning of the conversation');
             break;
           }
         } else {
@@ -120,9 +120,9 @@ class ScrollManager {
         this.state.lastScrollHeight = currentScrollHeight;
       }
       
-      // Verificar resultado
+      // Check result
       const scrolledToBeginning = (container.scrollTop === 0);
-      console.log(`[ScrollManager] Scroll completado en ${this.state.scrollAttempts} intentos. Llegó al inicio: ${scrolledToBeginning}`);
+      console.log(`[ScrollManager] Scroll completed in ${this.state.scrollAttempts} attempts. Reached beginning: ${scrolledToBeginning}`);
       
       this._notifyEvent('scrollToBeginning', {
         success: true,
@@ -136,7 +136,7 @@ class ScrollManager {
         attempts: this.state.scrollAttempts
       };
     } catch (error) {
-      console.error('[ScrollManager] Error durante scroll al inicio:', error);
+      console.error('[ScrollManager] Error during scroll to beginning:', error);
       return { 
         success: false, 
         error: error.message 
@@ -148,48 +148,48 @@ class ScrollManager {
   }
 
   /**
-   * Restaura la posición de scroll guardada
-   * @param {Object} options - Opciones adicionales
-   * @returns {Promise<Object>} Resultado de la operación
+   * Restores the saved scroll position
+   * @param {Object} options - Additional options
+   * @returns {Promise<Object>} Result of the operation
    */
   async restorePosition(options = {}) {
     const container = this._getScrollContainer();
     if (!container) {
-      console.error('[ScrollManager] No se encontró contenedor de scroll');
+      console.error('[ScrollManager] Scroll container not found');
       return { success: false, error: 'No scroll container found' };
     }
 
-    // Fusionar opciones
+    // Merge options
     const scrollOptions = { ...this.options, ...options };
     this.state.isScrolling = true;
     this.state.scrollDirection = 'down';
     
-    // MEJORA: Si estamos restaurando posición en un hilo nuevo, 
-    // verificar si queremos ir al final de la conversación
+    // IMPROVEMENT: If restoring position in a new thread,
+    // check if we want to go to the end of the conversation
     const goToBottom = options.scrollToBottom === true || 
                       (this.state.originalPosition === null && options.scrollToBottom !== false);
     
     if (goToBottom) {
-      console.log(`[ScrollManager] Haciendo scroll al final de la conversación`);
+      console.log(`[ScrollManager] Scrolling to the end of the conversation`);
       container.scrollTop = container.scrollHeight;
       await new Promise(resolve => setTimeout(resolve, 100));
       return { success: true, scrolledToBottom: true };
     }
     
     if (this.state.originalPosition === null) {
-      console.error('[ScrollManager] No se puede restaurar posición original (null)');
+      console.error('[ScrollManager] Cannot restore original position (null)');
       return { success: false, error: 'Cannot restore position, original position is null' };
     }
     
-    console.log(`[ScrollManager] Restaurando posición a ${this.state.originalPosition}`);
+    console.log(`[ScrollManager] Restoring position to ${this.state.originalPosition}`);
     
     try {
-      // Si scroll suave está activado, hacerlo en pasos
+      // If smooth scroll is enabled, do it in steps
       if (scrollOptions.smoothScrollToPosition) {
         const currentPosition = container.scrollTop;
         const targetPosition = this.state.originalPosition;
         const distance = targetPosition - currentPosition;
-        const steps = 15; // Número de pasos para el scroll suave
+        const steps = 15; // Number of steps for smooth scroll
         
         for (let i = 1; i <= steps; i++) {
           const nextPosition = currentPosition + (distance * i / steps);
@@ -197,11 +197,11 @@ class ScrollManager {
           await new Promise(resolve => setTimeout(resolve, 15));
         }
       } else {
-        // Scroll instantáneo
+        // Instant scroll
         container.scrollTop = this.state.originalPosition;
       }
       
-      // MEJORA: Verificar que realmente llegamos a la posición deseada
+      // IMPROVEMENT: Verify that we actually reached the desired position
       await new Promise(resolve => setTimeout(resolve, 100));
       const finalPosition = container.scrollTop;
       const targetReached = Math.abs(finalPosition - this.state.originalPosition) < 50;
@@ -219,7 +219,7 @@ class ScrollManager {
         targetReached
       };
     } catch (error) {
-      console.error('[ScrollManager] Error restaurando posición:', error);
+      console.error('[ScrollManager] Error restoring position:', error);
       return { success: false, error: error.message };
     } finally {
       this.state.isScrolling = false;
@@ -228,10 +228,10 @@ class ScrollManager {
   }
 
   /**
-   * Realiza scroll hasta un mensaje específico (por ID o elemento)
-   * @param {string|HTMLElement} messageTarget - ID del mensaje o elemento
-   * @param {Object} options - Opciones adicionales
-   * @returns {Promise<Object>} Resultado de la operación
+   * Scrolls to a specific message (by ID or element)
+   * @param {string|HTMLElement} messageTarget - Message ID or element
+   * @param {Object} options - Additional options
+   * @returns {Promise<Object>} Result of the operation
    */
   async scrollToMessage(messageTarget, options = {}) {
     const container = this._getScrollContainer();
@@ -239,45 +239,45 @@ class ScrollManager {
       return { success: false, error: 'No scroll container found' };
     }
     
-    // Guardar posición original
+    // Save original position
     this.state.originalPosition = container.scrollTop;
     this.state.isScrolling = true;
     
-    // Fusionar opciones
+    // Merge options
     const scrollOptions = { ...this.options, ...options };
     
     try {
       let targetElement;
       
-      // Determinar el elemento target
+      // Determine the target element
       if (typeof messageTarget === 'string') {
-        // Es un ID de mensaje, buscar el elemento
+        // It's a message ID, find the element
         targetElement = document.querySelector(`[data-message-id="${messageTarget}"], [id="${messageTarget}"]`);
       } else if (messageTarget instanceof HTMLElement) {
-        // Ya es un elemento HTML
+        // It's already an HTML element
         targetElement = messageTarget;
       }
       
       if (!targetElement) {
-        console.log(`[ScrollManager] Mensaje target no encontrado, buscando por scroll...`);
+        console.log(`[ScrollManager] Target message not found, searching by scroll...`);
         
-        // Si no se encontró el elemento, hacer scroll iterativo para buscar
+        // If the element was not found, perform iterative scroll to search
         const result = await this._searchMessageByScroll(messageTarget, scrollOptions);
         return result;
       }
       
-      // Notificar inicio de scroll
+      // Notify scroll start
       this._notifyEvent('beforeScroll', { direction: 'to-message', messageTarget });
       
-      console.log(`[ScrollManager] Scroll a mensaje específico`);
+      console.log(`[ScrollManager] Scrolling to specific message`);
       
-      // Hacer scroll al elemento
+      // Scroll to the element
       targetElement.scrollIntoView({
         behavior: scrollOptions.smoothScrollToPosition ? 'smooth' : 'auto',
         block: 'center'
       });
       
-      // Esperar a que termine el scroll
+      // Wait for the scroll to finish
       await new Promise(resolve => setTimeout(resolve, 300));
       
       this._notifyEvent('scrollToMessage', {
@@ -288,7 +288,7 @@ class ScrollManager {
       
       return { success: true, found: true };
     } catch (error) {
-      console.error('[ScrollManager] Error en scrollToMessage:', error);
+      console.error('[ScrollManager] Error in scrollToMessage:', error);
       return { success: false, error: error.message };
     } finally {
       this.state.isScrolling = false;
@@ -297,10 +297,10 @@ class ScrollManager {
   }
 
   /**
-   * Busca un mensaje haciendo scroll progresivo
-   * @param {string} messageId - ID del mensaje a buscar
-   * @param {Object} options - Opciones de scroll
-   * @returns {Promise<Object>} Resultado de la búsqueda
+   * Searches for a message by progressive scrolling
+   * @param {string} messageId - ID of the message to search for
+   * @param {Object} options - Scroll options
+   * @returns {Promise<Object>} Search result
    * @private
    */
   async _searchMessageByScroll(messageId, options) {
@@ -310,26 +310,26 @@ class ScrollManager {
     this.state.consecutiveNoChange = 0;
     this.state.lastScrollHeight = container.scrollHeight;
     
-    // Empezar con scroll hacia arriba
+    // Start by scrolling up
     while (this.state.scrollAttempts < options.maxAttempts) {
       this.state.scrollAttempts++;
       const prevScrollHeight = this.state.lastScrollHeight;
       
-      // Hacer scroll hacia arriba en incrementos
+      // Scroll up in increments
       container.scrollTop = container.scrollTop - (container.clientHeight * 0.2);
       
-      // Esperar para que carguen mensajes
+      // Wait for messages to load
       await new Promise(resolve => setTimeout(resolve, options.scrollPauseMs));
       
-      // Verificar cambios
+      // Check for changes
       const currentScrollHeight = container.scrollHeight;
       
-      // Buscar el mensaje después de cada scroll
+      // Search for the message after each scroll
       const targetElement = document.querySelector(`[data-message-id="${messageId}"], [id="${messageId}"]`);
       if (targetElement) {
-        console.log(`[ScrollManager] Mensaje encontrado después de ${this.state.scrollAttempts} intentos`);
+        console.log(`[ScrollManager] Message found after ${this.state.scrollAttempts} attempts`);
         
-        // Hacer scroll al elemento
+        // Scroll to the element
         targetElement.scrollIntoView({
           behavior: options.smoothScrollToPosition ? 'smooth' : 'auto',
           block: 'center'
@@ -345,7 +345,7 @@ class ScrollManager {
         return { success: true, found: true, attempts: this.state.scrollAttempts };
       }
       
-      // Notificar durante el scroll
+      // Notify during scroll
       if (options.onScroll && typeof options.onScroll === 'function') {
         options.onScroll({
           attempt: this.state.scrollAttempts,
@@ -364,10 +364,10 @@ class ScrollManager {
         searching: true
       });
       
-      // Detectar fin del scroll
+      // Detect end of scroll
       if (container.scrollTop <= 0 || 
           (prevScrollHeight === currentScrollHeight && this.state.consecutiveNoChange >= 2)) {
-        console.log('[ScrollManager] Llegamos al límite de scroll sin encontrar el mensaje');
+        console.log('[ScrollManager] Reached scroll limit without finding the message');
         break;
       }
       
@@ -380,7 +380,7 @@ class ScrollManager {
       this.state.lastScrollHeight = currentScrollHeight;
     }
     
-    console.log(`[ScrollManager] Mensaje no encontrado después de ${this.state.scrollAttempts} intentos`);
+    console.log(`[ScrollManager] Message not found after ${this.state.scrollAttempts} attempts`);
     
     this._notifyEvent('scrollToMessage', {
       success: true,
@@ -393,12 +393,12 @@ class ScrollManager {
   }
 
   /**
-   * Obtiene el contenedor de scroll
-   * @returns {HTMLElement|null} Elemento contenedor de scroll
+   * Gets the scroll container
+   * @returns {HTMLElement|null} Scroll container element
    * @private
    */
   _getScrollContainer() {
-    // Intentar múltiples selectores
+    // Try multiple selectors
     const selectors = Array.isArray(this.SCROLL_CONTAINER_SELECTOR) 
       ? this.SCROLL_CONTAINER_SELECTOR 
       : this.SCROLL_CONTAINER_SELECTOR.split(',').map(s => s.trim());
@@ -408,14 +408,14 @@ class ScrollManager {
       if (element) return element;
     }
     
-    // Fallback: buscar cualquier contenedor con overflow-y: auto
+    // Fallback: search for any container with overflow-y: auto
     return document.querySelector('div[style*="overflow-y: auto"]');
   }
 
   /**
-   * Notifica un evento a los listeners registrados
-   * @param {string} eventName - Nombre del evento
-   * @param {Object} data - Datos del evento
+   * Notifies an event to registered listeners
+   * @param {string} eventName - Name of the event
+   * @param {Object} data - Event data
    * @private
    */
   _notifyEvent(eventName, data = {}) {
@@ -424,17 +424,17 @@ class ScrollManager {
         try {
           callback(data);
         } catch (error) {
-          console.error(`[ScrollManager] Error en listener de ${eventName}:`, error);
+          console.error(`[ScrollManager] Error in listener for ${eventName}:`, error);
         }
       });
     }
   }
 
   /**
-   * Añade un listener para un evento específico
-   * @param {string} eventName - Nombre del evento
-   * @param {Function} callback - Función a ejecutar
-   * @returns {Function} Función para remover el listener
+   * Adds a listener for a specific event
+   * @param {string} eventName - Name of the event
+   * @param {Function} callback - Function to execute
+   * @returns {Function} Function to remove the listener
    */
   on(eventName, callback) {
     if (!this.eventListeners[eventName]) {
@@ -443,14 +443,14 @@ class ScrollManager {
     
     this.eventListeners[eventName].push(callback);
     
-    // Devolver función para eliminar listener
+    // Return function to remove listener
     return () => this.off(eventName, callback);
   }
 
   /**
-   * Elimina un listener específico
-   * @param {string} eventName - Nombre del evento
-   * @param {Function} callback - Función a eliminar
+   * Removes a specific listener
+   * @param {string} eventName - Name of the event
+   * @param {Function} callback - Function to remove
    */
   off(eventName, callback) {
     if (!this.eventListeners[eventName]) return;

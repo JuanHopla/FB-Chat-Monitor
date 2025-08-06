@@ -1079,7 +1079,7 @@ function attachEventHandlers() {
         window.FBChatMonitor.changeOperationMode('auto');
         window.FBChatMonitor.toggleMonitoring(true);
       } else {
-        logger.error('FBChatMonitor no disponible');
+        logger.error('FBChatMonitor not available');
       }
       if (genBtn) genBtn.setAttribute('disabled', ''); // Disable button in auto mode
     } else {
@@ -1088,7 +1088,7 @@ function attachEventHandlers() {
         window.FBChatMonitor.changeOperationMode('manual');
         window.FBChatMonitor.toggleMonitoring(false);
       } else {
-        logger.error('FBChatMonitor no disponible');
+        logger.error('FBChatMonitor not available');
       }
       if (genBtn) genBtn.removeAttribute('disabled'); // Enable button in manual mode
     }
@@ -1286,18 +1286,18 @@ async function refreshAssistantsList() {
 }
 
 /**
- * Pobla los selects de asistentes usando los datos almacenados en Tampermonkey.
- * Esto permite mostrar los asistentes seleccionados previamente al recargar la página,
- * sin depender de la API ni del botón "Refresh Assistants".
+ * Populates the assistant selects using the data stored in Tampermonkey.
+ * This allows showing the previously selected assistants when reloading the page,
+ * without depending on the API or the "Refresh Assistants" button.
  */
 function populateAssistantsFromStorage() {
   try {
-    // Obtener los selects
+    // Get the selects
     const sellerSelect = document.getElementById('fb-chat-monitor-seller-assistant');
     const buyerSelect = document.getElementById('fb-chat-monitor-buyer-assistant');
     if (!sellerSelect || !buyerSelect) return;
 
-    // Leer los asistentes desde el storage de Tampermonkey
+    // Read the assistants from Tampermonkey storage
     let assistants = null;
     if (typeof GM_getValue === 'function') {
       assistants = GM_getValue('FB_CHAT_MONITOR_FB_CHAT_ASSISTANTS', null);
@@ -1310,7 +1310,7 @@ function populateAssistantsFromStorage() {
     }
     if (!assistants) return;
 
-    // Limpiar selects
+    // Clear selects
     sellerSelect.innerHTML = '';
     buyerSelect.innerHTML = '';
 
@@ -1336,12 +1336,12 @@ function populateAssistantsFromStorage() {
       buyerSelect.innerHTML = '<option value="">Select an assistant</option>';
     }
 
-    // --- NUEVO: Actualizar la configuración global para que el sistema detecte los asistentes ---
+    // --- NEW: Update the global configuration so the system detects the assistants ---
     if (window.CONFIG && window.CONFIG.AI && window.CONFIG.AI.assistants) {
       window.CONFIG.AI.assistants.seller = { ...window.CONFIG.AI.assistants.seller, ...assistants.seller };
       window.CONFIG.AI.assistants.buyer = { ...window.CONFIG.AI.assistants.buyer, ...assistants.buyer };
     }
-    // Si tienes otra referencia global (window.CONFIG.assistants), también actualízala:
+    // If you have another global reference (window.CONFIG.assistants), update it too:
     if (window.CONFIG && window.CONFIG.assistants) {
       window.CONFIG.assistants.seller = { ...window.CONFIG.assistants.seller, ...assistants.seller };
       window.CONFIG.assistants.buyer = { ...window.CONFIG.assistants.buyer, ...assistants.buyer };
@@ -1361,7 +1361,7 @@ function saveConfig() {
   }
 
   try {
-    // Guardar configuración de intervalos de escaneo
+    // Save scan interval configuration
     const scanInterval = document.getElementById('fb-chat-monitor-scan-interval');
     if (scanInterval && scanInterval.value) {
       const interval = parseInt(scanInterval.value, 10) * 1000;
@@ -1371,16 +1371,16 @@ function saveConfig() {
       }
     }
 
-    // NUEVO: Guardar la configuración de calidad de imagen
+    // NEW: Save image quality configuration
     const imageQualitySelect = document.getElementById('fb-chat-monitor-image-quality');
     if (imageQualitySelect) {
       const quality = imageQualitySelect.value;
       if (quality && ['high', 'medium', 'low'].includes(quality)) {
-        // Usamos la función específica de CONFIG para garantizar que se guarde correctamente
+        // We use the specific CONFIG function to ensure it is saved correctly
         if (window.CONFIG.saveImageQuality) {
           window.CONFIG.saveImageQuality(quality);
         } else {
-          // Método alternativo si no existe la función específica
+          // Alternative method if the specific function does not exist
           if (!window.CONFIG.images) window.CONFIG.images = {};
           window.CONFIG.images.quality = quality;
           GM_setValue('FB_CHAT_IMAGE_QUALITY', quality);
@@ -1389,7 +1389,7 @@ function saveConfig() {
       }
     }
 
-    // Guardar el modo de operación
+    // Save the operation mode
     GM_setValue('CONFIG_operationMode', window.CONFIG.operationMode || 'manual');
     GM_setValue('CONFIG_autoSendMessages', window.CONFIG.autoSendMessages || false);
 
@@ -1398,7 +1398,7 @@ function saveConfig() {
       GM_setValue('CONFIG_AI_apiKey', window.CONFIG.AI.apiKey);
     }
 
-    // Mostrar mensaje de confirmación
+    // Show confirmation message
     showSimpleAlert('Configuration saved successfully', 'success');
     logger.log('Configuration saved to persistent storage');
   } catch (error) {
@@ -1417,12 +1417,12 @@ function loadConfig() {
   }
 
   try {
-    // Cargar configuración anterior
+    // Load previous configuration
     window.CONFIG.operationMode = GM_getValue('CONFIG_operationMode', 'manual');
     window.CONFIG.autoSendMessages = GM_getValue('CONFIG_autoSendMessages', false);
     window.CONFIG.scanInterval = GM_getValue('CONFIG_scanInterval', 30000);
 
-    // NUEVO: Cargar configuración de calidad de imagen
+    // NEW: Load image quality configuration
     const savedQuality = GM_getValue('FB_CHAT_IMAGE_QUALITY', 'high');
     if (savedQuality && ['high', 'medium', 'low'].includes(savedQuality)) {
       if (!window.CONFIG.images) window.CONFIG.images = {};
@@ -1435,7 +1435,7 @@ function loadConfig() {
 
     logger.log('Configuration loaded from persistent storage');
 
-    // Actualizar la UI con la configuración cargada
+    // Update the UI with the loaded configuration
     updateUIWithLoadedConfig();
   } catch (error) {
     logger.error(`Error loading configuration: ${error.message}`);
@@ -1446,16 +1446,16 @@ function loadConfig() {
  * Updates the UI with the loaded configuration
  */
 function updateUIWithLoadedConfig() {
-  // Actualizar el modo de operación en la UI
+  // Update the operation mode in the UI
   updateUIForConfigChange('operationMode', window.CONFIG.operationMode);
 
-  // Actualizar el intervalo de escaneo
+  // Update the scan interval
   const scanIntervalInput = document.getElementById('fb-chat-monitor-scan-interval');
   if (scanIntervalInput && window.CONFIG.scanInterval) {
     scanIntervalInput.value = Math.floor(window.CONFIG.scanInterval / 1000);
   }
 
-  // NUEVO: Actualizar el selector de calidad de imagen
+  // NEW: Update the image quality selector
   const imageQualitySelect = document.getElementById('fb-chat-monitor-image-quality');
   if (imageQualitySelect && window.CONFIG.images && window.CONFIG.images.quality) {
     const options = imageQualitySelect.options;
@@ -1577,7 +1577,6 @@ function formatDateTime(timestamp) {
     minute: '2-digit'
   });
 }
-
 /**
  * Refresh conversation history display
  */
@@ -1585,7 +1584,7 @@ function refreshHistory() {
   try {
     const historyList = document.getElementById('fb-chat-monitor-history-list');
 
-    // Obtener historial
+    // Get history
     const history = getConversationHistory();
 
     if (!history || history.length === 0) {
@@ -1593,78 +1592,78 @@ function refreshHistory() {
       return;
     }
 
-    // Renderizar historial
+    // Render history
     historyList.innerHTML = '';
     history.slice(0, 50).forEach(item => {
       const row = document.createElement('tr');
 
-      // Columna de tiempo
+      // Time column
       const timeCell = document.createElement('td');
       const date = new Date(item.timestamp);
-      // Mostrar fecha y hora completas con formato adecuado
+      // Show full date and time with appropriate formatting
       timeCell.textContent = formatDateTime(item.timestamp);
 
-      // Columna de modo (Auto/Manual)
+      // Mode column (Auto/Manual)
       const modeCell = document.createElement('td');
       const modeBadge = document.createElement('span');
       modeBadge.textContent = item.mode === 'auto' ? 'Auto' : 'Manual';
       modeBadge.className = `fb-chat-monitor-badge fb-chat-monitor-badge-${item.mode}`;
       modeCell.appendChild(modeBadge);
 
-      // Columna de contenido con la respuesta generada y evento de clic para redirección
+      // Content column with the generated response and click event for redirection
       const contentCell = document.createElement('td');
-      contentCell.style.cursor = 'pointer'; // Indicar que es clickeable
+      contentCell.style.cursor = 'pointer'; // Indicate that it is clickable
 
-      // Usar la respuesta generada
+      // Use the generated response
       const content = item.response || 'No response';
       contentCell.textContent = content.substring(0, 30) + (content.length > 30 ? '...' : '');
-      contentCell.style.color = '#2196F3'; // Color azul para indicar que es clickeable
+      contentCell.style.color = '#2196F3'; // Blue color to indicate that it is clickable
 
-      // Añadir evento de clic para redireccionar al chat
+      // Add click event to redirect to the chat
       if (item.context && item.context.chatId) {
         contentCell.addEventListener('click', () => {
           try {
-            // Buscar el chat en la lista de chats por ID
+            // Search for the chat in the chat list by ID
             const chatId = item.context.chatId;
 
-            // Buscar el elemento del chat en la lista de chats
+            // Search for the chat element in the chat list
             const chatElement = findChatElementById(chatId);
 
             if (chatElement) {
-              // Desplazar para que sea visible
+              // Scroll to make it visible
               chatElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-              // Notificar al usuario
-              showSimpleAlert('Abriendo chat...', 'info');
+              // Notify the user
+              showSimpleAlert('Opening chat...', 'info');
 
-              // Esperar un momento y hacer clic
+              // Wait a moment and click
               setTimeout(() => {
                 chatElement.click();
               }, 500);
             } else {
-              // Fallback: si no encontramos el elemento, usar navegación directa
-              // pero advertir al usuario que se refrescará la página
-              if (confirm('No se encuentra el chat en la lista actual. ¿Deseas navegar directamente? (Esto refrescará la página)')) {
+              // Fallback: if we don't find the element, use direct navigation
+              // but warn the user that the page will be refreshed
+              if (confirm('Chat not found in the current list. Do you want to navigate directly? (This will refresh the page)')) {
                 const chatUrl = `https://www.facebook.com/messages/t/${chatId}/`;
                 window.location.href = chatUrl;
               }
             }
           } catch (e) {
-            showSimpleAlert('No se pudo navegar al chat: ' + e.message, 'error');
+            showSimpleAlert('Could not navigate to chat: ' + e.message, 'error');
           }
         });
 
-        // Tooltip para indicar la acción
-        contentCell.title = 'Clic para abrir esta conversación';
+        // Tooltip to indicate the action
+        contentCell.title = 'Click to open this conversation';
       }
 
-      // Columna de rol de chat (en lugar de contacto)
+      // Chat role column (instead of contact)
       const roleCell = document.createElement('td');
 
-      // Determinar el rol en el chat
+      // Determine the role in the chat
       let role = 'Unknown';
       if (item.context && item.context.role) {
-        // Mostrar el rol con formato visual
+        // Show the role with visual formatting
         const roleBadge = document.createElement('span');
         roleBadge.textContent = item.context.role === 'seller' ? 'Seller' : 'Buyer';
         roleBadge.className = `fb-chat-monitor-badge fb-chat-monitor-badge-${item.context.role === 'seller' ? 'seller' : 'buyer'}`;
@@ -1673,7 +1672,7 @@ function refreshHistory() {
         roleCell.textContent = role;
       }
 
-      // Añadir celdas a la fila
+      // Add cells to the row
       row.appendChild(timeCell);
       row.appendChild(modeCell);
       row.appendChild(contentCell);
@@ -1688,39 +1687,39 @@ function refreshHistory() {
 }
 
 /**
- * Busca un elemento de chat por ID en la lista de chats
- * @param {string} chatId - ID del chat a buscar
- * @returns {HTMLElement|null} - Elemento del chat o null si no se encuentra
+ * Searches for a chat element by ID in the chat list
+ * @param {string} chatId - ID of the chat to search for
+ * @returns {HTMLElement|null} - Chat element or null if not found
  */
 function findChatElementById(chatId) {
   try {
-    // Buscar en la lista de chats usando los selectores de configuración
+    // Search in the chat list using the configuration selectors
     const chatContainer = domUtils.findElement(CONFIG.selectors.chatList.container);
     if (!chatContainer) return null;
 
-    // Obtener todos los elementos de chat
+    // Get all chat elements
     const chatItems = domUtils.findAllElements(CONFIG.selectors.chatList.chatItem, chatContainer);
 
-    // Buscar el chat con el ID correspondiente
+    // Search for the chat with the corresponding ID
     for (const chatItem of chatItems) {
       const href = chatItem.getAttribute('href');
       if (href && href.includes(`/marketplace/t/${chatId}/`)) {
         return chatItem;
       }
 
-      // Buscar también en enlaces secundarios
+      // Search also in secondary links
       const childLinks = chatItem.querySelectorAll('a[href*="/marketplace/t/"]');
       for (const link of childLinks) {
         const childHref = link.getAttribute('href');
         if (childHref && childHref.includes(`/marketplace/t/${chatId}/`)) {
-          return chatItem; // Devuelve el elemento padre del chat
+          return chatItem; // Returns the parent element of the chat
         }
       }
     }
 
-    return null; // No se encontró
+    return null; // Not found
   } catch (error) {
-    console.error('Error buscando chat por ID:', error);
+    console.error('Error searching chat by ID:', error);
     return null;
   }
 }

@@ -47,11 +47,11 @@ class ThreadStore {
    * @returns {Object|null} Thread info or null if not found
    */
   getThreadInfo(fbThreadId, forceReload = false) {
-    console.log(`[ThreadStore][DEBUG] Buscando info para thread: ${fbThreadId}`);
+    console.log(`[ThreadStore][DEBUG] Looking for info for thread: ${fbThreadId}`);
     
-    // Si se solicita forzar recarga o el store no está inicializado, cargar desde storage
+    // If forced reload is requested or the store is not initialized, load from storage
     if (forceReload || !this.initialized) {
-      //console.log(`[ThreadStore][DEBUG] ${forceReload ? 'Forzando recarga' : 'Store no inicializado'}, cargando desde storage`);
+      //console.log(`[ThreadStore][DEBUG] ${forceReload ? 'Forcing reload' : 'Store not initialized'}, loading from storage`);
       this.loadThreads();
     }
     
@@ -59,11 +59,11 @@ class ThreadStore {
     
     // Update last accessed time if found
     if (threadInfo) {
-      console.log(`[ThreadStore][DEBUG] Thread encontrado: ${JSON.stringify(threadInfo)}`);
+      console.log(`[ThreadStore][DEBUG] Thread found: ${JSON.stringify(threadInfo)}`);
       threadInfo.lastAccessed = Date.now();
       this.threads.set(fbThreadId, threadInfo);
     } else {
-      console.log(`[ThreadStore][DEBUG] Thread no encontrado: ${fbThreadId}`);
+      console.log(`[ThreadStore][DEBUG] Thread not found: ${fbThreadId}`);
     }
     
     return threadInfo || null;
@@ -77,7 +77,7 @@ class ThreadStore {
    * @returns {Object} Thread info
    */
   createThreadInfo(fbThreadId, openaiThreadId, chatRole) {
-    console.log(`[ThreadStore][DEBUG] Creando nuevo thread info: ${fbThreadId} -> ${openaiThreadId}, role: ${chatRole}`);
+    console.log(`[ThreadStore][DEBUG] Creating new thread info: ${fbThreadId} -> ${openaiThreadId}, role: ${chatRole}`);
     const threadInfo = {
       openaiThreadId,
       chatRole,
@@ -88,7 +88,7 @@ class ThreadStore {
     
     this.threads.set(fbThreadId, threadInfo);
     this.saveThreads();
-    console.log(`[ThreadStore][DEBUG] Thread info creado y guardado`);
+    console.log(`[ThreadStore][DEBUG] Thread info created and saved`);
     
     return threadInfo;
   }
@@ -101,11 +101,11 @@ class ThreadStore {
    * @returns {boolean} Success status
    */
   updateLastMessage(fbThreadId, lastMessageId, timestamp = Date.now()) {
-    console.log(`[ThreadStore][DEBUG] Actualizando lastMessageId para ${fbThreadId}: ${lastMessageId}`);
+    console.log(`[ThreadStore][DEBUG] Updating lastMessageId for ${fbThreadId}: ${lastMessageId}`);
     const threadInfo = this.threads.get(fbThreadId);
     
     if (!threadInfo) {
-      console.log(`[ThreadStore][WARN] Thread info no encontrado para ${fbThreadId}, no se puede actualizar`);
+      console.log(`[ThreadStore][WARN] Thread info not found for ${fbThreadId}, cannot update`);
       logger.warn(`Thread info not found for ${fbThreadId}`);
       return false;
     }
@@ -114,7 +114,7 @@ class ThreadStore {
     threadInfo.lastAccessed = timestamp;
     this.threads.set(fbThreadId, threadInfo);
     this.saveThreads();
-    console.log(`[ThreadStore][DEBUG] lastMessageId actualizado`);
+    console.log(`[ThreadStore][DEBUG] lastMessageId updated`);
     
     return true;
   }
