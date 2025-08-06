@@ -68,7 +68,7 @@ class AssistantHandler {
      * @param {Object} productData - Product information
      * @returns {Promise<string>} Generated response
      */
-  async generateResponse(fbThreadId, allMessages, chatRole, productData) {
+  async generateResponse(fbThreadId, allMessages, chatRole, productData, options = {}) {
     // Ensure initialized
     if (!this.initialized) {
       await this.initialize();
@@ -81,16 +81,16 @@ class AssistantHandler {
     // Validate and set default chatRole if needed
     if (chatRole !== 'seller' && chatRole !== 'buyer') {
       if (window.logManager) {
-        window.logManager.step(window.logManager.phases.GENERATION, 'VALIDATE', 
-          `Rol inválido: ${chatRole}, usando seller por defecto`);
+        window.logManager.step(window.logManager.phases.GENERATION, 'WARNING',
+          `Rol no válido: ${chatRole}, usando 'seller' como predeterminado`);
       } else {
-        logger.warn(`Invalid chat role: ${chatRole}, defaulting to seller`);
+        console.warn(`Invalid chat role: ${chatRole}, defaulting to 'seller'`);
       }
       chatRole = 'seller';
     }
 
     if (window.logManager) {
-      window.logManager.phase(window.logManager.phases.GENERATION, 
+      window.logManager.phase(window.logManager.phases.GENERATION,
         `Generando respuesta para conversación ${fbThreadId} como ${chatRole}`);
     } else {
       console.log(`Generating response for thread ${fbThreadId} as ${chatRole}`);
@@ -110,20 +110,24 @@ class AssistantHandler {
       // Choose appropriate flow
       if (!threadInfo) {
         if (window.logManager) {
-          window.logManager.step('GENERATION', 'FLOW', 'Flujo de nuevo hilo seleccionado');
+          window.logManager.step(window.logManager.phases.GENERATION, 'FLOW',
+            'Flujo de hilo nuevo seleccionado');
         }
         return await this.handleNewThread(fbThreadId, allMessages, chatRole, productData);
       } else {
         if (window.logManager) {
-          window.logManager.step('GENERATION', 'FLOW', 'Flujo de hilo existente seleccionado');
+          window.logManager.step(window.logManager.phases.GENERATION, 'FLOW',
+            'Flujo de hilo existente seleccionado');
         }
-        return await this.handleExistingThread(fbThreadId, allMessages, chatRole, threadInfo);
+        // MODIFICADO: Pasar las opciones a handleExistingThread
+        return await this.handleExistingThread(fbThreadId, allMessages, chatRole, threadInfo, options);
       }
     } catch (error) {
       if (window.logManager) {
-        window.logManager.phase('GENERATION', 'ERROR', `Error generando respuesta: ${error.message}`, error);
+        window.logManager.step(window.logManager.phases.GENERATION, 'ERROR',
+          `Error al generar respuesta: ${error.message}`, error);
       } else {
-        logger.error(`Error generating response: ${error.message}`, {}, error);
+        console.error(`[AssistantHandler] Error generating response: ${error.message}`);
       }
       throw error;
     }
@@ -304,7 +308,7 @@ class AssistantHandler {
    * @returns {Promise<string>} Generated response
    * @private
    */
-  async handleExistingThread(fbThreadId, allMessages, chatRole, threadInfo) {
+  async handleExistingThread(fbThreadId, allMessages, chatRole, threadInfo, options = {}) {
     console.log(`[AssistantHandler][DEBUG] handleExistingThread - fbThreadId: ${fbThreadId}, messages: ${allMessages.length}, role: ${chatRole}`);
     const { openaiThreadId, lastMessageId } = threadInfo;
 
@@ -317,84 +321,64 @@ class AssistantHandler {
     const newMessages = window.messagePreprocessor.getNewMessagesSinceNoFormat(allMessages, lastMessageId);
     console.log(`[AssistantHandler][DEBUG] Encontrados ${newMessages.length} mensajes nuevos desde el preprocesador.`);
 
-    let actionTaken = false;
     const hasTrulyNewMessages = newMessages.length > 0 && newMessages[0].id !== lastMessageId;
+    // NUEVO: fuerza la generación de una nueva respuesta (regeneración)
+    const isRegenerationRequest = options.forceNewGeneration === true;
 
-    if (hasTrulyNewMessages) {
-      // --- ACTION A: Respond to new user messages ---
-      console.log(`[AssistantHandler] Se encontraron ${newMessages.length} mensajes nuevos del usuario. Procesando para responder.`);
+    let actionTaken = false;
 
-      // NUEVO: Verificar si hay mensajes de audio que necesitan transcripción
-      const audioMessages = newMessages.filter(m => m.content?.hasAudio);
-      if (audioMessages.length > 0) {
-        console.log(`[AssistantHandler][DEBUG] Se encontraron ${audioMessages.length} mensajes de audio entre los nuevos mensajes`);
+    if (hasTrulyNewMessages || isRegenerationRequest) {
+      // --- ACTION A: Responder a nuevos mensajes o regenerar respuesta ---
+      if (isRegenerationRequest) {
+        console.log('[AssistantHandler] El usuario solicitó generar una respuesta alternativa.');
+      } else {
+        console.log(`[AssistantHandler] Se encontraron ${newMessages.length} mensajes nuevos del usuario. Procesando para responder.`);
+      }
 
-        // NUEVO: Esperar explícitamente por transcripciones pendientes
-        if (window.audioTranscriber && window.audioTranscriber.pendingTranscriptions.size > 0) {
-          const pendingCount = window.audioTranscriber.pendingTranscriptions.size;
+      // (Reusar lógica de transcripciones y preprocesamiento)
+      const msgsToProcess = isRegenerationRequest ? newMessages.slice(-1) : newMessages;
+      // Esperar transcripciones si hay mensajes de audio
+      const audioMessages = msgsToProcess.filter(m => m.content?.hasAudio);
+      if (audioMessages.length && window.audioTranscriber) {
+        const pendingCount = window.audioTranscriber.pendingTranscriptions.size;
+        if (pendingCount > 0) {
           console.log(`[AssistantHandler][DEBUG] Esperando por ${pendingCount} transcripciones pendientes...`);
-
-          // Esperar hasta 5 segundos para transcripciones pendientes
-          const maxWaitTime = 5000;
-          const startTime = Date.now();
-
-          while (Date.now() - startTime < maxWaitTime && window.audioTranscriber.pendingTranscriptions.size > 0) {
-            await new Promise(resolve => setTimeout(resolve, 500)); // Esperar 500ms entre verificaciones
-
-            // Verificar cuántas siguen pendientes
-            const currentPending = window.audioTranscriber.pendingTranscriptions.size;
-            if (currentPending < pendingCount) {
-              console.log(`[AssistantHandler][DEBUG] Progreso: ${pendingCount - currentPending} transcripciones completadas, ${currentPending} pendientes`);
-            }
+          const start = Date.now();
+          const maxWait = 5000;
+          while (Date.now() - start < maxWait && window.audioTranscriber.pendingTranscriptions.size > 0) {
+            await new Promise(r => setTimeout(r, 500));
           }
-
-          // Si después de esperar todavía hay pendientes, ejecutar asociación FIFO
           if (window.audioTranscriber.pendingTranscriptions.size > 0) {
-            console.log(`[AssistantHandler][DEBUG] Algunas transcripciones siguen pendientes. Aplicando asociación FIFO...`);
-            await window.audioTranscriber.associateTranscriptionsWithMessagesFIFO(newMessages);
-          } else {
-            console.log(`[AssistantHandler][DEBUG] Todas las transcripciones completadas con éxito`);
+            console.log('[AssistantHandler][DEBUG] Aplicando asociación FIFO para transcripciones pendientes');
+            await window.audioTranscriber.associateTranscriptionsWithMessagesFIFO(msgsToProcess);
           }
         }
       }
 
-      const messagesWithTranscriptions = await window.messagePreprocessor.attachTranscriptions(newMessages);
+      const messagesWithTranscriptions = await window.messagePreprocessor.attachTranscriptions(msgsToProcess);
 
-      // NUEVO: Añadir este log completo:
-      console.log('==================== ARRAY COMPLETO DE MENSAJES NUEVOS CON TRANSCRIPCIONES ====================');
-      console.log('[AssistantHandler] [DEBUG] After attachTranscriptions (newMessages):', JSON.parse(JSON.stringify(messagesWithTranscriptions)));
-
-      // NUEVO: Log adicional para visualizar específicamente los mensajes con audio y sus transcripciones
-      const audioMessage = messagesWithTranscriptions.filter(msg => msg.content?.hasAudio);
-      console.log(`[AssistantHandler] [DEBUG] ${audioMessage.length} mensajes nuevos con audio encontrados:`);
-      audioMessage.forEach((msg, idx) => {
-        console.log(`[${idx}] Mensaje ID: ${msg.id}`);
-        console.log(`    - audioUrl: ${msg.content.audioUrl ? 'Disponible' : 'No disponible'}`);
-        console.log(`    - transcripción: ${msg.content.transcribedAudio || 'No disponible'}`);
-        if (msg.content.transcribedAudio) {
-          console.log(`    - texto completo: "${msg.content.transcribedAudio}"`);
-        }
-      });
+      console.log('==================== ARRAY COMPLETO DE MENSAJES PROCESADOS ====================');
+      console.log('[AssistantHandler] [DEBUG] After attachTranscriptions (existing):', JSON.stringify(messagesWithTranscriptions));
       console.log('===================================================================================');
 
       const openAIMessages = await window.messagePreprocessor.formatMessagesForOpenAI(messagesWithTranscriptions);
       const validatedMessages = this.validateMessages(openAIMessages);
 
-      if (validatedMessages.length > 0) {
+      if (validatedMessages.length) {
         actionTaken = true;
-        console.log(`[AssistantHandler][DEBUG] Agregando ${validatedMessages.length} nuevos grupos de mensajes al hilo.`);
+        console.log(`[AssistantHandler][DEBUG] Agregando ${validatedMessages.length} mensajes al hilo ${openaiThreadId}`);
         for (const message of validatedMessages) {
           await window.apiClient.addMessage(openaiThreadId, message);
         }
       } else {
-        console.warn('[AssistantHandler] Los mensajes nuevos estaban vacíos después del formato. No se requiere acción.');
+        console.warn('[AssistantHandler] Después de formatear no hay mensajes válidos. No se agregaron mensajes.');
       }
     } else {
-      // --- ACTION B: User manually requested a follow-up ---
+      // --- ACTION B: Generar follow-up manual ---
       console.log('[AssistantHandler] No hay mensajes nuevos. El usuario ha solicitado un seguimiento manual.');
       if (this._canPerformFollowUp(allMessages)) {
-        console.log('[AssistantHandler] Verificación pasada: Menos de 3 respuestas consecutivas del asistente. Generando seguimiento.');
         actionTaken = true;
+        console.log('[AssistantHandler] Verificación pasada: Menos de 3 respuestas consecutivas del asistente. Generando seguimiento.');
         const followUpInstruction = {
           role: 'user',
           content: '[System Instruction] The user has not responded to your last message. Please generate a brief, friendly follow-up message to re-engage them.'
@@ -411,6 +395,7 @@ class AssistantHandler {
       return '';
     }
 
+    // Crear y esperar el run de OpenAI
     console.log(`[AssistantHandler][DEBUG] Creando run con assistant ${assistantId}`);
     const { runId } = await window.apiClient.createRun(openaiThreadId, assistantId);
     console.log(`[AssistantHandler][DEBUG] Run creado: ${runId}`);
@@ -420,16 +405,14 @@ class AssistantHandler {
     console.log(`[AssistantHandler][DEBUG] Run completado con status: ${runResult.status}`);
 
     if (runResult.status === 'completed' && runResult.output) {
-      if (allMessages.length > 0) {
-        const lastMsg = allMessages[allMessages.length - 1];
-        const messageId = lastMsg.id || window.messagePreprocessor.generateMessageId(lastMsg.content?.text, Date.now());
-        window.threadStore.updateLastMessage(fbThreadId, messageId, Date.now());
-      }
+      const lastMsg = allMessages[allMessages.length - 1];
+      const messageId = lastMsg.id || window.messagePreprocessor.generateMessageId(lastMsg.content?.text, Date.now());
+      window.threadStore.updateLastMessage(fbThreadId, messageId, Date.now());
       return this.processResponse(runResult.output);
     } else {
-      const errorMsg = `Run did not complete: ${runResult.status}. Error: ${runResult.error?.message || 'Unknown'}`;
-      console.log(`[AssistantHandler][ERROR] ${errorMsg}`);
-      throw new Error(errorMsg);
+      const err = `Run did not complete: ${runResult.status}. Error: ${runResult.error?.message || 'Unknown'}`;
+      console.error(`[AssistantHandler][ERROR] ${err}`);
+      throw new Error(err);
     }
   }
 

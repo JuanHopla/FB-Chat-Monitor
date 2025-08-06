@@ -413,33 +413,51 @@ class ChatManager {
    * @returns {Promise<boolean} True if the response was successfully generated
    */
   async generateResponseForCurrentChat() {
-    if (!this.currentChatId) {
-      logger.error('No active chat to generate response');
-      showSimpleAlert('No active chat detected. Please select a chat first.', 'error');
-      return false;
-    }
-
     try {
+      if (this.isResponding) {
+        logger.warn('Already generating a response. Please wait.');
+        return false;
+      }
+      
+      this.isResponding = true;
+      
+      if (!this.currentChatId) {
+        logger.error('No active chat to generate response');
+        showSimpleAlert('No active chat detected. Please select a chat first.', 'error');
+        return false;
+      }
+
       window.logManager.phase(window.logManager.phases.GENERATION, 'Extrayendo datos del chat actual');
       
       // Incrementar el contador de chats procesados en modo manual
       if (window.FBChatMonitor && typeof window.FBChatMonitor.incrementChatsProcessed === 'function') {
         window.FBChatMonitor.incrementChatsProcessed();
       }
-      await this.extractCurrentChatData();
-
-      const chatData = this.chatHistory.get(this.currentChatId);
-      if (!chatData || !chatData.messages || chatData.messages.length === 0) {
-        logger.error('No chat data or messages found');
-        showSimpleAlert('No chat data or messages found.', 'error');
+      
+      // Extract chat data
+      const chatData = await this.extractCurrentChatData();
+      
+      if (!chatData || !chatData.success) {
+        logger.error('Failed to extract chat data for response generation');
+        window.logManager.phase(window.logManager.phases.GENERATION, 'ERROR', 
+          'No se pudieron extraer datos del chat');
         return false;
       }
 
+      // Ensure openaiManager is available
+      if (!window.openaiManager) {
+        logger.error('OpenAI Manager not available');
+        window.logManager.phase(window.logManager.phases.GENERATION, 'ERROR', 
+          'OpenAI Manager no está disponible');
+        return false;
+      }
+      
       const context = {
         chatId: this.currentChatId,
-        role: chatData.isSeller ? 'seller' : 'buyer',
-        messages: chatData.messages,
-        productDetails: chatData.productDetails
+        role: chatData.chatData.isSeller ? 'seller' : 'buyer',
+        messages: chatData.chatData.messages,
+        productDetails: chatData.chatData.productDetails,
+        forceNewGeneration: true // NUEVO: Añadir flag para forzar nueva generación
       };
 
       window.logManager.step(window.logManager.phases.GENERATION, 'CONTEXT_BUILT', 
@@ -448,12 +466,13 @@ class ChatManager {
           chatId: context.chatId,
           role: context.role,
           messageCount: context.messages.length,
-          hasProduct: !!context.productDetails
+          hasProduct: !!context.productDetails,
+          forceNewGeneration: true
         });
 
       // Log before calling openaiManager
       window.logManager.step(window.logManager.phases.GENERATION, 'API_CALL', 
-        'Llamando a openaiManager.generateResponse(context)');
+        'Llamando a openaiManager.generateResponse(context) con forceNewGeneration=true');
         
       const response = await window.openaiManager.generateResponse(context);
 
@@ -483,6 +502,8 @@ class ChatManager {
         
       showSimpleAlert(`Error generating response: ${error.message}`, 'error');
       return false;
+    } finally {
+      this.isResponding = false;
     }
   }
 

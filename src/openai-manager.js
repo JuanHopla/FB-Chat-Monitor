@@ -104,7 +104,7 @@ class OpenAIManager {
 
   /**
    * Orchestrates response generation using AssistantHandler
-   * @param {Object} context {chatId, messages, role, productDetails}
+   * @param {Object} context {chatId, messages, role, productDetails, forceNewGeneration}
    * @returns {Promise<string>}
    */
   async generateResponse(context) {
@@ -114,16 +114,16 @@ class OpenAIManager {
     if (!context || typeof context !== 'object') {
       throw new Error('Invalid context object provided');
     }
+    
+    // NUEVO: Verificar si es una solicitud de regeneración
+    const isRegenerationRequest = context.forceNewGeneration === true;
 
     // Extraer los mensajes, soportando tanto el formato antiguo (array) como el nuevo (objeto)
     let messagesArray;
-
     if (Array.isArray(context.messages)) {
-      // Formato antiguo: context.messages es directamente un array
       messagesArray = context.messages;
       console.log('[OpenAIManager] Detectado formato antiguo de mensajes (array directo)');
     } else if (context.messages && Array.isArray(context.messages.messages)) {
-      // Nuevo formato: context.messages es un objeto {messages: [...], timeBlocks: [...]}
       messagesArray = context.messages.messages;
       console.log('[OpenAIManager] Detectado nuevo formato de mensajes (objeto con messages y timeBlocks)');
     } else {
@@ -140,21 +140,25 @@ class OpenAIManager {
     // Logs originales
     console.log('[OpenAIManager] Step 3.1: Received context for response generation:', {
       ...context,
-      messages: messagesArray // Reemplazar con el array procesado
+      messages: messagesArray
     });
     console.log('[OpenAIManager] Step 3.2: Calling assistantHandler.generateResponse...');
 
-    // Actualizar el contexto con el array procesado
+    // Actualizar el contexto con el array procesado y la flag de regeneración
     const contextToSend = {
       ...context,
-      messages: messagesArray
+      messages: messagesArray,
+      options: {
+        forceNewGeneration: isRegenerationRequest
+      }
     };
 
     const result = await this.assistantHandler.generateResponse(
       contextToSend.chatId,
-      messagesArray,  // Este array ya tiene las transcripciones aplicadas
+      messagesArray,
       contextToSend.role,
-      contextToSend.productDetails
+      contextToSend.productDetails,
+      contextToSend.options
     );
 
     console.log('[OpenAIManager] Step 3.3: assistantHandler.generateResponse completed. Response:', result);

@@ -262,7 +262,7 @@ window.addEventListener('load', () => {
    * to avoid problems with the API key and initialization
    */
   function ensureOpenAIManagerConsistency() {
-    logger.log('Verifying OpenAI Manager consistency...');
+    //logger.log('Verifying OpenAI Manager consistency...');
 
     // If openaiManager does not exist, create it as a backup
     if (!window.openaiManager) {
@@ -320,7 +320,7 @@ window.addEventListener('load', () => {
       window.openaiManager.apiClient.setApiKey(window.openaiManager.apiKey);
     }
     
-    logger.log(`Final state of OpenAI Manager: ${isReady ? 'READY' : 'NOT AVAILABLE'}`);
+    //logger.log(`Final state of OpenAI Manager: ${isReady ? 'READY' : 'NOT AVAILABLE'}`);
   }
 
   // Call the verification function just after initializing services
