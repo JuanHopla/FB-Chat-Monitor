@@ -1111,10 +1111,10 @@ const pageUtils = {
     return url.includes('facebook.com/messages') || url.includes('messenger.com');
   },
   redirectToMarketplace() {
-    if (window.location.href.includes('messenger.com') && !window.location.href.includes('marketplace')) {
+    /*if (window.location.href.includes('messenger.com') && !window.location.href.includes('marketplace')) {
       window.location.href = 'https://www.facebook.com/messages/t/marketplace';
       return true;
-    }
+    }*/
     return false;
   }
 };

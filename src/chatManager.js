@@ -420,6 +420,7 @@ class ChatManager {
       }
 
       this.isResponding = true;
+      showSimpleAlert('Generating Response...', 'info', 10000);
 
       if (!this.currentChatId) {
         logger.error('No active chat to generate response');
@@ -482,6 +483,7 @@ class ChatManager {
         { responsePreview: response?.substring(0, 100) });
 
       if (response && typeof response === 'string' && response.trim()) {
+        showSimpleAlert('Response generated successfully!', 'success', 5000);
         this.insertResponseInInputField(response);
         window.logManager.phase(window.logManager.phases.GENERATION,
           'Response generated and inserted into the input field');
@@ -1921,7 +1923,7 @@ class ChatManager {
       /^Estás esperando tu respuesta sobre este anuncio\.\s*Ver anuncio$/i, // Doubt: Should "Estás esperando tu respuesta sobre este anuncio", "Ver anuncio" be translated?
       /^You're waiting for a response about this listing\.\s*View listing$/i,
       /^Is getting a lot of messages about this listing/i,
-      /^Is waiting for your response about this listing\.\s*View listing$/i,
+      /^Is waiting for your response about this listing\.? View listing$/i,
       /^Beware of common scams using payment apps/i,
       /^[A-Z][a-z]+ is getting a lot of messages about this listing\.? See similar listings$/i,
       /^[A-Z][a-z]+ is waiting for your response about this listing\.? View listing$/i,
@@ -1940,7 +1942,9 @@ class ChatManager {
       /^[A-Za-z]{3,9}\s+\d{1,2},\s+\d{4}(,\s*\d{1,2}:\d{2}\s*(AM|PM)?)?$/i,
 
       // ─── Others ─────────────────────────────────────────────
-      /·\s*.*\s*add name$/i
+      /·\s*.*\s*add name$/i,
+      /^Still interested\? Reply to: Si está disponible View listing$/i,
+      /^Alejandro reduced the price to \$ [\d,]+ for [A-Z]+ [A-Z]+\s+\d{4}\.$/i
     ];
 
     const isSystem = systemPatterns.some(pattern => pattern.test(messageText));

@@ -9,7 +9,7 @@ var CONFIG = {};
  */
 // Initialize properties after creation
 Object.assign(CONFIG, {
-  version: '1.0.0',
+  version: '1.2.2',
   operationMode: 'manual',
 
   // --- REFACTOR: Centralize all AI configuration under the AI object ---

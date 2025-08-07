@@ -599,7 +599,7 @@ function createControlPanel() {
   header.className = 'fb-chat-monitor-panel-header';
 
   const title = document.createElement('h2');
-  title.textContent = `FB Chat Monitor v${CONFIG.version || '1.0'}`;
+  title.textContent = `FB Chat Monitor v${CONFIG.version}`;
 
   const closeButton = document.createElement('button');
   closeButton.className = 'fb-chat-monitor-close';
