@@ -1169,482 +1169,482 @@ class ChatManager {
     return { messages: messages, timeBlocks: timeBlocks };
   }
 
-    /**
-     * Parses a Messenger date string to timestamp and accumulates logs
-     * @param {string} dateText - Date text to parse
-     * @returns {number|null} Timestamp or null if not valid
-     */
-    parseDateString(dateText) {
-      if (!dateText) return null;
+  /**
+   * Parses a Messenger date string to timestamp and accumulates logs
+   * @param {string} dateText - Date text to parse
+   * @returns {number|null} Timestamp or null if not valid
+   */
+  parseDateString(dateText) {
+    if (!dateText) return null;
 
-      // Initialize the logs array if it doesn't exist
-      if (!this.dateParseLogs) {
-        this.dateParseLogs = [];
-      }
-
-      try {
-        // Facebook format: "10/8/24, 12:23 AM"
-        const dateTimeMatch = dateText.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:,\s*(\d{1,2}):(\d{2})(?:\s*(AM|PM))?)?/i);
-
-        if (dateTimeMatch) {
-          const [, month, day, yearShort, hour = '0', minute = '0', ampm = ''] = dateTimeMatch;
-
-          // Convert 2-digit year to 4-digit year
-          const year = yearShort.length === 2 ? 2000 + parseInt(yearShort, 10) : parseInt(yearShort, 10);
-
-          // Convert hour to 24h format if necessary
-          let hours = parseInt(hour, 10);
-          if (ampm.toUpperCase() === 'PM' && hours < 12) hours += 12;
-          if (ampm.toUpperCase() === 'AM' && hours === 12) hours = 0;
-
-          // Create date
-          const date = new Date(year, parseInt(month, 10) - 1, parseInt(day, 10), hours, parseInt(minute, 10));
-
-          // Create log and add it to the cumulative array (WITHOUT showing immediately)
-          this.dateParseLogs.push({
-            phase: window.logManager.phases.EXTRACTION,
-            type: 'DATE_PARSE',
-            message: `Parsed date: "${dateText}" → ${date.toISOString()}`,
-            data: { originalText: dateText, timestamp: date.getTime() }
-          });
-
-          return date.getTime();
-        }
-
-        // Try with the format "October 8, 2024"
-        const timestamp = new Date(dateText).getTime();
-
-        if (!isNaN(timestamp)) {
-          // Add log to the cumulative array (WITHOUT showing immediately)
-          this.dateParseLogs.push({
-            phase: window.logManager.phases.EXTRACTION,
-            type: 'DATE_PARSE',
-            message: `Parsed date (alternative format): "${dateText}" → ${new Date(timestamp).toISOString()}`,
-            data: { originalText: dateText, timestamp }
-          });
-
-          return timestamp;
-        }
-
-        // Add failure log to the cumulative array (WITHOUT showing immediately)
-        this.dateParseLogs.push({
-          phase: window.logManager.phases.EXTRACTION,
-          type: 'DATE_PARSE_FAIL',
-          message: `Could not parse date: "${dateText}"`,
-          data: { originalText: dateText }
-        });
-
-        return null;
-      } catch (error) {
-        // Add error log to the cumulative array (WITHOUT showing immediately)
-        this.dateParseLogs.push({
-          phase: window.logManager.phases.EXTRACTION,
-          type: 'DATE_PARSE_ERROR',
-          message: `Error parsing date "${dateText}": ${error.message}`,
-          data: { originalText: dateText, error: error.message }
-        });
-
-        return null;
-      }
+    // Initialize the logs array if it doesn't exist
+    if (!this.dateParseLogs) {
+      this.dateParseLogs = [];
     }
 
-    /**
-     * Shows the accumulated date parsing logs
-     */
-    showDateParseLogs() {
-      if (!this.dateParseLogs || this.dateParseLogs.length === 0) {
-        console.log('[ChatManager] No date parsing logs');
-        return;
+    try {
+      // Facebook format: "10/8/24, 12:23 AM"
+      const dateTimeMatch = dateText.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:,\s*(\d{1,2}):(\d{2})(?:\s*(AM|PM))?)?/i);
+
+      if (dateTimeMatch) {
+        const [, month, day, yearShort, hour = '0', minute = '0', ampm = ''] = dateTimeMatch;
+
+        // Convert 2-digit year to 4-digit year
+        const year = yearShort.length === 2 ? 2000 + parseInt(yearShort, 10) : parseInt(yearShort, 10);
+
+        // Convert hour to 24h format if necessary
+        let hours = parseInt(hour, 10);
+        if (ampm.toUpperCase() === 'PM' && hours < 12) hours += 12;
+        if (ampm.toUpperCase() === 'AM' && hours === 12) hours = 0;
+
+        // Create date
+        const date = new Date(year, parseInt(month, 10) - 1, parseInt(day, 10), hours, parseInt(minute, 10));
+
+        // Create log and add it to the cumulative array (WITHOUT showing immediately)
+        this.dateParseLogs.push({
+          phase: window.logManager.phases.EXTRACTION,
+          type: 'DATE_PARSE',
+          message: `Parsed date: "${dateText}" → ${date.toISOString()}`,
+          data: { originalText: dateText, timestamp: date.getTime() }
+        });
+
+        return date.getTime();
       }
 
-      // Show a summary
-      console.log(`[ChatManager][EXTRACTION] Processed ${this.dateParseLogs.length} dates found`);
+      // Try with the format "October 8, 2024"
+      const timestamp = new Date(dateText).getTime();
 
-      // Show details in a collapsed group
-      console.groupCollapsed(`[ChatManager][EXTRACTION] Parsed dates detail (${this.dateParseLogs.length})`);
+      if (!isNaN(timestamp)) {
+        // Add log to the cumulative array (WITHOUT showing immediately)
+        this.dateParseLogs.push({
+          phase: window.logManager.phases.EXTRACTION,
+          type: 'DATE_PARSE',
+          message: `Parsed date (alternative format): "${dateText}" → ${new Date(timestamp).toISOString()}`,
+          data: { originalText: dateText, timestamp }
+        });
 
-      this.dateParseLogs.forEach((log, index) => {
-        const isSuccess = !log.message.includes('Error') && !log.message.includes('Could not');
-        console.log(`[${index + 1}/${this.dateParseLogs.length}] ${log.message}`, log.data);
+        return timestamp;
+      }
+
+      // Add failure log to the cumulative array (WITHOUT showing immediately)
+      this.dateParseLogs.push({
+        phase: window.logManager.phases.EXTRACTION,
+        type: 'DATE_PARSE_FAIL',
+        message: `Could not parse date: "${dateText}"`,
+        data: { originalText: dateText }
       });
 
-      console.groupEnd();
+      return null;
+    } catch (error) {
+      // Add error log to the cumulative array (WITHOUT showing immediately)
+      this.dateParseLogs.push({
+        phase: window.logManager.phases.EXTRACTION,
+        type: 'DATE_PARSE_ERROR',
+        message: `Error parsing date "${dateText}": ${error.message}`,
+        data: { originalText: dateText, error: error.message }
+      });
+
+      return null;
+    }
+  }
+
+  /**
+   * Shows the accumulated date parsing logs
+   */
+  showDateParseLogs() {
+    if (!this.dateParseLogs || this.dateParseLogs.length === 0) {
+      console.log('[ChatManager] No date parsing logs');
+      return;
     }
 
-    /**
-     * PHASE 2: New functions to detect and add content types
-     */
+    // Show a summary
+    console.log(`[ChatManager][EXTRACTION] Processed ${this.dateParseLogs.length} dates found`);
 
-    /**
-     * Improved image detection
-     * @param {HTMLElement} container - Message container
-     * @param {Object} messageData - Message data to update
-     */
-    detectAndAddImageContent(container, messageData) {
-      try {
-        const imageSelectors = Array.isArray(CONFIG.selectors.activeChat.messageImageElement) ?
-          CONFIG.selectors.activeChat.messageImageElement.join(', ') :
-          CONFIG.selectors.activeChat.messageImageElement;
+    // Show details in a collapsed group
+    console.groupCollapsed(`[ChatManager][EXTRACTION] Parsed dates detail (${this.dateParseLogs.length})`);
 
-        const imgElements = container.querySelectorAll(imageSelectors);
+    this.dateParseLogs.forEach((log, index) => {
+      const isSuccess = !log.message.includes('Error') && !log.message.includes('Could not');
+      console.log(`[${index + 1}/${this.dateParseLogs.length}] ${log.message}`, log.data);
+    });
 
-        if (imgElements.length > 0) {
-          const validImages = Array.from(imgElements).filter(img => {
-            const src = img.src || '';
-            // Filter small icons/base64/emojis/avatars
-            return src &&
-              !src.startsWith('data:') &&
-              (img.width > 30 || !img.width) &&
-              (img.height > 30 || !img.height) &&
-              !src.includes('/emoji.') &&
-              !src.includes('/avatar/');
-          });
+    console.groupEnd();
+  }
 
-          if (validImages.length > 0) {
-            // Backward compatibility
-            messageData.content.imageUrls = validImages.map(img => img.src);
+  /**
+   * PHASE 2: New functions to detect and add content types
+   */
 
-            // New improved structure
-            messageData.content.media.images = validImages.map(img => ({
-              url: img.src,
-              alt: img.alt || '',
-              width: img.width || 0,
-              height: img.height || 0
-            }));
+  /**
+   * Improved image detection
+   * @param {HTMLElement} container - Message container
+   * @param {Object} messageData - Message data to update
+   */
+  detectAndAddImageContent(container, messageData) {
+    try {
+      const imageSelectors = Array.isArray(CONFIG.selectors.activeChat.messageImageElement) ?
+        CONFIG.selectors.activeChat.messageImageElement.join(', ') :
+        CONFIG.selectors.activeChat.messageImageElement;
 
-            if (messageData.content.type === 'unknown') {
-              messageData.content.type = 'image';
-            }
+      const imgElements = container.querySelectorAll(imageSelectors);
 
-            window.logManager.collect('mediaDetection', {
-              type: 'image',
-              messageId: messageData.id,
-              count: validImages.length,
-              urls: validImages.map(img => img.src).slice(0, 3) // First 3 URLs as sample
-            });
+      if (imgElements.length > 0) {
+        const validImages = Array.from(imgElements).filter(img => {
+          const src = img.src || '';
+          // Filter small icons/base64/emojis/avatars
+          return src &&
+            !src.startsWith('data:') &&
+            (img.width > 30 || !img.width) &&
+            (img.height > 30 || !img.height) &&
+            !src.includes('/emoji.') &&
+            !src.includes('/avatar/');
+        });
+
+        if (validImages.length > 0) {
+          // Backward compatibility
+          messageData.content.imageUrls = validImages.map(img => img.src);
+
+          // New improved structure
+          messageData.content.media.images = validImages.map(img => ({
+            url: img.src,
+            alt: img.alt || '',
+            width: img.width || 0,
+            height: img.height || 0
+          }));
+
+          if (messageData.content.type === 'unknown') {
+            messageData.content.type = 'image';
           }
+
+          window.logManager.collect('mediaDetection', {
+            type: 'image',
+            messageId: messageData.id,
+            count: validImages.length,
+            urls: validImages.map(img => img.src).slice(0, 3) // First 3 URLs as sample
+          });
         }
+      }
 
-        // Additional search for images in divs with background-image
-        const bgImageDivs = container.querySelectorAll('div[style*="background-image"]');
-        if (bgImageDivs.length > 0) {
-          for (const div of bgImageDivs) {
-            const style = div.getAttribute('style') || '';
-            const urlMatch = style.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
+      // Additional search for images in divs with background-image
+      const bgImageDivs = container.querySelectorAll('div[style*="background-image"]');
+      if (bgImageDivs.length > 0) {
+        for (const div of bgImageDivs) {
+          const style = div.getAttribute('style') || '';
+          const urlMatch = style.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
 
-            if (urlMatch && urlMatch[1] && !urlMatch[1].startsWith('data:')) {
-              const imageUrl = urlMatch[1];
+          if (urlMatch && urlMatch[1] && !urlMatch[1].startsWith('data:')) {
+            const imageUrl = urlMatch[1];
 
-              // Add only if not already in the list
-              if (!messageData.content.imageUrls.includes(imageUrl)) {
-                messageData.content.imageUrls.push(imageUrl);
+            // Add only if not already in the list
+            if (!messageData.content.imageUrls.includes(imageUrl)) {
+              messageData.content.imageUrls.push(imageUrl);
 
-                messageData.content.media.images.push({
-                  url: imageUrl,
-                  alt: "Background Image",
-                  width: div.clientWidth || 0,
-                  height: div.clientHeight || 0
-                });
+              messageData.content.media.images.push({
+                url: imageUrl,
+                alt: "Background Image",
+                width: div.clientWidth || 0,
+                height: div.clientHeight || 0
+              });
 
-                if (messageData.content.type === 'unknown') {
-                  messageData.content.type = 'image';
-                }
+              if (messageData.content.type === 'unknown') {
+                messageData.content.type = 'image';
               }
             }
           }
         }
-      } catch (error) {
-        logger.error(`Error detecting images: ${error.message}`, {}, error);
+      }
+    } catch (error) {
+      logger.error(`Error detecting images: ${error.message}`, {}, error);
+    }
+  }
+
+  /**
+   * Improved audio detection in messages
+   * @param {HTMLElement} container - Message container
+   * @param {Object} messageData - Message data to update
+   */
+  detectAndAddAudioContent(container, messageData) {
+    // Use all audio button selectors for better detection
+    const audioButtonSelectors = CONFIG.selectors.activeChat.messageAudioPlayButton;
+    let audioButton = null;
+
+    // Try each selector until an audio button is found
+    for (const selector of audioButtonSelectors) {
+      const buttons = container.querySelectorAll(selector);
+      if (buttons.length > 0) {
+        audioButton = buttons[0];
+        break;
       }
     }
 
-    /**
-     * Improved audio detection in messages
-     * @param {HTMLElement} container - Message container
-     * @param {Object} messageData - Message data to update
-     */
-    detectAndAddAudioContent(container, messageData) {
-      // Use all audio button selectors for better detection
-      const audioButtonSelectors = CONFIG.selectors.activeChat.messageAudioPlayButton;
-      let audioButton = null;
+    if (!audioButton) return;
 
-      // Try each selector until an audio button is found
-      for (const selector of audioButtonSelectors) {
-        const buttons = container.querySelectorAll(selector);
-        if (buttons.length > 0) {
-          audioButton = buttons[0];
-          break;
+    // If we find an audio button, mark this message as containing audio
+    messageData.content.hasAudio = true;
+
+    /*window.logManager.step(window.logManager.phases.EXTRACTION, 'AUDIO_DETECT', 
+      `Audio detected in message ${messageData.id}`);*/
+
+    // Try to get direct URL (rarely available in the DOM)
+    const audioElement = container.querySelector('audio[src]');
+    if (audioElement && audioElement.src) {
+      messageData.content.audioUrl = audioElement.src;
+      window.logManager.step(window.logManager.phases.EXTRACTION, 'AUDIO_URL',
+        `Audio URL found directly in the DOM`,
+        { messageId: messageData.id, url: audioElement.src });
+    } else {
+      // If there is no direct URL, generate a unique marker for this audio
+      // that we can use to associate later with the transcriptions
+      const audioMarkerId = `audio_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      messageData.content.audioMarkerId = audioMarkerId;
+
+      // Add to the DOM as a data attribute to facilitate later association
+      if (audioButton) {
+        audioButton.setAttribute('data-audio-marker-id', audioMarkerId);
+
+        // Register that we are waiting for this audio for when it is detected
+        if (window.audioTranscriber) {
+          window.audioTranscriber.expectingAudioForMessageId = messageData.id;
+          window.audioTranscriber.expectingAudioTimestamp = Date.now();
         }
       }
 
-      if (!audioButton) return;
+      /*window.logManager.step(window.logManager.phases.EXTRACTION, 'AUDIO_MARKER', 
+        `Marker generated for pending audio`, 
+        {messageId: messageData.id, audioMarkerId});*/
+    }
 
-      // If we find an audio button, mark this message as containing audio
-      messageData.content.hasAudio = true;
+    // Extract duration if available
+    messageData.content.audioDuration = this.extractAudioDuration(container);
+    messageData.content.transcribedAudio = '[Transcription Pending]';
 
-      /*window.logManager.step(window.logManager.phases.EXTRACTION, 'AUDIO_DETECT', 
-        `Audio detected in message ${messageData.id}`);*/
+    window.logManager.collect('audioMessages', {
+      messageId: messageData.id,
+      hasUrl: !!messageData.content.audioUrl,
+      duration: messageData.content.audioDuration,
+      markerId: messageData.content.audioMarkerId
+    });
+  }
 
-      // Try to get direct URL (rarely available in the DOM)
+  /**
+   * Extracts audio duration if available
+   * @param {HTMLElement} container - Message container
+   * @returns {string|null} Audio duration (format "M:SS") or null
+   */
+  extractAudioDuration(container) {
+    try {
+      const durationSelectors = [
+        'span[style*="color: rgba"]',
+        'span.x193iq5w',
+        'div[dir="auto"] > span'
+      ];
+
+      for (const selector of durationSelectors) {
+        const elements = container.querySelectorAll(selector);
+        for (const el of elements) {
+          const text = el.textContent.trim();
+          // Check format MM:SS or M:SS
+          if (/^\d{1,2}:\d{2}$/.test(text)) {
+            return text;
+          }
+        }
+      }
+
+      return null;
+    } catch (error) {
+      logger.debug(`Error extracting audio duration: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Tries to extract the audio URL
+   * @param {HTMLElement} container - Message container
+   * @returns {string|null} Audio URL or null
+   */
+  extractAudioUrl(container) {
+    try {
       const audioElement = container.querySelector('audio[src]');
       if (audioElement && audioElement.src) {
-        messageData.content.audioUrl = audioElement.src;
-        window.logManager.step(window.logManager.phases.EXTRACTION, 'AUDIO_URL',
-          `Audio URL found directly in the DOM`,
-          { messageId: messageData.id, url: audioElement.src });
+        return audioElement.src;
+      }
+
+      // Check for links to audio files
+      const audioLink = container.querySelector('a[href*=".mp3"], a[href*=".m4a"], a[href*=".wav"], a[href*=".ogg"]');
+      if (audioLink && audioLink.href) {
+        return audioLink.href;
+      }
+
+      return null;
+    } catch (error) {
+      logger.debug(`Error extracting audio URL: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Detects video content
+   * @param {HTMLElement} container - Message container
+   * @param {Object} messageData - Message data to update
+   */
+  detectAndAddVideoContent(container, messageData) {
+    try {
+      // Detect explicit video (<video> or links)
+      const videoElement = container.querySelector('video, a[href*="video_redirect"]');
+
+      if (videoElement) {
+        if (videoElement.tagName === 'VIDEO') {
+          const videoInfo = {
+            exists: true,
+            url: videoElement.src || null,
+            type: 'video',
+            thumbnail: this.extractVideoThumbnail(videoElement) || null,
+            duration: videoElement.duration ? `${Math.round(videoElement.duration)}s` : null
+          };
+
+          messageData.content.media.video = videoInfo;
+          if (messageData.content.type === 'unknown') {
+            messageData.content.type = 'video';
+          }
+        } else if (videoElement.tagName === 'A' && videoElement.href) {
+          const videoInfo = {
+            exists: true,
+            url: videoElement.href,
+            type: 'video_link',
+            thumbnail: null,
+            duration: null
+          };
+
+          messageData.content.media.video = videoInfo;
+          if (messageData.content.type === 'unknown') {
+            messageData.content.type = 'video';
+          }
+        }
       } else {
-        // If there is no direct URL, generate a unique marker for this audio
-        // that we can use to associate later with the transcriptions
-        const audioMarkerId = `audio_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        messageData.content.audioMarkerId = audioMarkerId;
+        // Look for video containers
+        const videoSelectors = Array.isArray(CONFIG.selectors.activeChat.messageVideoElement) ?
+          CONFIG.selectors.activeChat.messageVideoElement.join(', ') :
+          CONFIG.selectors.activeChat.messageVideoElement;
 
-        // Add to the DOM as a data attribute to facilitate later association
-        if (audioButton) {
-          audioButton.setAttribute('data-audio-marker-id', audioMarkerId);
+        const potentialVideoContainer = container.querySelector(videoSelectors);
 
-          // Register that we are waiting for this audio for when it is detected
-          if (window.audioTranscriber) {
-            window.audioTranscriber.expectingAudioForMessageId = messageData.id;
-            window.audioTranscriber.expectingAudioTimestamp = Date.now();
+        if (potentialVideoContainer) {
+          const label = potentialVideoContainer.getAttribute('aria-label') || 'Video Player';
+          const isThumbnail = potentialVideoContainer.style.backgroundImage ||
+            potentialVideoContainer.querySelector('div[style*="background-image"]');
+
+          const videoInfo = {
+            exists: true,
+            url: null,
+            type: isThumbnail ? 'video_thumbnail' : 'video_player',
+            thumbnail: this.extractBackgroundImage(potentialVideoContainer),
+            label: label
+          };
+
+          messageData.content.media.video = videoInfo;
+          if (messageData.content.type === 'unknown') {
+            messageData.content.type = 'video';
           }
         }
+      }
+    } catch (error) {
+      logger.error(`Error detecting video: ${error.message}`, {}, error);
+    }
+  }
 
-        /*window.logManager.step(window.logManager.phases.EXTRACTION, 'AUDIO_MARKER', 
-          `Marker generated for pending audio`, 
-          {messageId: messageData.id, audioMarkerId});*/
+  /**
+   * Extracts background image for video
+   * @param {HTMLElement} element - Element with possible background image
+   * @returns {string|null} URL of background image or null
+   */
+  extractBackgroundImage(element) {
+    try {
+      const style = element.getAttribute('style') || '';
+      const urlMatch = style.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
+      if (urlMatch && urlMatch[1]) {
+        return urlMatch[1];
       }
 
-      // Extract duration if available
-      messageData.content.audioDuration = this.extractAudioDuration(container);
-      messageData.content.transcribedAudio = '[Transcription Pending]';
+      const childWithBg = element.querySelector('div[style*="background-image"]');
+      if (childWithBg) {
+        const childStyle = childWithBg.getAttribute('style') || '';
+        const childUrlMatch = childStyle.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
+        if (childUrlMatch && childUrlMatch[1]) {
+          return childUrlMatch[1];
+        }
+      }
 
-      window.logManager.collect('audioMessages', {
-        messageId: messageData.id,
-        hasUrl: !!messageData.content.audioUrl,
-        duration: messageData.content.audioDuration,
-        markerId: messageData.content.audioMarkerId
-      });
+      return null;
+    } catch (error) {
+      logger.debug(`Error extracting background image: ${error.message}`);
+      return null;
     }
+  }
 
-    /**
-     * Extracts audio duration if available
-     * @param {HTMLElement} container - Message container
-     * @returns {string|null} Audio duration (format "M:SS") or null
-     */
-    extractAudioDuration(container) {
-      try {
-        const durationSelectors = [
-          'span[style*="color: rgba"]',
-          'span.x193iq5w',
-          'div[dir="auto"] > span'
-        ];
+  /**
+   * Extracts video thumbnail
+   * @param {HTMLVideoElement} videoElement - Video element
+   * @returns {string|null} URL of thumbnail or null
+   */
+  extractVideoThumbnail(videoElement) {
+    try {
+      if (videoElement.poster) {
+        return videoElement.poster;
+      }
 
-        for (const selector of durationSelectors) {
-          const elements = container.querySelectorAll(selector);
-          for (const el of elements) {
-            const text = el.textContent.trim();
-            // Check format MM:SS or M:SS
-            if (/^\d{1,2}:\d{2}$/.test(text)) {
-              return text;
-            }
+      const source = videoElement.querySelector('source[type^="video/"]');
+      if (source && source.src) {
+        return source.src.replace(/\.mp4$/, '.jpg'); // Common approximation
+      }
+
+      return null;
+    } catch (error) {
+      logger.debug(`Error extracting video thumbnail: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Detects file attachments
+   * @param {HTMLElement} container - Message container
+   * @param {Object} messageData - Message data to update
+   */
+  detectAndAddFileContent(container, messageData) {
+    try {
+      const fileSelectors = Array.isArray(CONFIG.selectors.activeChat.messageFileElement) ?
+        CONFIG.selectors.activeChat.messageFileElement.join(', ') :
+        CONFIG.selectors.activeChat.messageFileElement;
+
+      const fileElements = Array.from(container.querySelectorAll(fileSelectors));
+
+      if (fileElements.length > 0) {
+        const files = [];
+
+        fileElements.forEach(fileElement => {
+          const url = fileElement.href || null;
+          const fileName = this.extractFileName(fileElement);
+          const fileType = this.detectFileType(fileElement, fileName);
+
+          if (url || fileName) {
+            files.push({
+              url: url,
+              name: fileName,
+              type: fileType
+            });
+          }
+        });
+
+        if (files.length > 0) {
+          messageData.content.media.files = files;
+          if (messageData.content.type === 'unknown') {
+            messageData.content.type = 'file';
           }
         }
-
-        return null;
-      } catch (error) {
-        logger.debug(`Error extracting audio duration: ${error.message}`);
-        return null;
       }
+    } catch (error) {
+      logger.error(`Error detecting files: ${error.message}`, {}, error);
     }
-
-    /**
-     * Tries to extract the audio URL
-     * @param {HTMLElement} container - Message container
-     * @returns {string|null} Audio URL or null
-     */
-    extractAudioUrl(container) {
-      try {
-        const audioElement = container.querySelector('audio[src]');
-        if (audioElement && audioElement.src) {
-          return audioElement.src;
-        }
-
-        // Check for links to audio files
-        const audioLink = container.querySelector('a[href*=".mp3"], a[href*=".m4a"], a[href*=".wav"], a[href*=".ogg"]');
-        if (audioLink && audioLink.href) {
-          return audioLink.href;
-        }
-
-        return null;
-      } catch (error) {
-        logger.debug(`Error extracting audio URL: ${error.message}`);
-        return null;
-      }
-    }
-
-    /**
-     * Detects video content
-     * @param {HTMLElement} container - Message container
-     * @param {Object} messageData - Message data to update
-     */
-    detectAndAddVideoContent(container, messageData) {
-      try {
-        // Detect explicit video (<video> or links)
-        const videoElement = container.querySelector('video, a[href*="video_redirect"]');
-
-        if (videoElement) {
-          if (videoElement.tagName === 'VIDEO') {
-            const videoInfo = {
-              exists: true,
-              url: videoElement.src || null,
-              type: 'video',
-              thumbnail: this.extractVideoThumbnail(videoElement) || null,
-              duration: videoElement.duration ? `${Math.round(videoElement.duration)}s` : null
-            };
-
-            messageData.content.media.video = videoInfo;
-            if (messageData.content.type === 'unknown') {
-              messageData.content.type = 'video';
-            }
-          } else if (videoElement.tagName === 'A' && videoElement.href) {
-            const videoInfo = {
-              exists: true,
-              url: videoElement.href,
-              type: 'video_link',
-              thumbnail: null,
-              duration: null
-            };
-
-            messageData.content.media.video = videoInfo;
-            if (messageData.content.type === 'unknown') {
-              messageData.content.type = 'video';
-            }
-          }
-        } else {
-          // Look for video containers
-          const videoSelectors = Array.isArray(CONFIG.selectors.activeChat.messageVideoElement) ?
-            CONFIG.selectors.activeChat.messageVideoElement.join(', ') :
-            CONFIG.selectors.activeChat.messageVideoElement;
-
-          const potentialVideoContainer = container.querySelector(videoSelectors);
-
-          if (potentialVideoContainer) {
-            const label = potentialVideoContainer.getAttribute('aria-label') || 'Video Player';
-            const isThumbnail = potentialVideoContainer.style.backgroundImage ||
-              potentialVideoContainer.querySelector('div[style*="background-image"]');
-
-            const videoInfo = {
-              exists: true,
-              url: null,
-              type: isThumbnail ? 'video_thumbnail' : 'video_player',
-              thumbnail: this.extractBackgroundImage(potentialVideoContainer),
-              label: label
-            };
-
-            messageData.content.media.video = videoInfo;
-            if (messageData.content.type === 'unknown') {
-              messageData.content.type = 'video';
-            }
-          }
-        }
-      } catch (error) {
-        logger.error(`Error detecting video: ${error.message}`, {}, error);
-      }
-    }
-
-    /**
-     * Extracts background image for video
-     * @param {HTMLElement} element - Element with possible background image
-     * @returns {string|null} URL of background image or null
-     */
-    extractBackgroundImage(element) {
-      try {
-        const style = element.getAttribute('style') || '';
-        const urlMatch = style.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
-        if (urlMatch && urlMatch[1]) {
-          return urlMatch[1];
-        }
-
-        const childWithBg = element.querySelector('div[style*="background-image"]');
-        if (childWithBg) {
-          const childStyle = childWithBg.getAttribute('style') || '';
-          const childUrlMatch = childStyle.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/i);
-          if (childUrlMatch && childUrlMatch[1]) {
-            return childUrlMatch[1];
-          }
-        }
-
-        return null;
-      } catch (error) {
-        logger.debug(`Error extracting background image: ${error.message}`);
-        return null;
-      }
-    }
-
-    /**
-     * Extracts video thumbnail
-     * @param {HTMLVideoElement} videoElement - Video element
-     * @returns {string|null} URL of thumbnail or null
-     */
-    extractVideoThumbnail(videoElement) {
-      try {
-        if (videoElement.poster) {
-          return videoElement.poster;
-        }
-
-        const source = videoElement.querySelector('source[type^="video/"]');
-        if (source && source.src) {
-          return source.src.replace(/\.mp4$/, '.jpg'); // Common approximation
-        }
-
-        return null;
-      } catch (error) {
-        logger.debug(`Error extracting video thumbnail: ${error.message}`);
-        return null;
-      }
-    }
-
-    /**
-     * Detects file attachments
-     * @param {HTMLElement} container - Message container
-     * @param {Object} messageData - Message data to update
-     */
-    detectAndAddFileContent(container, messageData) {
-      try {
-        const fileSelectors = Array.isArray(CONFIG.selectors.activeChat.messageFileElement) ?
-          CONFIG.selectors.activeChat.messageFileElement.join(', ') :
-          CONFIG.selectors.activeChat.messageFileElement;
-
-        const fileElements = Array.from(container.querySelectorAll(fileSelectors));
-
-        if (fileElements.length > 0) {
-          const files = [];
-
-          fileElements.forEach(fileElement => {
-            const url = fileElement.href || null;
-            const fileName = this.extractFileName(fileElement);
-            const fileType = this.detectFileType(fileElement, fileName);
-
-            if (url || fileName) {
-              files.push({
-                url: url,
-                name: fileName,
-                type: fileType
-              });
-            }
-          });
-
-          if (files.length > 0) {
-            messageData.content.media.files = files;
-            if (messageData.content.type === 'unknown') {
-              messageData.content.type = 'file';
-            }
-          }
-        }
-      } catch (error) {
-        logger.error(`Error detecting files: ${error.message}`, {}, error);
-      }
-    }
+  }
 
   /**
    * Extracts file name
@@ -1852,75 +1852,75 @@ class ChatManager {
     // Common patterns for system messages - ADDITIONAL ADDITIONS
     const systemPatterns = [
       // ─── Conversation start ─────────────────────────────
-      /^(You|Tú|[A-Z][a-z]+) started this chat\.?( View (seller|buyer) profile)?$/i, // Doubt: Should "Tú" be translated?
-      /^([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+) inició el chat\.?( Ver (perfil del vendedor|perfil del comprador))?$/i, // Doubt: Should "inició el chat", "Ver perfil del vendedor", "perfil del comprador" be translated?
+      /^(You|Tú|[A-Z][a-z]+) started this chat\.?( View (seller|buyer) profile)?$/i,
+      /^([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+) inició el chat\.?( Ver (perfil del vendedor|perfil del comprador))?$/i,
 
       // ─── Participants added or removed ────────────────
       /^You added .* to the group\.$/i,
-      /^Agregaste a .* al grupo\.$/i, // Doubt: Should "Agregaste a", "al grupo" be translated?
+      /^Agregaste a .* al grupo\.$/i,
       /^You removed .* from the group\.$/i,
-      /^Eliminaste a .* del grupo\.$/i, // Doubt: Should "Eliminaste a", "del grupo" be translated?
+      /^Eliminaste a .* del grupo\.$/i,
 
       // ─── Users leaving the group ──────────────────────
-      /^.* (left|salió del) grupo\.$/i, // Doubt: Should "salió del" be translated?
+      /^.* (left|salió del) grupo\.$/i,
 
       // ─── Name or color changes ─────────────────────────
       /^You named the group .*$/i,
-      /^Nombraste al grupo .*$/i, // Doubt: Should "Nombraste al grupo" be translated?
+      /^Nombraste al grupo .*$/i,
       /^You changed the chat colors\.$/i,
-      /^Cambiaste los colores del chat\.$/i, // Doubt: Should "Cambiaste los colores del chat" be translated?
+      /^Cambiaste los colores del chat\.$/i,
       /^You set the nickname for .* to .*$/i,
-      /^Definiste el apodo de .* como .*$/i, // Doubt: Should "Definiste el apodo de", "como" be translated?
+      /^Definiste el apodo de .* como .*$/i,
 
       // ─── Changes in group photo/name with dynamic name
       /^Changed the group photo\.$/i,
-      /^Cambió la foto del grupo\.$/i, // Doubt: Should "Cambió la foto del grupo" be translated?
-      /cambió la foto del grupo\.$/i, // Doubt: Should "cambió la foto del grupo" be translated?
+      /^Cambió la foto del grupo\.$/i,
+      /cambió la foto del grupo\.$/i,
       /named the group .+\.$/i,
-      /nombró al grupo .+\.$/i, // Doubt: Should "nombró al grupo" be translated?
+      /nombró al grupo .+\.$/i,
       /^[A-Z][a-z]+(?: [A-Z][a-z]+)? changed the group photo\.$/i,
       /^[A-Z][a-z]+(?: [A-Z][a-z]+)? named the group .+\.$/i,
 
       // ─── Media sent ───────────────────────────────────
       /^You sent (a )?(GIF|photo|video|attachment)\.$/i,
-      /^Enviaste (un|una) (GIF|foto|video|adjunto)\.$/i, // Doubt: Should "Enviaste", "un", "una", "foto", "video", "adjunto" be translated?
+      /^Enviaste (un|una) (GIF|foto|video|adjunto)\.$/i,
       /^You shared a location\.$/i,
-      /^Compartiste una ubicación\.$/i, // Doubt: Should "Compartiste una ubicación" be translated?
+      /^Compartiste una ubicación\.$/i,
 
       // ─── Calls ──────────────────────────────────────────
       /^Missed call$/i,
       /^You missed a call from .*$/i,
-      /^Llamada perdida$/i, // Doubt: Should "Llamada perdida" be translated?
-      /^Llamada perdida de .*$/i, // Doubt: Should "Llamada perdida de" be translated?
+      /^Llamada perdida$/i,
+      /^Llamada perdida de .*$/i,
 
       // ─── Listing statuses ───────────────────────────────
       /^.* marked the listing as (Available|Pending)\.$/i,
-      /^Marcó este artículo como (vendido|pendiente|disponible)\.?$/i, // Doubt: Should "Marcó este artículo como", "vendido", "pendiente", "disponible" be translated?
+      /^Marcó este artículo como (vendido|pendiente|disponible)\.?$/i,
       /^.* sold .+\.$/i,
-      /^Vendió .+\.$/i, // Doubt: Should "Vendió" be translated?
+      /^Vendió .+\.$/i,
       /^[A-Z][a-z]+ marked the listing as (Available|Pending)\.$/i,
       /^[A-Z][a-z]+ changed the listing description\.$/i,
       /^[A-Z][a-z]+ sold .+\.$/i,
 
       // ─── System messages / UI ─────────────────────────
       /^.* bumped their message:?$/i,
-      /^Mensaje enviado$/i, // Doubt: Should "Mensaje enviado" be translated?
-      /^Ver anuncios similares$/i, // Doubt: Should "Ver anuncios similares" be translated?
+      /^Mensaje enviado$/i,
+      /^Ver anuncios similares$/i,
       /^See similar listings$/i,
-      /^Ver perfil del comprador$/i, // Doubt: Should "Ver perfil del comprador" be translated?
+      /^Ver perfil del comprador$/i,
       /^View buyer profile$/i,
-      /^Ver perfil del vendedor$/i, // Doubt: Should "Ver perfil del vendedor" be translated?
+      /^Ver perfil del vendedor$/i,
       /^View seller profile$/i,
-      /^Ver detalles del comprador$/i, // Doubt: Should "Ver detalles del comprador" be translated?
+      /^Ver detalles del comprador$/i,
       /^View buyer details$/i,
-      /detalles del comprador$/i, // Doubt: Should "detalles del comprador" be translated?
+      /detalles del comprador$/i,
       /buyer details$/i,
 
       // ─── Alerts / informative messages ───────────────────
-      /^Estás recibiendo muchos mensajes sobre este anuncio/i, // Doubt: Should "Estás recibiendo muchos mensajes sobre este anuncio" be translated?
+      /^Estás recibiendo muchos mensajes sobre este anuncio/i,
       /^To help identify and reduce scams and fraud, Meta may use technology to review Marketplace messages\./i,
       /^You're receiving a lot of messages about this listing/i,
-      /^Estás esperando tu respuesta sobre este anuncio\.\s*Ver anuncio$/i, // Doubt: Should "Estás esperando tu respuesta sobre este anuncio", "Ver anuncio" be translated?
+      /^Estás esperando tu respuesta sobre este anuncio\.\s*Ver anuncio$/i,
       /^You're waiting for a response about this listing\.\s*View listing$/i,
       /^Is getting a lot of messages about this listing/i,
       /^Is waiting for your response about this listing\.? View listing$/i,
@@ -1930,12 +1930,12 @@ class ChatManager {
 
       // ─── Ratings ────────────────────────────────────
       /^You can now rate each other.*Rate [A-Z][a-z]+$/i,
-      /^Ahora pueden calificarse.*Califica a [A-ZÁÉÍÓÚÑ][a-záéíóúñ]+$/i, // Doubt: Should "Ahora pueden calificarse", "Califica a" be translated?
+      /^Ahora pueden calificarse.*Califica a [A-ZÁÉÍÓÚÑ][a-záéíóúñ]+$/i,
 
       // ─── Profile information ─────────────────────────────
       /^Joined facebook in \d{4}$/i,
-      /^Se unió a Facebook en \d{4}$/i, // Doubt: Should "Se unió a Facebook en" be translated?
-      /se unió a Facebook en \d{4}/i, // Doubt: Should "se unió a Facebook en" be translated?
+      /^Se unió a Facebook en \d{4}$/i,
+      /se unió a Facebook en \d{4}/i,
 
       // ─── Dates / timestamps ───────────────────────────────
       /^\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}(\u2009|\u202F)?\s*(AM|PM)?$/i,
@@ -1944,7 +1944,11 @@ class ChatManager {
       // ─── Others ─────────────────────────────────────────────
       /·\s*.*\s*add name$/i,
       /^Still interested\? Reply to: Si está disponible View listing$/i,
-      /^Alejandro reduced the price to \$ [\d,]+ for [A-Z]+ [A-Z]+\s+\d{4}\.$/i
+      /^Alejandro reduced the price to \$ [\d,]+ for [A-Z]+ [A-Z]+\s+\d{4}\.$/i,
+
+      // ─── Marketplace product messages ──────────
+      /^[A-Za-záéíóúñ]+ [A-Za-záéíóúñ]+ · .+$/i,
+      /^[A-Za-záéíóúñ]+ · .+$/i
     ];
 
     const isSystem = systemPatterns.some(pattern => pattern.test(messageText));
@@ -1953,7 +1957,6 @@ class ChatManager {
     }
     return isSystem;
   }
-
   /**
    * Determines if an element is a divider (date, separator, etc.) - IMPROVED VERSION
    * @param {HTMLElement} element - Element to check
@@ -2547,9 +2550,9 @@ class ChatManager {
       if (!inputField) return resolve({ success: false, message: "Field not found" });
 
       inputField.focus();
-      const initialContent = inputField.textContent?.trim() || ""; 
+      const initialContent = inputField.textContent?.trim() || "";
 
-      if (!initialContent) return resolve({ success: true, message: "Field already empty" }); 
+      if (!initialContent) return resolve({ success: true, message: "Field already empty" });
 
       // Simulate Ctrl+A
       ['keydown', 'keyup'].forEach(type => {
@@ -2571,13 +2574,13 @@ class ChatManager {
         inputField.dispatchEvent(new Event('input', { bubbles: true }));
 
         setTimeout(() => {
-          const finalContent = inputField.textContent?.trim() || ""; 
-          const success = finalContent === ""; 
+          const finalContent = inputField.textContent?.trim() || "";
+          const success = finalContent === "";
           resolve({
-            success, 
-            message: success ? "Field cleaned successfully" : "Could not clean completely", 
-            initialContent, 
-            finalContent 
+            success,
+            message: success ? "Field cleaned successfully" : "Could not clean completely",
+            initialContent,
+            finalContent
           });
         }, 100);
       }, 50);
