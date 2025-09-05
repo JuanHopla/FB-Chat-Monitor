@@ -667,6 +667,7 @@ class MessagePreprocessor {
     const role = isSentByUs ? 'assistant' : 'user';
     const contentParts = [];
     let combinedText = '';
+    let hasImages = false; // ✅ Añadir esta variable
 
     // First, we collect all images to process them in a batch
     const imagesToProcess = [];
@@ -726,6 +727,7 @@ class MessagePreprocessor {
 
     // 4. Process all images together with the configured quality
     if (imagesToProcess.length > 0) {
+      hasImages = true;
       const processedImageUrls = await this.processImagesForOpenAI(imagesToProcess);
 
       for (const imageUrl of processedImageUrls) {
@@ -737,6 +739,11 @@ class MessagePreprocessor {
           }
         });
       }
+    }
+
+    if (hasImages && role === 'assistant') {
+      console.debug('[MessagePreprocessor][WARN] Changing role to user for message with images');
+      role = 'user';
     }
 
     // 5. Add the combined text at the beginning of the content
