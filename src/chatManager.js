@@ -1849,19 +1849,25 @@ class ChatManager {
   isSystemMessage(messageText) {
     if (!messageText) return false;
 
-    // Common patterns for system messages - ADDITIONAL ADDITIONS
+    // Common patterns for system messages - CONSOLIDATED
     const systemPatterns = [
       // ─── Conversation start ─────────────────────────────
       /^(You|Tú|[A-Z][a-z]+) started this chat\.?( View (seller|buyer) profile)?$/i,
       /^([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+) inició el chat\.?( Ver (perfil del vendedor|perfil del comprador))?$/i,
-      /^You created this group\.?$/i, 
-      /^You aren't connected to \d+ members?\.?$/i, 
-      
+      /^You created this group\.?$/i,
+      /^Creaste este grupo\.?$/i,
+      /^You aren't connected to \d+ members?\.?$/i,
+      /^No estás conectado con \d+ miembros?\.?$/i,
+
       // ─── Participants added or removed ────────────────
       /^You added .* to the group\.$/i,
       /^Agregaste a .* al grupo\.$/i,
       /^You removed .* from the group\.$/i,
       /^Eliminaste a .* del grupo\.$/i,
+
+      // ─── Time stamps only ────────────────────────────────
+      /^\d{2}:\d{2}$/i,
+      /^\d{1,2}:\d{2}\s?(AM|PM)?$/i,
 
       // ─── Users leaving the group ──────────────────────
       /^.* (left|salió del) grupo\.$/i,
@@ -1873,8 +1879,6 @@ class ChatManager {
       /^Cambiaste los colores del chat\.$/i,
       /^You set the nickname for .* to .*$/i,
       /^Definiste el apodo de .* como .*$/i,
-
-      // ─── Changes in group photo/name with dynamic name
       /^Changed the group photo\.$/i,
       /^Cambió la foto del grupo\.$/i,
       /cambió la foto del grupo\.$/i,
@@ -1882,6 +1886,8 @@ class ChatManager {
       /nombró al grupo .+\.$/i,
       /^[A-Z][a-z]+(?: [A-Z][a-z]+)? changed the group photo\.$/i,
       /^[A-Z][a-z]+(?: [A-Z][a-z]+)? named the group .+\.$/i,
+      /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+ cambió el nombre del grupo a .*$/i,
+      /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+ cambió los colores del chat\.$/i,
 
       // ─── Media sent ───────────────────────────────────
       /^You sent (a )?(GIF|photo|video|attachment)\.$/i,
@@ -1894,6 +1900,13 @@ class ChatManager {
       /^You missed a call from .*$/i,
       /^Llamada perdida$/i,
       /^Llamada perdida de .*$/i,
+      /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+ recibió una llamada\.$/i,
+      /^Video call ended\.$/i,
+      /^Llamada de video finalizada\.$/i,
+      /^Voice call ended\.$/i,
+      /^Llamada de voz finalizada\.$/i,
+      /^Missed video call\.$/i,
+      /^Llamada de video perdida\.$/i,
 
       // ─── Listing statuses ───────────────────────────────
       /^.* marked the listing as (Available|Pending)\.$/i,
@@ -1902,11 +1915,38 @@ class ChatManager {
       /^Vendió .+\.$/i,
       /^[A-Z][a-z]+ marked the listing as (Available|Pending)\.$/i,
       /^[A-Z][a-z]+ changed the listing description\.$/i,
+      /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+ cambió la descripción del anuncio\.$/i,
       /^[A-Z][a-z]+ sold .+\.$/i,
+      /^You reduced the price to \$[\d,.]+ for .+\.$/i,
+      /^Reduciste el precio a \$[\d,.]+ para .+\.$/i,
+      /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+ reduced the price to \$[\d,.]+ for .+\.$/i,
+      /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+ bajó el precio a \$[\d,.]+ para .+\.$/i,
+      /^You marked the listing as sold\.$/i,
+      /^Marcaste este artículo como vendido\.$/i,
+      /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+ marked the listing as sold\.$/i,
+      /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+ marcó este artículo como vendido\.$/i,
+      /^This listing has been removed\.$/i,
+      /^Este anuncio ha sido eliminado\.$/i,
+
+      // ─── Orders / payments ─────────────────────────────
+      /^Order confirmed\.$/i,
+      /^Pedido confirmado\.$/i,
+      /^Your order was shipped\.$/i,
+      /^Tu pedido fue enviado\.$/i,
+      /^Your order was delivered\.$/i,
+      /^Tu pedido fue entregado\.$/i,
+      /^Payment (sent|received)\.?$/i,
+      /^Pago (enviado|recibido)\.?$/i,
+      /^You sent a payment\.$/i,
+      /^Enviaste un pago\.$/i,
+      /^You received a payment\.$/i,
+      /^Recibiste un pago\.$/i,
 
       // ─── System messages / UI ─────────────────────────
       /^.* bumped their message:?$/i,
       /^Mensaje enviado$/i,
+      /^Mensaje destacado$/i,
+      /^Respondido$/i,
       /^Ver anuncios similares$/i,
       /^See similar listings$/i,
       /^Ver perfil del comprador$/i,
@@ -1919,21 +1959,27 @@ class ChatManager {
       /buyer details$/i,
       /^Listings similar to ".*"$/i,
       /^Listings similar to /i,
-      /^Listings similar to.*Sent \d+[hm] ago$/i,   
-      /^Listings similar to.*$/i,                  
-      /Listings similar to/i, 
+      /^Listings similar to.*Sent \d+[hm] ago$/i,
+      /^Listings similar to.*$/i,
+      /Listings similar to/i,
 
       // ─── Alerts / informative messages ───────────────────
       /^Estás recibiendo muchos mensajes sobre este anuncio/i,
       /^To help identify and reduce scams and fraud, Meta may use technology to review Marketplace messages\./i,
+      /^Para ayudar a identificar y reducir estafas y fraudes, Meta puede utilizar tecnología para revisar los mensajes de Marketplace\./i,
       /^You're receiving a lot of messages about this listing/i,
       /^Estás esperando tu respuesta sobre este anuncio\.\s*Ver anuncio$/i,
       /^You're waiting for a response about this listing\.\s*View listing$/i,
       /^Is getting a lot of messages about this listing/i,
       /^Is waiting for your response about this listing\.? View listing$/i,
       /^Beware of common scams using payment apps/i,
+      /^Ten cuidado con estafas comunes que usan aplicaciones de pago$/i,
       /^[A-Z][a-z]+ is getting a lot of messages about this listing\.? See similar listings$/i,
       /^[A-Z][a-z]+ is waiting for your response about this listing\.? View listing$/i,
+      /^Don't share your code with anyone\.?$/i,
+      /^No compartas tu código con nadie\.?$/i,
+      /^Meta will never ask for your password or code\.?$/i,
+      /^Meta nunca te pedirá tu contraseña o código\.?$/i,
 
       // ─── Ratings ────────────────────────────────────
       /^You can now rate each other.*Rate [A-Z][a-z]+$/i,
@@ -1943,6 +1989,12 @@ class ChatManager {
       /^Joined facebook in \d{4}$/i,
       /^Se unió a Facebook en \d{4}$/i,
       /se unió a Facebook en \d{4}/i,
+      /^Te uniste a Messenger$/i,
+      /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+ ahora está disponible en Messenger\.$/i,
+      /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+ accepted your friend request\.$/i,
+      /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+ aceptó tu solicitud de amistad\.$/i,
+      /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+ is now connected on Messenger\.$/i,
+      /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+ ahora está conectado en Messenger\.$/i,
 
       // ─── Dates / timestamps ───────────────────────────────
       /^\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}(\u2009|\u202F)?\s*(AM|PM)?$/i,
@@ -1951,11 +2003,17 @@ class ChatManager {
       // ─── Others ─────────────────────────────────────────────
       /·\s*.*\s*add name$/i,
       /^Still interested\? Reply to: Si está disponible View listing$/i,
+      /^Todavía interesado\? Responde a: Si está disponible Ver anuncio$/i,
       /^Alejandro reduced the price to \$ [\d,]+ for [A-Z]+ [A-Z]+\s+\d{4}\.$/i,
+      /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+ bajó el precio a \$ [\d,]+ para [A-ZÁÉÍÓÚÑ]+ [A-ZÁÉÍÓÚÑ]+\s+\d{4}\.$/i,
 
       // ─── Marketplace product messages ──────────
       /^[A-Za-záéíóúñ]+ [A-Za-záéíóúñ]+ · .+$/i,
-      /^[A-Za-záéíóúñ]+ · .+$/i
+      /^[A-Za-záéíóúñ]+ · .+$/i,
+
+      // ─── Availability prompts ─────────────────────────────
+      /^Item available\.$/i,
+      /^Artículo disponible\.$/i
     ];
 
     const isSystem = systemPatterns.some(pattern => pattern.test(messageText));
