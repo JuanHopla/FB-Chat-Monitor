@@ -5,9 +5,6 @@
 // @description  Monitor and auto-respond to Facebook Marketplace messages with AI assistance
 // @author       JuanHopla
 // @match        https://www.messenger.com/*
-// @match        https://www.facebook.com/marketplace/inbox*
-// @match        https://www.facebook.com/messages*
-// @match        https://www.facebook.com/marketplace/item/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest

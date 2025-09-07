@@ -163,20 +163,11 @@ class AssistantHandler {
         console.log('[AssistantHandler] Manual follow-up request detected in a new thread.');
       }
 
-      if (!this._canPerformFollowUp(allMessages)) {
-        if (window.logManager) {
-          window.logManager.step('GENERATION', 'FOLLOW_UP', 'Follow-up limit reached. Thread will not be created to avoid spam.');
-        } else {
-          console.warn('[AssistantHandler] Follow-up limit reached for this new thread. Thread will not be created to avoid spam.');
-        }
-        alert('Max follow-ups reached (3). The other user must respond to continue.');
-        return ''; // Stop execution
-      }
-
+      // The follow-up message will always be allowed
       if (window.logManager) {
-        window.logManager.step('GENERATION', 'FOLLOW_UP', 'Follow-up check passed. Adding follow-up instruction.');
+        window.logManager.step('GENERATION', 'FOLLOW_UP', 'Follow-up request accepted.');
       } else {
-        console.log('[AssistantHandler] Follow-up check passed. Follow-up instruction will be added.');
+        console.log('[AssistantHandler] Follow-up request processing...');
       }
       isFollowUpRequest = true;
     }
@@ -337,7 +328,6 @@ class AssistantHandler {
   /**
    * Handles an existing thread.
    * This function decides whether to respond to new user messages or to generate a manual follow-up.
-   * It includes a "3-strike" rule to prevent excessive follow-ups on unresponsive chats.
    * @param {string} fbThreadId - Facebook thread ID
    * @param {Array} allMessages - All messages in the chat
    * @param {string} chatRole - Role (seller or buyer)
@@ -413,55 +403,50 @@ class AssistantHandler {
     } else {
       // --- ACTION B: Generate manual follow-up ---
       console.log('[AssistantHandler] No new messages. User has requested a manual follow-up.');
-      if (this._canPerformFollowUp(allMessages)) {
-        actionTaken = true;
-        console.log('[AssistantHandler] Check passed: Fewer than 3 consecutive assistant responses. Generating follow-up.');
-        
-        let followUpInstruction;
-        
-        if (chatRole === 'seller') {
-          followUpInstruction = {
-            role: 'user',
-            content: `[System Instruction] The buyer has not responded to your last message. 
-            
-            Write a short, friendly follow-up message (1-2 sentences) to re-engage them. 
-            
-            Remember to:
-            - Keep it brief and conversational
-            - Maintain interest in your product
-            - If appropriate, remind them about pickup location (123 Street, Miami) and business hours (7am to 11pm daily)
-            - Do not be pushy or send multiple questions
-            
-            This follows your seller prompt guideline: "If you were the last one messaging, write a short followup."`
-          };
-        } else if (chatRole === 'buyer') {
-          followUpInstruction = {
-            role: 'user',
-            content: `[System Instruction] The seller has not responded to your last message.
+      actionTaken = true;
+      console.log('[AssistantHandler] Generating follow-up message.');
+      
+      let followUpInstruction;
+      
+      if (chatRole === 'seller') {
+        followUpInstruction = {
+          role: 'user',
+          content: `[System Instruction] The buyer has not responded to your last message. 
+          
+          Write a short, friendly follow-up message (1-2 sentences) to re-engage them. 
+          
+          Remember to:
+          - Keep it brief and conversational
+          - Maintain interest in your product
+          - If appropriate, remind them about pickup location (123 Street, Miami) and business hours (7am to 11pm daily)
+          - Do not be pushy or send multiple questions
+          
+          This follows your seller prompt guideline: "If you were the last one messaging, write a short followup."`
+        };
+      } else if (chatRole === 'buyer') {
+        followUpInstruction = {
+          role: 'user',
+          content: `[System Instruction] The seller has not responded to your last message.
 
-            Write a short, friendly follow-up message (1 sentence only) to re-engage them.
-            
-            Remember to:
-            - Keep it extremely brief and conversational
-            - Avoid sounding like an advertisement
-            - Don't be pushy or salesy
-            - Maintain your role as someone sharing personal experience with stripsapp.com
-            - Never claim or imply any affiliation with the website
-            
-            This follows your buyer prompt guideline to "keep the conversation very short, friendly, and avoid sounding like an ad."`
-          };
-        } else {
-          followUpInstruction = {
-            role: 'user',
-            content: '[System Instruction] The other person has not responded to your last message. Please generate a brief, friendly follow-up message to re-engage them.'
-          };
-        }
-        
-        await window.apiClient.addMessage(openaiThreadId, followUpInstruction);
+          Write a short, friendly follow-up message (1 sentence only) to re-engage them.
+          
+          Remember to:
+          - Keep it extremely brief and conversational
+          - Avoid sounding like an advertisement
+          - Don't be pushy or salesy
+          - Maintain your role as someone sharing personal experience with stripsapp.com
+          - Never claim or imply any affiliation with the website
+          
+          This follows your buyer prompt guideline to "keep the conversation very short, friendly, and avoid sounding like an ad."`
+        };
       } else {
-        console.warn('[AssistantHandler] Follow-up limit reached. A new response will not be generated.');
-        alert('Max follow-ups reached (3). The other user must respond to continue.');
+        followUpInstruction = {
+          role: 'user',
+          content: '[System Instruction] The other person has not responded to your last message. Please generate a brief, friendly follow-up message to re-engage them.'
+        };
       }
+      
+      await window.apiClient.addMessage(openaiThreadId, followUpInstruction);
     }
 
     if (!actionTaken) {
@@ -488,26 +473,6 @@ class AssistantHandler {
       console.error(`[AssistantHandler][ERROR] ${err}`);
       throw new Error(err);
     }
-  }
-
-  /**
-   * Checks if a follow-up is allowed based on the "3-strike" rule.
-   * A follow-up is not allowed if the last 3 messages were all sent by us (assistant).
-   * @param {Array} allMessages - The entire message history of the chat.
-   * @returns {boolean} True if a follow-up is allowed, false otherwise.
-   * @private
-   */
-  _canPerformFollowUp(allMessages) {
-    if (allMessages.length < 3) {
-      return true;
-    }
-    const lastThreeMessages = allMessages.slice(-3);
-    const allFromAssistant = lastThreeMessages.every(msg => msg.sentByUs === true);
-    if (allFromAssistant) {
-      console.log('[AssistantHandler] Follow-up check failed: The last 3 responses were from the assistant.');
-      return false;
-    }
-    return true;
   }
 
   /**
