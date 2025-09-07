@@ -270,10 +270,46 @@ class AssistantHandler {
 
     // If it's a follow-up request, add the special instruction now
     if (isFollowUpRequest) {
-      const followUpInstruction = {
-        role: 'user',
-        content: '[System Instruction] The user has not responded to your last message. Please generate a brief, friendly follow-up message to re-engage them.'
-      };
+      let followUpInstruction;
+      
+      if (chatRole === 'seller') {
+        followUpInstruction = {
+          role: 'user',
+          content: `[System Instruction] The buyer has not responded to your last message. 
+          
+          Write a short, friendly follow-up message (1-2 sentences) to re-engage them. 
+          
+          Remember to:
+          - Keep it brief and conversational
+          - Maintain interest in your product
+          - If appropriate, remind them about pickup location (123 Street, Miami) and business hours (7am to 11pm daily)
+          - Do not be pushy or send multiple questions
+          
+          This follows your seller prompt guideline: "If you were the last one messaging, write a short followup."`
+        };
+      } else if (chatRole === 'buyer') {
+        followUpInstruction = {
+          role: 'user',
+          content: `[System Instruction] The seller has not responded to your last message.
+
+          Write a short, friendly follow-up message (1 sentence only) to re-engage them.
+          
+          Remember to:
+          - Keep it extremely brief and conversational
+          - Avoid sounding like an advertisement
+          - Don't be pushy or salesy
+          - Maintain your role as someone sharing personal experience with stripsapp.com
+          - Never claim or imply any affiliation with the website
+          
+          This follows your buyer prompt guideline to "keep the conversation very short, friendly, and avoid sounding like an ad."`
+        };
+      } else {
+        followUpInstruction = {
+          role: 'user',
+          content: '[System Instruction] The other person has not responded to your last message. Please generate a brief, friendly follow-up message to re-engage them.'
+        };
+      }
+      
       await window.apiClient.addMessage(threadInfo.openaiThreadId, followUpInstruction);
     }
 
@@ -380,10 +416,47 @@ class AssistantHandler {
       if (this._canPerformFollowUp(allMessages)) {
         actionTaken = true;
         console.log('[AssistantHandler] Check passed: Fewer than 3 consecutive assistant responses. Generating follow-up.');
-        const followUpInstruction = {
-          role: 'user',
-          content: '[System Instruction] The user has not responded to your last message. Please generate a brief, friendly follow-up message to re-engage them.'
-        };
+        
+        let followUpInstruction;
+        
+        if (chatRole === 'seller') {
+          followUpInstruction = {
+            role: 'user',
+            content: `[System Instruction] The buyer has not responded to your last message. 
+            
+            Write a short, friendly follow-up message (1-2 sentences) to re-engage them. 
+            
+            Remember to:
+            - Keep it brief and conversational
+            - Maintain interest in your product
+            - If appropriate, remind them about pickup location (123 Street, Miami) and business hours (7am to 11pm daily)
+            - Do not be pushy or send multiple questions
+            
+            This follows your seller prompt guideline: "If you were the last one messaging, write a short followup."`
+          };
+        } else if (chatRole === 'buyer') {
+          followUpInstruction = {
+            role: 'user',
+            content: `[System Instruction] The seller has not responded to your last message.
+
+            Write a short, friendly follow-up message (1 sentence only) to re-engage them.
+            
+            Remember to:
+            - Keep it extremely brief and conversational
+            - Avoid sounding like an advertisement
+            - Don't be pushy or salesy
+            - Maintain your role as someone sharing personal experience with stripsapp.com
+            - Never claim or imply any affiliation with the website
+            
+            This follows your buyer prompt guideline to "keep the conversation very short, friendly, and avoid sounding like an ad."`
+          };
+        } else {
+          followUpInstruction = {
+            role: 'user',
+            content: '[System Instruction] The other person has not responded to your last message. Please generate a brief, friendly follow-up message to re-engage them.'
+          };
+        }
+        
         await window.apiClient.addMessage(openaiThreadId, followUpInstruction);
       } else {
         console.warn('[AssistantHandler] Follow-up limit reached. A new response will not be generated.');

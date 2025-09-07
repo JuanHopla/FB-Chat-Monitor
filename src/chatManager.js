@@ -1854,7 +1854,9 @@ class ChatManager {
       // ─── Conversation start ─────────────────────────────
       /^(You|Tú|[A-Z][a-z]+) started this chat\.?( View (seller|buyer) profile)?$/i,
       /^([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+) inició el chat\.?( Ver (perfil del vendedor|perfil del comprador))?$/i,
-
+      /^You created this group\.?$/i, 
+      /^You aren't connected to \d+ members?\.?$/i, 
+      
       // ─── Participants added or removed ────────────────
       /^You added .* to the group\.$/i,
       /^Agregaste a .* al grupo\.$/i,
@@ -1915,6 +1917,7 @@ class ChatManager {
       /^View buyer details$/i,
       /detalles del comprador$/i,
       /buyer details$/i,
+      /^Listings similar to ".*"$/i,
 
       // ─── Alerts / informative messages ───────────────────
       /^Estás recibiendo muchos mensajes sobre este anuncio/i,
@@ -1957,6 +1960,7 @@ class ChatManager {
     }
     return isSystem;
   }
+
   /**
    * Determines if an element is a divider (date, separator, etc.) - IMPROVED VERSION
    * @param {HTMLElement} element - Element to check
