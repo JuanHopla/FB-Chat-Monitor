@@ -1919,6 +1919,9 @@ class ChatManager {
       /buyer details$/i,
       /^Listings similar to ".*"$/i,
       /^Listings similar to /i,
+      /^Listings similar to.*Sent \d+[hm] ago$/i,   
+      /^Listings similar to.*$/i,                  
+      /Listings similar to/i, 
 
       // ─── Alerts / informative messages ───────────────────
       /^Estás recibiendo muchos mensajes sobre este anuncio/i,
