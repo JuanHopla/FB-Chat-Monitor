@@ -1868,9 +1868,17 @@ class ChatManager {
       // ─── Time stamps only ────────────────────────────────
       /^\d{2}:\d{2}$/i,
       /^\d{1,2}:\d{2}\s?(AM|PM)?$/i,
+      /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{1,2}:\d{2}(\s?(AM|PM))?$/i,
+      /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+\d{1,2}:\d{2}(\s?(AM|PM))?$/i,
+      /^(Lun|Mar|Mi[ée]|Jue|Vie|S[aá]b|Dom)\s+\d{1,2}:\d{2}(\s*(AM|PM|a\.?m\.?|p\.?m\.?))?$/i,
+      /^(Lunes|Martes|Mi[ée]rcoles|Jueves|Viernes|S[aá]bado|Domingo)\s+\d{1,2}:\d{2}(\s*(AM|PM|a\.?m\.?|p\.?m\.?))?$/i,
+      /^(Jan(uary)?|Feb(ruary)?|Mar(ch)?|Apr(il)?|May|Jun(e)?|Jul(y)?|Aug(ust)?|Sep(t|tember)?|Oct(ober)?|Nov(ember)?|Dec(ember)?)\s+\d{1,2}(,\s*\d{4})?(\s+(at\s+)?\d{1,2}:\d{2}(\s*(AM|PM))?)?$/i,
+      /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun),?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}(,\s*\d{4})?(\s+(at\s+)?\d{1,2}:\d{2}(\s*(AM|PM))?)?$/i,
+      /^\d{1,2}\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)(\s+de)?\s*\d{4}?(\s+(a\s+las\s+)?\d{1,2}:\d{2}(\s*(AM|PM|a\.?m\.?|p\.?m\.?))?)?$/i,
+      /^(Lun|Mar|Mi[ée]|Jue|Vie|S[aá]b|Dom),?\s+\d{1,2}\s+de\s+(ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)(\s+de\s+\d{4})?(\s+(a\s+las\s+)?\d{1,2}:\d{2}(\s*(AM|PM|a\.?m\.?|p\.?m\.?))?)?$/i,
 
       // ─── Users leaving the group ──────────────────────
-      /^.* (left|salió del) grupo\.$/i,
+      /^.* (left the group|salió del grupo)\.$/i,
 
       // ─── Name or color changes ─────────────────────────
       /^You named the group .*$/i,
