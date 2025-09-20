@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
-const JavaScriptObfuscator = require('javascript-obfuscator');
+
 
 // Check if we are in production or development mode
 const isProd = process.argv[2] === 'prod';
@@ -89,6 +89,7 @@ async function build() {
   if (isProd) {
     console.log('Obfuscating code...');
     try {
+      const JavaScriptObfuscator = require('javascript-obfuscator');
       const obfuscationResult = JavaScriptObfuscator.obfuscate(combinedCode, {
         compact: true,
         controlFlowFlattening: true,
