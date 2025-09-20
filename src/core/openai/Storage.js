@@ -258,7 +258,7 @@ class StorageManager {
           
           // Store with new key
           this.set(keyPair.new, parsedValue);
-          console.log(`[StorageManager] Migrated ${keyPair.old} to ${this.prefix}${keyPair.new}`);
+          if (window.CONFIG?.debug) console.debug(`[StorageManager] Migrated ${keyPair.old} to ${this.prefix}${keyPair.new}`);
         }
       }
       
@@ -274,7 +274,7 @@ class StorageManager {
           }
           
           this.set(keyPair.new, parsedValue);
-          console.log(`[StorageManager] Migrated unprefixed ${keyPair.old} to ${this.prefix}${keyPair.new}`);
+          if (window.CONFIG?.debug) console.debug(`[StorageManager] Migrated unprefixed ${keyPair.old} to ${this.prefix}${keyPair.new}`);
         }
       }
       
@@ -290,7 +290,7 @@ class StorageManager {
           };
           
           this.set('ASSISTANTS', assistantsConfig);
-          console.log('[StorageManager] Migrated assistants configuration');
+          if (window.CONFIG?.debug) console.debug('[StorageManager] Migrated assistants configuration');
         }
       } catch (assistantError) {
         console.error('[StorageManager] Error migrating assistants:', assistantError);

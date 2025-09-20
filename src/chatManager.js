@@ -73,7 +73,9 @@ class ChatManager {
         // If it's a real chat change
         if (newChatId !== oldChatId) {
           this.currentChatId = newChatId;
-          console.log(`[ChatManager] Chat change detected: ${oldChatId} -> ${newChatId}`);
+          if (window.CONFIG?.debug) {
+            console.log(`[ChatManager] Chat change detected: ${oldChatId} -> ${newChatId}`);
+          }
 
           // NEW: Reset transcription state for the new chat
           if (window.audioTranscriber && typeof window.audioTranscriber.resetForNewChat === 'function') {
@@ -95,7 +97,9 @@ class ChatManager {
    * @returns {Promise<number>} Number of unread chats found
    */
   async scanForUnreadChats() {
-    logger.debug('Scanning for unread chats...');
+    if (window.CONFIG?.debug) {
+      logger.debug('Scanning for unread chats...');
+    }
 
     try {
       // Get chat list container
@@ -107,7 +111,9 @@ class ChatManager {
 
       // Get all chat elements
       const chatItems = domUtils.findAllElements(CONFIG.selectors.chatList.chatItem, chatContainer);
-      logger.debug(`Found ${chatItems.length} chat elements`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`Found ${chatItems.length} chat elements`);
+      }
 
       // Clear the pending chat queue
       this.pendingChats = [];
@@ -134,8 +140,10 @@ class ChatManager {
               element: chatItem
             });
 
-            logger.debug(`Chat added to queue: ${userName} (${chatId}), time: ${messageTime}`);
-          } else {
+            if (window.CONFIG?.debug) {
+              logger.debug(`Chat added to queue: ${userName} (${chatId}), time: ${messageTime}`);
+            }
+          } else if (window.CONFIG?.debug) {
             logger.debug(`Chat ignored with non-numeric ID: ${chatId}`);
           }
         }
@@ -144,7 +152,9 @@ class ChatManager {
       // Sort queue by time (oldest first)
       this.pendingChats.sort((a, b) => b.messageTime - a.messageTime);
 
-      logger.debug(`Total valid unread chats: ${this.pendingChats.length}`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`Total valid unread chats: ${this.pendingChats.length}`);
+      }
 
       // Show notification with results
       if (this.pendingChats.length > 0) {
@@ -173,7 +183,9 @@ class ChatManager {
         const text = unreadIndicator.textContent || "";
         // Exclude general Marketplace notifications
         if (!text.includes('Marketplace ·')) {
-          logger.debug(`Unread chat detected with specific indicator`);
+          if (window.CONFIG?.debug) {
+            logger.debug(`Unread chat detected with specific indicator`);
+          }
           return true;
         }
       }
@@ -183,7 +195,9 @@ class ChatManager {
       for (const element of userNameElements) {
         const style = window.getComputedStyle(element);
         if (style && parseInt(style.fontWeight) >= 600) {
-          logger.debug(`Unread chat detected by bold font style`);
+          if (window.CONFIG?.debug) {
+            logger.debug(`Unread chat detected by bold font style`);
+          }
           return true;
         }
       }
@@ -207,7 +221,9 @@ class ChatManager {
     if (href && href.includes('/marketplace/t/')) {
       const match = href.match(/\/marketplace\/t\/(\d+)\//);
       if (match && match[1]) {
-        logger.debug(`ID extracted from href: ${match[1]}`);
+        if (window.CONFIG?.debug) {
+          logger.debug(`ID extracted from href: ${match[1]}`);
+        }
         return match[1];
       }
     }
@@ -218,7 +234,9 @@ class ChatManager {
       const childHref = link.getAttribute('href');
       const match = childHref.match(/\/marketplace\/t\/(\d+)\//);
       if (match && match[1]) {
-        logger.debug(`ID extracted from secondary link: ${match[1]}`);
+        if (window.CONFIG?.debug) {
+          logger.debug(`ID extracted from secondary link: ${match[1]}`);
+        }
         return match[1];
       }
     }
@@ -226,14 +244,18 @@ class ChatManager {
     // PRIORITY 3: testid or element id data
     const testId = chatElement.getAttribute('data-testid');
     if (testId && /^\d+$/.test(testId)) {
-      logger.debug(`ID extracted from data-testid: ${testId}`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`ID extracted from data-testid: ${testId}`);
+      }
       return testId;
     }
 
     // FALLBACK: Generate ID based on name (less reliable)
     const userName = this.extractChatUsername(chatElement);
     const fallbackId = `chat_${userName.replace(/\s+/g, '_').toLowerCase()}`;
-    logger.debug(`ID generated as fallback: ${fallbackId}`);
+    if (window.CONFIG?.debug) {
+      logger.debug(`ID generated as fallback: ${fallbackId}`);
+    }
     return fallbackId;
   }
 
@@ -343,7 +365,9 @@ class ChatManager {
    */
   async openNextPendingChat() {
     if (this.pendingChats.length === 0) {
-      logger.log('No pending chats');
+      if (window.CONFIG?.debug) {
+        logger.log('No pending chats');
+      }
       return false;
     }
 
@@ -351,12 +375,17 @@ class ChatManager {
     this.pendingChats.sort((a, b) => b.messageTime - a.messageTime);
 
     const nextChat = this.pendingChats.shift();
-    logger.log(`Opening chat with ${nextChat.userName} (${nextChat.chatId})`);
+    if (window.CONFIG?.debug) {
+      logger.log(`Opening chat with ${nextChat.userName} (${nextChat.chatId})`);
+    }
+    try { if (window.flowLogger) window.flowLogger.step('AUTO_STATUS', { type: 'FOUND', chatId: nextChat.chatId }); } catch {}
 
     try {
       // OPTION 1: Direct click on element if available
       if (nextChat.element && typeof nextChat.element.click === 'function') {
-        logger.log('Using direct click method to open chat');
+        if (window.CONFIG?.debug) {
+          logger.log('Using direct click method to open chat');
+        }
 
         // Scroll to element to ensure it's visible
         nextChat.element.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -376,7 +405,9 @@ class ChatManager {
 
         // Explicitly check operation mode
         const isAutoMode = (window.CONFIG?.operationMode === 'auto');
-        logger.debug(`Processing chat in ${isAutoMode ? 'AUTO' : 'MANUAL'} mode (operationMode: ${window.CONFIG?.operationMode})`);
+        if (window.CONFIG?.debug) {
+          logger.debug(`Processing chat in ${isAutoMode ? 'AUTO' : 'MANUAL'} mode (operationMode: ${window.CONFIG?.operationMode})`);
+        }
 
         // Pass isAutoMode value for auto-response
         await this.processCurrentChat(isAutoMode);
@@ -385,7 +416,9 @@ class ChatManager {
       }
       // OPTION 2: Navigate directly by URL if we have a numeric ID
       else if (/^\d+$/.test(nextChat.chatId)) {
-        logger.log('Using direct URL navigation to open chat');
+        if (window.CONFIG?.debug) {
+          logger.log('Using direct URL navigation to open chat');
+        }
 
         const url = `https://www.messenger.com/marketplace/t/${nextChat.chatId}/`;
         logger.notify(`Navigating to: ${nextChat.userName}`, 'info');
@@ -487,6 +520,8 @@ class ChatManager {
         this.insertResponseInInputField(response);
         window.logManager.phase(window.logManager.phases.GENERATION,
           'Response generated and inserted into the input field');
+        if (window.flowLogger) window.flowLogger.step('REPLY_RECEIVED', { text: response });
+        if (window.flowLogger) window.flowLogger.printSummary();
 
         // Log to history (new line)
         this.logResponseToHistory(context, context.role, response, false);
@@ -520,7 +555,10 @@ class ChatManager {
       return { success: false, error: 'No active chat' };
     }
 
-    logger.log(`Extracting data from chat ${this.currentChatId}`);
+    if (window.CONFIG?.debug) {
+      logger.log(`Extracting data from chat ${this.currentChatId}`);
+    }
+    if (window.flowLogger) window.flowLogger.start(this.currentChatId);
 
     try {
       // Get chat container
@@ -535,10 +573,13 @@ class ChatManager {
       const productLink = this.extractProductLink(chatContainer);
 
       if (productId) {
-        logger.log(`Product ID found: ${productId}`);
-        logger.debug(`Product link found: ${productLink}`);
+        if (window.CONFIG?.debug) {
+          logger.log(`Product ID found: ${productId}`);
+          logger.debug(`Product link found: ${productLink}`);
+        }
         // Pass productLink to extractor
         productDetails = await productExtractor.getProductDetails(productId, productLink);
+        if (window.flowLogger) window.flowLogger.step('PRODUCT_INFO_ADDED', { productId, hasDetails: !!productDetails });
       }
 
       // Get the messages container
@@ -548,7 +589,9 @@ class ChatManager {
       // Determine if it's a new or existing thread
       const threadInfo = window.threadStore?.getThreadInfo?.(this.currentChatId);
       const isNewThread = !threadInfo;
-      logger.log(`Thread type: ${isNewThread ? 'new' : 'existing'}`);
+      if (window.CONFIG?.debug) {
+        logger.log(`Thread type: ${isNewThread ? 'new' : 'existing'}`);
+      }
 
       // Extract messages depending on thread type
       let messages = [];
@@ -556,7 +599,9 @@ class ChatManager {
       if (window.scrollManager) {
         if (isNewThread) {
           // For new threads: perform a full scroll to the beginning
-          logger.log('New thread: performing complete scroll to beginning');
+          if (window.CONFIG?.debug) {
+            logger.log('New thread: performing complete scroll to beginning');
+          }
           await window.scrollManager.scrollToBeginning({
             onScroll: () => {
               // Detect audios while scrolling
@@ -580,14 +625,18 @@ class ChatManager {
 
             // If the scroll is not in the correct position, force scroll to the end
             if (Math.abs(scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight) > 50) {
-              logger.debug('Forcing scroll to bottom after restoration');
+              if (window.CONFIG?.debug) {
+                logger.debug('Forcing scroll to bottom after restoration');
+              }
               scrollContainer.scrollTop = scrollContainer.scrollHeight;
             }
           }
         } else {
           // For existing threads: try to load up to the last known message
           if (threadInfo?.lastMessageId) {
-            logger.log(`Existing thread: scrolling to last known message: ${threadInfo.lastMessageId}`);
+            if (window.CONFIG?.debug) {
+              logger.log(`Existing thread: scrolling to last known message: ${threadInfo.lastMessageId}`);
+            }
             await window.scrollManager.scrollToMessage(threadInfo.lastMessageId);
           }
 
@@ -595,7 +644,9 @@ class ChatManager {
           messages = await this.extractChatHistory(messagesWrapper);
 
           // NEW IMPLEMENTATION: Also restore position for existing threads
-          logger.log('Existing thread: restoring original scroll position');
+          if (window.CONFIG?.debug) {
+            logger.log('Existing thread: restoring original scroll position');
+          }
           await window.scrollManager.restorePosition();
 
           // Also check for existing threads if we returned to the correct position
@@ -604,7 +655,9 @@ class ChatManager {
             await new Promise(resolve => setTimeout(resolve, 100));
 
             if (Math.abs(scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight) > 50) {
-              logger.debug('Forcing scroll to bottom after restoration for existing thread');
+              if (window.CONFIG?.debug) {
+                logger.debug('Forcing scroll to bottom after restoration for existing thread');
+              }
               scrollContainer.scrollTop = scrollContainer.scrollHeight;
             }
           }
@@ -629,7 +682,9 @@ class ChatManager {
 
       // Determine if we are seller or buyer
       const isSeller = this.determineIfSeller(chatContainer);
-      logger.log(`Role in chat: ${isSeller ? 'seller' : 'buyer'}`);
+      if (window.CONFIG?.debug) {
+        logger.log(`Role in chat: ${isSeller ? 'seller' : 'buyer'}`);
+      }
 
       // Store in history
       const chatData = {
@@ -639,6 +694,12 @@ class ChatManager {
         lastUpdated: new Date()
       };
       this.chatHistory.set(this.currentChatId, chatData);
+
+      // Flow: messages scraped count
+      try {
+        const count = Array.isArray(messages) ? messages.length : 0;
+        if (window.flowLogger) window.flowLogger.step('MESSAGES_SCRAPED', { count });
+      } catch {}
 
       // Return extracted data along with success status
       return { success: true, chatData };
@@ -659,13 +720,17 @@ class ChatManager {
     // Explicitly check operation mode if not provided
     if (autoRespond === undefined || autoRespond === null) {
       autoRespond = window.CONFIG?.operationMode === 'auto';
-      logger.debug(`Auto-respond not specified, using global setting: ${autoRespond ? 'AUTO' : 'MANUAL'}`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`Auto-respond not specified, using global setting: ${autoRespond ? 'AUTO' : 'MANUAL'}`);
+      }
     }
 
     // Preventively clear the input field in AUTO mode
     if (autoRespond) {
       try {
-        logger.debug(`AUTO mode detected - Preventively clearing input field`);
+        if (window.CONFIG?.debug) {
+          logger.debug(`AUTO mode detected - Preventively clearing input field`);
+        }
         const inputField = document.querySelector(CONFIG.selectors.activeChat.messageInput);
         if (inputField) {
           const isContentEditable = inputField.getAttribute('contenteditable') === 'true';
@@ -686,20 +751,26 @@ class ChatManager {
 
     // If we already responded to this chat in auto mode, skip to avoid duplicates
     if (autoRespond && this.respondedChats.has(this.currentChatId)) {
-      logger.debug(`Auto-response already sent for chat ${this.currentChatId}, skipping.`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`Auto-response already sent for chat ${this.currentChatId}, skipping.`);
+      }
       return true;
     }
 
     // Anti-reentrancy
     if (autoRespond && this.isResponding) {
-      logger.debug(`Already processing response for chat ${this.currentChatId}, skipping new call.`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`Already processing response for chat ${this.currentChatId}, skipping new call.`);
+      }
       return true;
     }
     this.isResponding = autoRespond;
 
     // --- BEGIN: Improved scroll/thread logic from new version ---
     try {
-      logger.log('Processing current chat with improved scroll/thread logic');
+      if (window.CONFIG?.debug) {
+        logger.log('Processing current chat with improved scroll/thread logic');
+      }
       const chatContainer = document.querySelector(CONFIG.selectors.activeChat.container);
       if (!chatContainer) {
         logger.error('Active chat container not found');
@@ -717,7 +788,9 @@ class ChatManager {
       // Get thread info to determine if it's a new or existing thread
       const threadInfo = window.threadStore?.getThreadInfo?.(chatId);
       const isNewThread = !threadInfo;
-      logger.debug(`Thread ${isNewThread ? 'NEW' : 'EXISTING'}: ${chatId}`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`Thread ${isNewThread ? 'NEW' : 'EXISTING'}: ${chatId}`);
+      }
 
       // Prepare messages extraction with scroll logic
       let messages = [];
@@ -730,7 +803,9 @@ class ChatManager {
       }
 
       if (isNewThread && window.scrollManager) {
-        logger.debug('New thread: performing complete scroll to beginning');
+        if (window.CONFIG?.debug) {
+          logger.debug('New thread: performing complete scroll to beginning');
+        }
         await window.scrollManager.scrollToBeginning({
           onScroll: () => {
             if (window.audioTranscriber) {
@@ -746,12 +821,16 @@ class ChatManager {
         if (scrollContainer) {
           await new Promise(resolve => setTimeout(resolve, 100));
           if (Math.abs(scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight) > 50) {
-            logger.debug('Forcing scroll to bottom after restoration');
+            if (window.CONFIG?.debug) {
+              logger.debug('Forcing scroll to bottom after restoration');
+            }
             scrollContainer.scrollTop = scrollContainer.scrollHeight;
           }
         }
       } else if (!isNewThread && window.scrollManager && threadInfo?.lastMessageId) {
-        logger.debug(`Existing thread: scrolling to last known message: ${threadInfo.lastMessageId}`);
+        if (window.CONFIG?.debug) {
+          logger.debug(`Existing thread: scrolling to last known message: ${threadInfo.lastMessageId}`);
+        }
         await window.scrollManager.scrollToMessage(threadInfo.lastMessageId);
         messages = await this.extractChatHistory(messagesWrapper);
         await window.scrollManager.restorePosition();
@@ -760,12 +839,16 @@ class ChatManager {
         if (scrollContainer) {
           await new Promise(resolve => setTimeout(resolve, 100));
           if (Math.abs(scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight) > 50) {
-            logger.debug('Forcing scroll to bottom after restoration for existing thread');
+            if (window.CONFIG?.debug) {
+              logger.debug('Forcing scroll to bottom after restoration for existing thread');
+            }
             scrollContainer.scrollTop = scrollContainer.scrollHeight;
           }
         }
       } else {
-        logger.debug('Extracting messages without special scroll');
+        if (window.CONFIG?.debug) {
+          logger.debug('Extracting messages without special scroll');
+        }
         messages = await this.extractChatHistory(messagesWrapper);
       }
 
@@ -804,7 +887,9 @@ class ChatManager {
 
       // Step 2: Optionally generate response if autoRespond is true
       if (autoRespond) {
-        logger.debug(`Automatic response enabled for chat ${chatId} (operationMode: ${window.CONFIG?.operationMode})`);
+        if (window.CONFIG?.debug) {
+          logger.debug(`Automatic response enabled for chat ${chatId} (operationMode: ${window.CONFIG?.operationMode})`);
+        }
         const chatData = { messages, productDetails, isSeller };
 
         if (!chatData || !chatData.messages || chatData.messages.length === 0) {
@@ -822,10 +907,14 @@ class ChatManager {
         };
 
         try {
-          logger.log(`Generating automatic response as ${context.role} for chat ${chatId}`);
+          if (window.CONFIG?.debug) {
+            logger.log(`Generating automatic response as ${context.role} for chat ${chatId}`);
+          }
           await this.handleResponse(context);
           this.respondedChats.add(chatId); // Mark as responded
-          logger.log('Automatic response generated and sent successfully');
+          if (window.CONFIG?.debug) {
+            logger.log('Automatic response generated and sent successfully');
+          }
           this.isResponding = false;
           return true;
         } catch (responseError) {
@@ -834,7 +923,9 @@ class ChatManager {
           return false;
         }
       } else {
-        logger.debug(`Automatic response disabled for chat ${chatId}. Only data was extracted.`);
+        if (window.CONFIG?.debug) {
+          logger.debug(`Automatic response disabled for chat ${chatId}. Only data was extracted.`);
+        }
       }
 
       this.isResponding = false;
@@ -877,7 +968,9 @@ class ChatManager {
 
     // Check if we have audioTranscriber available
     if (!window.audioTranscriber) {
-      logger.debug(`Audio transcriber not available for URL: ${audioUrl}`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`Audio transcriber not available for URL: ${audioUrl}`);
+      }
       return null;
     }
 
@@ -885,7 +978,9 @@ class ChatManager {
     try {
       const transcription = window.audioTranscriber.getTranscription(audioUrl);
       if (transcription) {
-        logger.debug(`Transcription found for audio: ${audioUrl.substring(0, 50)}...`);
+        if (window.CONFIG?.debug) {
+          logger.debug(`Transcription found for audio: ${audioUrl.substring(0, 50)}...`);
+        }
         return transcription;
       }
     } catch (error) {
@@ -922,7 +1017,9 @@ class ChatManager {
         if (elements.length > 0) {
           elementsFound = Array.from(elements);
           successfulSelector = selector;
-          logger.debug(`Found ${elements.length} possible date separators using ${selector}`);
+          if (window.CONFIG?.debug) {
+            logger.debug(`Found ${elements.length} possible date separators using ${selector}`);
+          }
           break;
         }
       }
@@ -945,7 +1042,9 @@ class ChatManager {
         });
 
         if (elementsFound.length > 0) {
-          logger.debug(`Found ${elementsFound.length} possible date separators by text pattern`);
+          if (window.CONFIG?.debug) {
+            logger.debug(`Found ${elementsFound.length} possible date separators by text pattern`);
+          }
           successfulSelector = 'content-pattern';
         }
       }
@@ -977,7 +1076,9 @@ class ChatManager {
             index
           });
 
-          logger.debug(`Date separator #${index + 1}: "${dateText}" (${new Date(timestamp).toLocaleString()})`);
+          if (window.CONFIG?.debug) {
+            logger.debug(`Date separator #${index + 1}: "${dateText}" (${new Date(timestamp).toLocaleString()})`);
+          }
         } catch (e) {
           logger.warn(`Error processing possible date separator: ${e.message}`);
         }
@@ -986,7 +1087,9 @@ class ChatManager {
       // Sort by timestamp
       separators.sort((a, b) => a.timestamp - b.timestamp);
 
-      logger.log(`Found ${separators.length} time blocks using ${successfulSelector || 'no selector'}`);
+      if (window.CONFIG?.debug) {
+        logger.log(`Found ${separators.length} time blocks using ${successfulSelector || 'no selector'}`);
+      }
       return separators;
     } catch (error) {
       logger.error(`Error searching for date separators: ${error.message}`);
@@ -1010,7 +1113,9 @@ class ChatManager {
     }
 
     this.isProcessingChat = true;
-    logger.debug('Starting chat history extraction...');
+    if (window.CONFIG?.debug) {
+      logger.debug('Starting chat history extraction...');
+    }
 
     const messages = [];
     const timeBlocks = []; // Array to record time blocks
@@ -1027,7 +1132,9 @@ class ChatManager {
 
       // 2) Get all message rows
       messageElements = domUtils.findAllElements(selectors.messageRow, messagesWrapper);
-      logger.log(`Analyzing ${messageElements.length} messages in the current DOM`);
+      if (window.CONFIG?.debug) {
+        logger.log(`Analyzing ${messageElements.length} messages in the current DOM`);
+      }
 
       if (messageElements.length === 0) {
         logger.warn('No message rows found with selector:', selectors.messageRow);
@@ -1049,7 +1156,7 @@ class ChatManager {
       });
 
       // For debugging
-      if (timeBlocks.length > 0) {
+      if (window.CONFIG?.debug && timeBlocks.length > 0) {
         logger.debug('Time blocks found:');
         timeBlocks.forEach((block, idx) => {
           logger.debug(`  Block #${idx + 1}: ${block.text} (${new Date(block.timestamp).toLocaleString()})`);
@@ -1125,14 +1232,18 @@ class ChatManager {
             timeBlocks[currentBlockIndex].messages.push(messageData);
           }
 
-          logger.debug(`#${idx + 1}: ${messageData.content.type} – ${text.substring(0, 30)}${text.length > 30 ? '…' : ''}`);
-        } else {
+          if (window.CONFIG?.debug) {
+            logger.debug(`#${idx + 1}: ${messageData.content.type} – ${text.substring(0, 30)}${text.length > 30 ? '…' : ''}`);
+          }
+        } else if (window.CONFIG?.debug) {
           logger.debug(`#${idx + 1}: Omitted message ${isDiv ? 'SEPARATOR' : 'SYSTEM'}`);
         }
       });
 
       this.lastProcessedMessageCount = messages.length;
-      logger.log(`Extraction completed: ${messages.length} messages found in ${timeBlocks.length} time blocks`);
+      if (window.CONFIG?.debug) {
+        logger.log(`Extraction completed: ${messages.length} messages found in ${timeBlocks.length} time blocks`);
+      }
 
       // NEW: Show accumulated date logs
       this.showDateParseLogs();
@@ -1145,7 +1256,9 @@ class ChatManager {
         m.content.transcribedAudio !== '[Transcription Pending]'
       ).length;
 
-      logger.debug(`Extraction complete: ${messages.length} messages (${messagesWithAudio} with audio, ${messagesWithTranscription} with transcription)`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`Extraction complete: ${messages.length} messages (${messagesWithAudio} with audio, ${messagesWithTranscription} with transcription)`);
+      }
 
       // Emit extraction completed event with time blocks
       const result = {
@@ -1253,22 +1366,53 @@ class ChatManager {
    */
   showDateParseLogs() {
     if (!this.dateParseLogs || this.dateParseLogs.length === 0) {
-      console.log('[ChatManager] No date parsing logs');
+      if (window.CONFIG?.debug) {
+        console.log('[ChatManager] No date parsing logs');
+      }
       return;
     }
 
-    // Show a summary
-    console.log(`[ChatManager][EXTRACTION] Processed ${this.dateParseLogs.length} dates found`);
+    // Mostrar resumen siempre
+    if (window.CONFIG?.debug) {
+      console.log(`[ChatManager][EXTRACTION] Processed ${this.dateParseLogs.length} dates found`);
+    }
 
-    // Show details in a collapsed group
-    console.groupCollapsed(`[ChatManager][EXTRACTION] Parsed dates detail (${this.dateParseLogs.length})`);
+    // Mostrar detalles solo en modo debug
+    if (window.CONFIG?.debug) {
+      console.groupCollapsed(`[ChatManager][EXTRACTION] Parsed dates detail (${this.dateParseLogs.length})`);
+      this.dateParseLogs.forEach((log, index) => {
+        const isSuccess = !log.message.includes('Error') && !log.message.includes('Could not');
+        console.debug(`[${index + 1}/${this.dateParseLogs.length}] ${log.message}`, log.data);
+      });
+      console.groupEnd();
+    }
+  }
 
-    this.dateParseLogs.forEach((log, index) => {
-      const isSuccess = !log.message.includes('Error') && !log.message.includes('Could not');
-      console.log(`[${index + 1}/${this.dateParseLogs.length}] ${log.message}`, log.data);
-    });
+  /**
+   * Shows the accumulated date parsing logs
+   */
+  showDateParseLogs() {
+    if (!this.dateParseLogs || this.dateParseLogs.length === 0) {
+      if (window.CONFIG?.debug) {
+        console.log('[ChatManager] No date parsing logs');
+      }
+      return;
+    }
 
-    console.groupEnd();
+    // Mostrar resumen siempre
+    if (window.CONFIG?.debug) {
+      console.log(`[ChatManager][EXTRACTION] Processed ${this.dateParseLogs.length} dates found`);
+    }
+
+    // Mostrar detalles solo en modo debug
+    if (window.CONFIG?.debug) {
+      console.groupCollapsed(`[ChatManager][EXTRACTION] Parsed dates detail (${this.dateParseLogs.length})`);
+      this.dateParseLogs.forEach((log, index) => {
+        const isSuccess = !log.message.includes('Error') && !log.message.includes('Could not');
+        console.debug(`[${index + 1}/${this.dateParseLogs.length}] ${log.message}`, log.data);
+      });
+      console.groupEnd();
+    }
   }
 
   /**
@@ -1806,7 +1950,9 @@ class ChatManager {
 
       return null;
     } catch (error) {
-      logger.debug(`Error extracting location label: ${error.message}`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`Error extracting location label: ${error.message}`);
+      }
       return null;
     }
   }
@@ -1836,7 +1982,9 @@ class ChatManager {
 
       return null;
     } catch (error) {
-      logger.debug(`Error extracting coordinates: ${error.message}`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`Error extracting coordinates: ${error.message}`);
+      }
       return null;
     }
   }
@@ -2025,7 +2173,7 @@ class ChatManager {
     ];
 
     const isSystem = systemPatterns.some(pattern => pattern.test(messageText));
-    if (isSystem) {
+    if (isSystem && window.CONFIG?.debug) {
       logger.debug(`[isSystemMessage] System message detected: "${messageText.substring(0, 30)}..."`);
     }
     return isSystem;
@@ -2048,14 +2196,18 @@ class ChatManager {
         // Check if it contains significant text besides the classes
         const contentDiv = element.querySelector('div[dir="auto"], span[dir="auto"]');
         if (!contentDiv || contentDiv.textContent.length < 5) { // If there's no content or it's very short
-          logger.debug(`[isDivider] Element with divider class and little/no text: ${element.className}`);
+          if (window.CONFIG?.debug) {
+            logger.debug(`[isDivider] Element with divider class and little/no text: ${element.className}`);
+          }
           return true;
         }
       }
 
       // 2. Check text that are usually dividers (dates, etc.)
       if (/^(Today|Yesterday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Hoy|Ayer|Lunes|Martes|Miércoles|Jueves|Viernes|Sábado|Domingo)$/i.test(text)) { // Doubt: Should "Hoy", "Ayer", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo" be translated?
-        logger.debug(`[isDivider] Element with day text: ${text}`);
+        if (window.CONFIG?.debug) {
+          logger.debug(`[isDivider] Element with day text: ${text}`);
+        }
         return true;
       }
 
@@ -2063,7 +2215,9 @@ class ChatManager {
       if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(text) ||
         /^\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(\w*)(\s+\d{2,4})?$/i.test(text) ||
         /^\d{1,2}\s+(Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Sep|Oct|Nov|Dic)(\w*)(\s+\d{2,4})?$/i.test(text)) { // Doubt: Should "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic" be translated?
-        logger.debug(`[isDivider] Element with date text: ${text}`);
+        if (window.CONFIG?.debug) {
+          logger.debug(`[isDivider] Element with date text: ${text}`);
+        }
         return true;
       }
 
@@ -2071,7 +2225,9 @@ class ChatManager {
       if (element.getAttribute('role') === 'separator' ||
         element.tagName === 'HR' ||
         (element.children.length === 0 && element.parentElement?.getAttribute('role') === 'separator')) {
-        logger.debug(`[isDivider] Element with separator role/tag`);
+        if (window.CONFIG?.debug) {
+          logger.debug(`[isDivider] Element with separator role/tag`);
+        }
         return true;
       }
 
@@ -2124,7 +2280,9 @@ class ChatManager {
         originalTimestamp: originalTimestamp
       };
     } catch (error) {
-      logger.debug(`Error detecting quoted message: ${error.message}`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`Error detecting quoted message: ${error.message}`);
+      }
       return null;
     }
   }
@@ -2145,13 +2303,17 @@ class ChatManager {
             el => el.textContent && el.textContent.includes(textToFind)
           );
           if (elements.length > 0) {
-            logger.debug(`Seller indicator found: ${textToFind}`);
+            if (window.CONFIG?.debug) {
+              logger.debug(`Seller indicator found: ${textToFind}`);
+            }
             return true;
           }
         } else {
           const elements = chatContainer.querySelectorAll(selector);
           if (elements.length > 0) {
-            logger.debug(`Seller indicator found: ${selector}`);
+            if (window.CONFIG?.debug) {
+              logger.debug(`Seller indicator found: ${selector}`);
+            }
             return true;
           }
         }
@@ -2166,25 +2328,33 @@ class ChatManager {
             el => el.textContent && el.textContent.includes(textToFind)
           );
           if (elements.length > 0) {
-            logger.debug(`Buyer indicator found: ${textToFind}`);
+            if (window.CONFIG?.debug) {
+              logger.debug(`Buyer indicator found: ${textToFind}`);
+            }
             return false;
           }
         } else {
           const elements = chatContainer.querySelectorAll(selector);
           if (elements.length > 0) {
-            logger.debug(`Buyer indicator found: ${selector}`);
+            if (window.CONFIG?.debug) {
+              logger.debug(`Buyer indicator found: ${selector}`);
+            }
             return false;
           }
         }
       }
 
       // If there are no clear indicators, use alternative heuristics
-      logger.debug('No definitive role indicators found, using alternative heuristic');
+      if (window.CONFIG?.debug) {
+        logger.debug('No definitive role indicators found, using alternative heuristic');
+      }
 
       // Look for a link to the product as an indication that we are the buyer
       const productLink = chatContainer.querySelector('a[href*="/marketplace/item/"]');
       if (productLink) {
-        logger.debug('Product link found, likely a buyer');
+        if (window.CONFIG?.debug) {
+          logger.debug('Product link found, likely a buyer');
+        }
         return false;
       }
 
@@ -2209,30 +2379,42 @@ class ChatManager {
       : messageRowElement?.closest('div[role="row"]');
 
     if (!row) {
-      logger.debug("[isMessageSentByUs] Could not find the div[role='row'] container. Assuming foreign message.");
+      if (window.CONFIG?.debug) {
+        logger.debug("[isMessageSentByUs] Could not find the div[role='row'] container. Assuming foreign message.");
+      }
       return false;
     }
 
     try {
       // --- METHOD 1: Direct class in the row (Highest priority) ---
       if (row.classList.contains('x1ja2u2z')) {
-        logger.debug("[isMessageSentByUs] CLASS INDICATOR: Row has 'x1ja2u2z'. It's own.");
+        if (window.CONFIG?.debug) {
+          logger.debug("[isMessageSentByUs] CLASS INDICATOR: Row has 'x1ja2u2z'. It's own.");
+        }
         return true;
       }
       if (row.classList.contains('x1yc453h')) {
-        logger.debug("[isMessageSentByUs] CLASS INDICATOR: Row has 'x1yc453h'. It's foreign.");
+        if (window.CONFIG?.debug) {
+          logger.debug("[isMessageSentByUs] CLASS INDICATOR: Row has 'x1yc453h'. It's foreign.");
+        }
         return false;
       }
-      logger.debug("[isMessageSentByUs] CLASS INDICATOR: No conclusive class detected in the row.");
+      if (window.CONFIG?.debug) {
+        logger.debug("[isMessageSentByUs] CLASS INDICATOR: No conclusive class detected in the row.");
+      }
 
       // --- METHOD 2: data-scope in the first gridcell ---
       const firstCell = row.firstElementChild;
       // Verify that it is a gridcell and has the specific data-scope
       if (firstCell?.getAttribute('role') === 'gridcell' && firstCell.getAttribute('data-scope') === 'messages_table') {
-        logger.debug("[isMessageSentByUs] GRIDCELL INDICATOR: First gridcell has data-scope='messages_table'. It's own.");
+        if (window.CONFIG?.debug) {
+          logger.debug("[isMessageSentByUs] GRIDCELL INDICATOR: First gridcell has data-scope='messages_table'. It's own.");
+        }
         return true;
       }
-      logger.debug("[isMessageSentByUs] GRIDCELL INDICATOR: First gridcell does not have data-scope='messages_table'.");
+      if (window.CONFIG?.debug) {
+        logger.debug("[isMessageSentByUs] GRIDCELL INDICATOR: First gridcell does not have data-scope='messages_table'.");
+      }
 
       // --- METHOD 3: Alignment (justify-content) ---
       try {
@@ -2241,16 +2423,24 @@ class ChatManager {
         const justifyContent = style.getPropertyValue('justify-content');
 
         if (justifyContent === 'flex-end') {
-          logger.debug("[isMessageSentByUs] ALIGNMENT INDICATOR: justify-content is 'flex-end'. It's own.");
+          if (window.CONFIG?.debug) {
+            logger.debug("[isMessageSentByUs] ALIGNMENT INDICATOR: justify-content is 'flex-end'. It's own.");
+          }
           return true;
         }
         if (justifyContent === 'flex-start') {
-          logger.debug("[isMessageSentByUs] ALIGNMENT INDICATOR: justify-content is 'flex-start'. It's foreign.");
+          if (window.CONFIG?.debug) {
+            logger.debug("[isMessageSentByUs] ALIGNMENT INDICATOR: justify-content is 'flex-start'. It's foreign.");
+          }
           return false;
         }
-        logger.debug(`[isMessageSentByUs] ALIGNMENT INDICATOR: justify-content is '${justifyContent}'. Not conclusive.`);
+        if (window.CONFIG?.debug) {
+          logger.debug(`[isMessageSentByUs] ALIGNMENT INDICATOR: justify-content is '${justifyContent}'. Not conclusive.`);
+        }
       } catch (styleError) {
-        logger.debug(`[isMessageSentByUs] ALIGNMENT INDICATOR: Error getting style: ${styleError.message}`);
+        if (window.CONFIG?.debug) {
+          logger.debug(`[isMessageSentByUs] ALIGNMENT INDICATOR: Error getting style: ${styleError.message}`);
+        }
       }
 
       // --- METHOD 4: Aria-label with "You sent" ---
@@ -2262,25 +2452,35 @@ class ChatManager {
         });
 
       if (hasYouSentLabel) {
-        logger.debug("[isMessageSentByUs] ARIA INDICATOR: Found 'you sent' in aria-label. It's own.");
+        if (window.CONFIG?.debug) {
+          logger.debug("[isMessageSentByUs] ARIA INDICATOR: Found 'you sent' in aria-label. It's own.");
+        }
         return true;
       }
-      logger.debug("[isMessageSentByUs] ARIA INDICATOR: No sending text found in aria-label.");
+      if (window.CONFIG?.debug) {
+        logger.debug("[isMessageSentByUs] ARIA INDICATOR: No sending text found in aria-label.");
+      }
 
       // --- METHOD 5: Avatar Presence ---
       // Use the configured selector for avatars
       const avatar = domUtils.findElement(CONFIG.selectors.activeChat.senderAvatar, row);
       if (avatar) {
         // If an avatar is found (according to the selector), it is likely a received message
-        logger.debug("[isMessageSentByUs] AVATAR INDICATOR: Avatar found in the row. It's foreign.");
+        if (window.CONFIG?.debug) {
+          logger.debug("[isMessageSentByUs] AVATAR INDICATOR: Avatar found in the row. It's foreign.");
+        }
         return false;
       }
-      logger.debug("[isMessageSentByUs] AVATAR INDICATOR: No avatar found in the row. Could be own.");
+      if (window.CONFIG?.debug) {
+        logger.debug("[isMessageSentByUs] AVATAR INDICATOR: No avatar found in the row. Could be own.");
+      }
 
       // --- METHOD 6: Text "You sent" (H5) - Less reliable, but as fallback ---
       const h5SenderElement = row.querySelector('h5 > span');
       if (h5SenderElement && /you sent|enviaste/i.test(h5SenderElement.textContent || '')) {
-        logger.debug(`[isMessageSentByUs] TEXTUAL INDICATOR (H5): Found '${h5SenderElement.textContent.trim()}'. It's own.`);
+        if (window.CONFIG?.debug) {
+          logger.debug(`[isMessageSentByUs] TEXTUAL INDICATOR (H5): Found '${h5SenderElement.textContent.trim()}'. It's own.`);
+        }
         return true;
       }
 
@@ -2302,7 +2502,9 @@ class ChatManager {
    */
   async handleResponse(context) {
     try {
-      logger.log('[ChatManager] Initiating handleResponse...');
+      if (window.CONFIG?.debug) {
+        logger.log('[ChatManager] Initiating handleResponse...');
+      }
 
       if (!context || !context.messages || context.messages.length === 0) {
         logger.error('[ChatManager] Invalid chat context or no messages.');
@@ -2310,10 +2512,14 @@ class ChatManager {
       }
 
       const roleText = context.role === 'seller' ? 'seller' : 'buyer';
-      logger.log(`[ChatManager] Role: ${roleText}, Total messages for context: ${context.messages.length}`);
+      if (window.CONFIG?.debug) {
+        logger.log(`[ChatManager] Role: ${roleText}, Total messages for context: ${context.messages.length}`);
+      }
 
       const operationMode = window.CONFIG?.operationMode || 'manual';
-      logger.log(`[ChatManager] Configured operation mode (for sending): ${operationMode}`);
+      if (window.CONFIG?.debug) {
+        logger.log(`[ChatManager] Configured operation mode (for sending): ${operationMode}`);
+      }
 
       // Assume window.openaiManager is the primary (and likely only) AI service provider,
       // and it implements the OpenAI Assistants API.
@@ -2326,18 +2532,22 @@ class ChatManager {
         assistantServiceAvailable = assistantService.isReady();
       }
 
-      logger.debug(`[ChatManager] OpenAI Assistant Service (via window.openaiManager) Available: ${assistantServiceAvailable}`);
-      if (assistantService && typeof assistantService.isReady === 'function') {
-        // Log current state of openaiManager, isReady() call will auto-correct isInitialized if needed.
-        logger.debug(`[ChatManager] window.openaiManager details: apiKey=${!!assistantService.apiKey}, isInitialized=${assistantService.isInitialized}, isReady=${assistantService.isReady()}`);
-      } else if (assistantService) {
-        logger.debug(`[ChatManager] window.openaiManager details: apiKey=${!!assistantService.apiKey}, isInitialized=${assistantService.isInitialized}, isReady method not found.`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`[ChatManager] OpenAI Assistant Service (via window.openaiManager) Available: ${assistantServiceAvailable}`);
+        if (assistantService && typeof assistantService.isReady === 'function') {
+          // Log current state of openaiManager, isReady() call will auto-correct isInitialized if needed.
+          logger.debug(`[ChatManager] window.openaiManager details: apiKey=${!!assistantService.apiKey}, isInitialized=${assistantService.isInitialized}, isReady=${assistantService.isReady()}`);
+        } else if (assistantService) {
+          logger.debug(`[ChatManager] window.openaiManager details: apiKey=${!!assistantService.apiKey}, isInitialized=${assistantService.isInitialized}, isReady method not found.`);
+        }
       }
 
 
       if (assistantServiceAvailable) {
-        logger.log('[ChatManager] Using OpenAI Assistant...');
-        console.log('[ChatManager] Payload to assistant →', context);
+        if (window.CONFIG?.debug) {
+          logger.log('[ChatManager] Using OpenAI Assistant...');
+          console.log('[ChatManager] Payload to assistant →', context);
+        }
         showSimpleAlert('Consulting the OpenAI Assistant...', 'info');
 
         // Get response as plain text
@@ -2360,10 +2570,12 @@ class ChatManager {
         const productInfo = context.productDetails ? `${context.productDetails.title} (${context.productDetails.price})` : 'No product information';
         const helpText = `You are in a conversation as ${roleText}.\nProduct: ${productInfo}\nNo AI services configured. Please check options.`;
         showSimpleAlert(helpText, 'info');
-        if (assistantService) {
-          logger.debug(helpText + `\n[ChatManager] Debug: window.openaiManager ready state: ${assistantService.isReady ? assistantService.isReady() : 'isReady method missing'}, isInitialized: ${assistantService.isInitialized}`);
-        } else {
-          logger.debug(helpText + `\n[ChatManager] Debug: window.openaiManager is not an object.`);
+        if (window.CONFIG?.debug) {
+          if (assistantService) {
+            logger.debug(helpText + `\n[ChatManager] Debug: window.openaiManager ready state: ${assistantService.isReady ? assistantService.isReady() : 'isReady method missing'}, isInitialized: ${assistantService.isInitialized}`);
+          } else {
+            logger.debug(helpText + `\n[ChatManager] Debug: window.openaiManager is not an object.`);
+          }
         }
         return { text: helpText, error: true, refusalReason: "No AI service configured" };
       }
@@ -2395,14 +2607,18 @@ class ChatManager {
 
       // Verify if we are in AUTO mode to apply greater protection
       const isAutoMode = window.CONFIG?.operationMode === 'auto';
-      logger.debug(`Operation mode when inserting response: ${isAutoMode ? 'AUTO' : 'MANUAL'}`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`Operation mode when inserting response: ${isAutoMode ? 'AUTO' : 'MANUAL'}`);
+      }
 
       // PHASE 1: Previous cleaning with delay to ensure Facebook is ready
       setTimeout(() => {
 
         // PHASE 2: Additional direct cleaning, more intense in AUTO
         this.forceCleanInputField(inputField);
-        logger.debug('Second direct cleaning phase completed');
+        if (window.CONFIG?.debug) {
+          logger.debug('Second direct cleaning phase completed');
+        }
 
         // PHASE 3: Verify the cleaning status before inserting
         const isContentEditable = inputField.getAttribute('contenteditable') === 'true';
@@ -2416,7 +2632,9 @@ class ChatManager {
 
           // In AUTO mode, wait a little longer to ensure complete cleaning
           if (isAutoMode) {
-            logger.debug('AUTO mode detected, applying additional pause to ensure complete cleaning');
+            if (window.CONFIG?.debug) {
+              logger.debug('AUTO mode detected, applying additional pause to ensure complete cleaning');
+            }
             setTimeout(() => {
               this.insertTextAndPotentiallySend(inputField, text, isAutoMode);
             }, 500);
@@ -2427,6 +2645,7 @@ class ChatManager {
         // PHASE 5: Insert the text after a small delay so that the cleaning takes effect
         setTimeout(() => {
           this.insertTextAndPotentiallySend(inputField, text, isAutoMode);
+            if (window.flowLogger) window.flowLogger.step('PASTED_TO_INPUT');
         }, 100);
       }, isAutoMode ? 300 : 0); // Greater delay in AUTO mode
 
@@ -2445,17 +2664,23 @@ class ChatManager {
    */
   insertTextAndPotentiallySend(inputField, text, isAutoMode) {
     try {
-      logger.debug('Inserting text in input field');
+      if (window.CONFIG?.debug) {
+        logger.debug('Inserting text in input field');
+      }
       domUtils.insertTextIntoField(inputField, text);
 
       // Send the message automatically only if both conditions
       if (CONFIG.autoSendMessages && isAutoMode) {
-        logger.debug('Automatic sending activated in AUTO mode, sending message...');
+        if (window.CONFIG?.debug) {
+          logger.debug('Automatic sending activated in AUTO mode, sending message...');
+        }
 
         // MODIFIED: Longer waiting time before verifying the text and sending
         // The previous value was too short, now we use a larger configurable delay
         const sendDelay = CONFIG.sendMessageDelay || 2000; // Minimum 2 seconds by default
-        logger.debug(`Waiting ${sendDelay}ms before sending so that Facebook processes the text...`);
+        if (window.CONFIG?.debug) {
+          logger.debug(`Waiting ${sendDelay}ms before sending so that Facebook processes the text...`);
+        }
 
         setTimeout(() => {
           // Verify once more that the inserted text is what we want to send
@@ -2464,17 +2689,25 @@ class ChatManager {
             (inputField.value || '');
 
           if (finalText.trim() === text.trim()) {
-            logger.debug('Text verified, sending message...');
+            if (window.CONFIG?.debug) {
+              logger.debug('Text verified, sending message...');
+            }
             this.sendMessage(true); // Pass true to indicate that it is a sending attempt after inserting text
+            if (window.flowLogger && isAutoMode) {
+              window.flowLogger.step('MESSAGE_SENT_AUTO');
+              window.flowLogger.printSummary();
+            }
           } else {
             logger.warn(`The final text (${finalText.length} chars) does not match the expected one (${text.length} chars), aborting automatic sending`);
           }
         }, sendDelay);
       } else {
-        if (!CONFIG.autoSendMessages) {
-          logger.debug('Automatic sending deactivated (autoSendMessages: false)');
-        } else if (!isAutoMode) {
-          logger.debug(`MANUAL mode detected (operationMode: ${window.CONFIG?.operationMode})`);
+        if (window.CONFIG?.debug) {
+          if (!CONFIG.autoSendMessages) {
+            logger.debug('Automatic sending deactivated (autoSendMessages: false)');
+          } else if (!isAutoMode) {
+            logger.debug(`MANUAL mode detected (operationMode: ${window.CONFIG?.operationMode})`);
+          }
         }
       }
     } catch (error) {
@@ -2491,7 +2724,9 @@ class ChatManager {
     try {
       let messageSent = false; // Only increment once
 
-      logger.debug(`Initiating message sending attempt (${isAfterInsert ? 'after inserting text' : 'direct'})`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`Initiating message sending attempt (${isAfterInsert ? 'after inserting text' : 'direct'})`);
+      }
 
       // Strategy 1: Click on the send button with improved selectors
       const sendButtonSelectors = [
@@ -2502,7 +2737,9 @@ class ChatManager {
         'div.xjbqb8w:not([style*="opacity: 0"])',
         'div.x1i10hfl[role="button"]:not(.x1hc1fzr)'
       ];
-      logger.debug(`Searching for send button with ${sendButtonSelectors.length} selectors...`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`Searching for send button with ${sendButtonSelectors.length} selectors...`);
+      }
       const sendButton = domUtils.findElement(sendButtonSelectors);
 
       if (sendButton) {
@@ -2514,11 +2751,15 @@ class ChatManager {
           styles.opacity !== '0';
 
         if (isVisible) {
-          logger.debug(`Send button found and visible (${rect.width}x${rect.height}), clicking...`);
+          if (window.CONFIG?.debug) {
+            logger.debug(`Send button found and visible (${rect.width}x${rect.height}), clicking...`);
+          }
           setTimeout(() => {
             try {
               sendButton.click();
-              logger.log('Message sent by clicking on the button');
+              if (window.CONFIG?.debug) {
+                logger.log('Message sent by clicking on the button');
+              }
               if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
                 messageSent = true;
                 window.FBChatMonitor.incrementResponseSent();
@@ -2528,7 +2769,9 @@ class ChatManager {
               logger.warn(`Error on normal click: ${clickError.message}, trying simulated event...`);
               try {
                 sendButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                logger.log('Message sent using simulated click event');
+                if (window.CONFIG?.debug) {
+                  logger.log('Message sent using simulated click event');
+                }
                 if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
                   messageSent = true;
                   window.FBChatMonitor.incrementResponseSent();
@@ -2544,16 +2787,22 @@ class ChatManager {
           logger.warn('Send button found but NOT visible/enabled. Using alternative method.');
         }
       } else {
-        logger.debug('Send button not found, trying with Enter key...');
+        if (window.CONFIG?.debug) {
+          logger.debug('Send button not found, trying with Enter key...');
+        }
       }
 
       // Strategy 2: Simulate Enter key in the field
       const inputField = document.querySelector(CONFIG.selectors.activeChat.messageInput);
       if (inputField) {
-        logger.debug('Simulating Enter key in the input field...');
+        if (window.CONFIG?.debug) {
+          logger.debug('Simulating Enter key in the input field...');
+        }
 
         if (domUtils.simulateKeyPress(inputField, 'Enter', 13)) {
-          logger.log('Message sent simulating Enter key with domUtils.simulateKeyPress');
+          if (window.CONFIG?.debug) {
+            logger.log('Message sent simulating Enter key with domUtils.simulateKeyPress');
+          }
           if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
             messageSent = true;
             window.FBChatMonitor.incrementResponseSent();
@@ -2573,7 +2822,9 @@ class ChatManager {
         const sent = inputField.dispatchEvent(enterEvent);
 
         if (sent) {
-          logger.log('Message sent simulating Enter key with KeyboardEvent');
+          if (window.CONFIG?.debug) {
+            logger.log('Message sent simulating Enter key with KeyboardEvent');
+          }
           if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
             messageSent = true;
             window.FBChatMonitor.incrementResponseSent();
@@ -2585,7 +2836,9 @@ class ChatManager {
 
         try {
           if (document.execCommand('insertText', false, '\n')) {
-            logger.log('Message sent using execCommand insertText');
+            if (window.CONFIG?.debug) {
+              logger.log('Message sent using execCommand insertText');
+            }
             if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
               messageSent = true;
               window.FBChatMonitor.incrementResponseSent();
@@ -2598,7 +2851,9 @@ class ChatManager {
 
         // Retry once if the first attempt failed
         if (!isAfterInsert) {
-          logger.debug('First attempt failed, scheduling retry after 1 second...');
+          if (window.CONFIG?.debug) {
+            logger.debug('First attempt failed, scheduling retry after 1 second...');
+          }
           setTimeout(() => this.sendMessage(true), 1000);
           return true;
         }
@@ -2695,10 +2950,12 @@ class ChatManager {
       storageUtils.set('RESPONSE_LOGS', limitedHistory);
 
       // Verify that response is a string before calling substring
-      if (typeof response === 'string') {
-        logger.debug(`Response logged to history: ${response.substring(0, 30)}...`);
-      } else {
-        logger.debug(`Response logged to history: ${JSON.stringify(response).substring(0, 30)}...`);
+      if (window.CONFIG?.debug) {
+        if (typeof response === 'string') {
+          logger.debug(`Response logged to history: ${response.substring(0, 30)}...`);
+        } else {
+          logger.debug(`Response logged to history: ${JSON.stringify(response).substring(0, 30)}...`);
+        }
       }
     } catch (error) {
       logger.error(`Error logging response to history: ${error.message}`);

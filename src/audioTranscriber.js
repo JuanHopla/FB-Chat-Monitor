@@ -546,7 +546,9 @@ class AudioTranscriber {
       this.transcriptionLogs.push(logEntry);
 
       // Keep a minimal log for each completed transcription (this can be useful)
-      console.log(`Transcription successful: ${transcription.substring(0, 50)}${transcription.length > 50 ? "..." : ""}`);
+      if (window.CONFIG?.debug) {
+        console.log(`Transcription successful: ${transcription.substring(0, 50)}${transcription.length > 50 ? "..." : ""}`);
+      }
 
       return transcription;
 
@@ -638,7 +640,9 @@ class AudioTranscriber {
    */
   showTranscriptionLogs() {
     if (!this.transcriptionLogs || this.transcriptionLogs.length === 0) {
-      console.log('[AudioTranscriber] No transcription logs found');
+      if (window.CONFIG?.debug) {
+        console.log('[AudioTranscriber] No transcription logs found');
+      }
       return;
     }
 
@@ -650,28 +654,29 @@ class AudioTranscriber {
       .filter(log => log.duration)
       .reduce((total, log) => total + log.duration, 0);
 
-    // Show a summary
+
+    // Mostrar resumen siempre
     console.log(`[AudioTranscriber] Summary of ${this.transcriptionLogs.length} transcriptions:`);
     console.log(`- Successful: ${successful}`);
     console.log(`- Failed: ${failed}`);
     console.log(`- Skipped: ${skipped}`);
     console.log(`- Total time: ${totalTime}ms (average: ${Math.round(totalTime / (successful || 1))}ms per transcription)`);
 
-    // Show details in a collapsed group
-    console.groupCollapsed(`[AudioTranscriber] Transcription details (${this.transcriptionLogs.length})`);
-
-    this.transcriptionLogs.forEach((log, index) => {
-      const status = log.status === 'success' ? '✅' : log.status === 'error' ? '❌' : '⏭️';
-      console.log(`${status} [${index + 1}/${this.transcriptionLogs.length}] ${log.audioUrl} (${log.duration || 0}ms)`);
-      if (log.transcription) {
-        console.log(`   "${log.transcription}"`);
-      }
-      if (log.errorMessage) {
-        console.log(`   Error: ${log.errorMessage}`);
-      }
-    });
-
-    console.groupEnd();
+    // Mostrar detalles solo en modo debug
+    if (window.CONFIG?.debug) {
+      console.groupCollapsed(`[AudioTranscriber] Transcription details (${this.transcriptionLogs.length})`);
+      this.transcriptionLogs.forEach((log, index) => {
+        const status = log.status === 'success' ? '✅' : log.status === 'error' ? '❌' : '⏭️';
+        console.debug(`${status} [${index + 1}/${this.transcriptionLogs.length}] ${log.audioUrl} (${log.duration || 0}ms)`);
+        if (log.transcription) {
+          console.debug(`   "${log.transcription}"`);
+        }
+        if (log.errorMessage) {
+          console.debug(`   Error: ${log.errorMessage}`);
+        }
+      });
+      console.groupEnd();
+    }
 
     // Clear the array after showing the summary to avoid duplicates
     this.transcriptionLogs = [];
@@ -827,7 +832,9 @@ class AudioTranscriber {
    * @returns {Promise<Object>} Association results
    */
   async associateTranscriptionsWithMessages() {
-    console.log('[Media] Starting timestamp-based association...');
+    if (window.CONFIG?.debug) {
+      console.log('[Media] Starting timestamp-based association...');
+    }
 
     // 1. Get messages with audio that still don't have an associated URL and have a timestamp
     const messagesToAssign = [];
@@ -853,13 +860,17 @@ class AudioTranscriber {
         messagesToAssign.push({ messageId, timestamp, element: messageRow });
       });
     } else {
-      console.log('[Media Assoc] Message container not found.');
+      if (window.CONFIG?.debug) {
+        console.log('[Media Assoc] Message container not found.');
+      }
     }
 
     // Sort messages by timestamp (ascending)
     messagesToAssign.sort((a, b) => a.timestamp - b.timestamp);
 
-    console.log(`[Media Assoc] ${messagesToAssign.length} messages need assignment (sorted by timestamp).`);
+    if (window.CONFIG?.debug) {
+      console.log(`[Media Assoc] ${messagesToAssign.length} messages need assignment (sorted by timestamp).`);
+    }
 
     // 2. Get completed transcriptions without an assigned messageId and sort them
     const unassignedTranscriptions = Array.from(this.completedTranscriptions.entries())
@@ -871,7 +882,9 @@ class AudioTranscriber {
       }))
       .sort((a, b) => a.timestamp - b.timestamp);
 
-    console.log(`[Media Assoc] ${unassignedTranscriptions.length} unassigned transcriptions (sorted by timestamp).`);
+    if (window.CONFIG?.debug) {
+      console.log(`[Media Assoc] ${unassignedTranscriptions.length} unassigned transcriptions (sorted by timestamp).`);
+    }
 
     // 3. Associate by temporal proximity
     let assignedCount = 0;
@@ -894,7 +907,9 @@ class AudioTranscriber {
       this.audioUrlsToMessages.set(cleanUrl, message.messageId);
       this.messageIdsToAudioUrls.set(message.messageId, cleanUrl);
 
-      console.log(`[Media Assoc] Association made: Message ${message.messageId} ↔ Audio ${cleanUrl}`);
+      if (window.CONFIG?.debug) {
+        console.log(`[Media Assoc] Association made: Message ${message.messageId} ↔ Audio ${cleanUrl}`);
+      }
 
       // Update counter
       assignedCount++;
@@ -923,7 +938,9 @@ class AudioTranscriber {
       });
     }
 
-    console.log(`[Media] Timestamp association completed. ${assignedCount} new assignments made.`);
+    if (window.CONFIG?.debug) {
+      console.log(`[Media] Timestamp association completed. ${assignedCount} new assignments made.`);
+    }
 
     return {
       assigned: assignedCount,
@@ -1082,9 +1099,8 @@ class AudioTranscriber {
     }
 
     // Accumulate information instead of individual logs
-    debugDetails.push(`Associating ${messagesToAssign.length} messages with ${unassignedTranscriptions.length} transcriptions`);
-
-    if (this.DEBUG_MODE) {
+    if (window.CONFIG?.debug) {
+      debugDetails.push(`Associating ${messagesToAssign.length} messages with ${unassignedTranscriptions.length} transcriptions`);
       this.debugLog(`Associating ${messagesToAssign.length} messages with ${unassignedTranscriptions.length} transcriptions`);
     }
 
@@ -1098,7 +1114,9 @@ class AudioTranscriber {
       return a.timestamp - b.timestamp;
     });
 
-    debugDetails.push(`Sorted transcriptions: ${unassignedTranscriptions.map(t => t.urlTimestamp || 'no timestamp').slice(0, 5).join(', ')}${unassignedTranscriptions.length > 5 ? '...' : ''}`);
+    if (window.CONFIG?.debug) {
+      debugDetails.push(`Sorted transcriptions: ${unassignedTranscriptions.map(t => t.urlTimestamp || 'no timestamp').slice(0, 5).join(', ')}${unassignedTranscriptions.length > 5 ? '...' : ''}`);
+    }
 
     // Sort messages by additional data that might indicate order (like ID or timestamp)
     messagesToAssign.forEach(msg => {
@@ -1131,19 +1149,22 @@ class AudioTranscriber {
       return getNumericPart(a.id) - getNumericPart(b.id);
     });
 
-    debugDetails.push(`Sorted messages: ${messagesToAssign.map(m => m._extractedTimestamp || 'no timestamp').slice(0, 5).join(', ')}${messagesToAssign.length > 5 ? '...' : ''}`);
+    if (window.CONFIG?.debug) {
+      debugDetails.push(`Sorted messages: ${messagesToAssign.map(m => m._extractedTimestamp || 'no timestamp').slice(0, 5).join(', ')}${messagesToAssign.length > 5 ? '...' : ''}`);
+      debugDetails.push("Using timestamp-based association");
+    }
 
     // Association using the determined chronological order
     let assignedCount = 0;
     const assignedMessages = new Set();
     const assignedTranscriptions = new Set();
 
-    debugDetails.push("Using timestamp-based association");
-
     // Associate messages and transcriptions in the determined order
     const assignableCount = Math.min(messagesToAssign.length, unassignedTranscriptions.length);
 
-    debugDetails.push(`Assigning ${assignableCount} transcriptions by chronological order`);
+    if (window.CONFIG?.debug) {
+      debugDetails.push(`Assigning ${assignableCount} transcriptions by chronological order`);
+    }
 
     for (let i = 0; i < assignableCount; i++) {
       const message = messagesToAssign[i];
@@ -1176,12 +1197,14 @@ class AudioTranscriber {
       assignedCount++;
 
       // Accumulate association details instead of individual logs
-      associationDetails.push({
-        messageId: message.id,
-        urlTimestamp: transcriptionData.urlTimestamp,
-        messageTimestamp: message._extractedTimestamp || 'N/A',
-        transcriptionPreview: transcriptionData.text.substring(0, 30) + '...'
-      });
+      if (window.CONFIG?.debug) {
+        associationDetails.push({
+          messageId: message.id,
+          urlTimestamp: transcriptionData.urlTimestamp,
+          messageTimestamp: message._extractedTimestamp || 'N/A',
+          transcriptionPreview: transcriptionData.text.substring(0, 30) + '...'
+        });
+      }
 
       // Collect additional data for analysis in a structured format
       window.logManager.collect('associations', {
@@ -1202,7 +1225,7 @@ class AudioTranscriber {
       `Association completed: ${assignedCount} of ${messagesToAssign.length} messages associated`);
 
     // Show expandable debug details if in debug mode
-    if (this.DEBUG_MODE && associationDetails.length > 0) {
+    if (window.CONFIG?.debug && associationDetails.length > 0) {
       console.groupCollapsed(`[AudioTranscriber] Details of ${assignedCount} associations (expand to view)`);
 
       // Show accumulated debug information
@@ -1215,7 +1238,9 @@ class AudioTranscriber {
 
     // Show collected data in a structured way but with error protection
     try {
-      window.logManager.showCollected('associations', true);
+      if (window.CONFIG?.debug) {
+        window.logManager.showCollected('associations', true);
+      }
     } catch (error) {
       window.logManager.phase(window.logManager.phases.ASSOCIATION, 'WARN',
         `Error showing association data: ${error.message}`);
@@ -1268,7 +1293,7 @@ class AudioTranscriber {
    * @private
    */
   debugLog(message) {
-    if (this.DEBUG_MODE) {
+    if (this.DEBUG_MODE && window.CONFIG?.debug) {
       window.logManager.step('GENERAL', 'DEBUG', message);
     }
   }

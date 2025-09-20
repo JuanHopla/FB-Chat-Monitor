@@ -60,7 +60,7 @@ class EventCoordinator {
     this.recordEvent(eventName, data);
     
     // Debug log
-    if (this.debug) {
+    if (window.CONFIG?.debug) {
       //console.log(`[EventCoordinator] Event emitted: ${eventName}`, data);
     }
     

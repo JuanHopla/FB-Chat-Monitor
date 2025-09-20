@@ -42,7 +42,9 @@ class ApiClient {
     }
 
     this.initialized = true;
-    console.log('ApiClient initialized successfully');
+    if (window.CONFIG?.debug) {
+      console.log('ApiClient initialized successfully');
+    }
     return true;
   }
 
@@ -67,14 +69,18 @@ class ApiClient {
    */
   async createThread() {
     try {
-      console.log('Creating new thread');
+      if (window.CONFIG?.debug) {
+        console.log('Creating new thread');
+      }
       
       const response = await this.makeRequest('/threads', {
         method: 'POST',
         body: JSON.stringify({})
       });
 
-      console.log(`Thread created successfully: ${response.id}`);
+      if (window.CONFIG?.debug) {
+        console.log(`Thread created successfully: ${response.id}`);
+      }
       return { id: response.id };
     } catch (error) {
       logger.error(`Error creating thread: ${error.message}`, {}, error);
@@ -124,7 +130,9 @@ class ApiClient {
         throw new Error('No assistant ID provided');
       }
 
-      console.log(`Creating run on thread ${threadId.substring(0, 8)}... with assistant ${assistantId.substring(0, 8)}...`);
+      if (window.CONFIG?.debug) {
+        console.log(`Creating run on thread ${threadId.substring(0, 8)}... with assistant ${assistantId.substring(0, 8)}...`);
+      }
       
       const response = await this.makeRequest(`/threads/${threadId}/runs`, {
         method: 'POST',
@@ -133,7 +141,9 @@ class ApiClient {
         })
       });
 
-      console.log(`Run created successfully: ${response.id}`);
+      if (window.CONFIG?.debug) {
+        console.log(`Run created successfully: ${response.id}`);
+      }
       return { runId: response.id };
     } catch (error) {
       logger.error(`Error creating run: ${error.message}`, {}, error);
@@ -153,7 +163,9 @@ class ApiClient {
       
       // If the run is completed, get the messages
       if (response.status === 'completed') {
-        console.log(`Run ${runId.substring(0, 8)}... completed, retrieving messages`);
+        if (window.CONFIG?.debug) {
+          console.log(`Run ${runId.substring(0, 8)}... completed, retrieving messages`);
+        }
         const messages = await this.getLatestMessages(threadId);
         
         return {
@@ -220,7 +232,9 @@ class ApiClient {
       
       // Log progress for long-running operations
       if ((Date.now() - startTime) > 5000 && (Date.now() - startTime) % 5000 < pollInterval) {
-        console.log(`Still waiting for run ${runId.substring(0, 8)}... (${runStatus.status}): ${Math.round((Date.now() - startTime)/1000)}s elapsed`);
+        if (window.CONFIG?.debug) {
+          console.log(`Still waiting for run ${runId.substring(0, 8)}... (${runStatus.status}): ${Math.round((Date.now() - startTime)/1000)}s elapsed`);
+        }
       }
       
       // Wait before next poll
@@ -242,7 +256,9 @@ class ApiClient {
         throw new Error('Invalid audio blob');
       }
       
-      console.log(`Transcribing audio (${Math.round(audioBlob.size / 1024)} KB)`);
+      if (window.CONFIG?.debug) {
+        console.log(`Transcribing audio (${Math.round(audioBlob.size / 1024)} KB)`);
+      }
       
       // Create a FormData instance for file upload
       const formData = new FormData();
@@ -267,7 +283,9 @@ class ApiClient {
       // Whisper API returns plain text when response_format is set to 'text'
       const transcript = await response.text();
       
-      console.log(`Transcription successful: ${transcript.substring(0, 50)}${transcript.length > 50 ? '...' : ''}`);
+      if (window.CONFIG?.debug) {
+        console.log(`Transcription successful: ${transcript.substring(0, 50)}${transcript.length > 50 ? '...' : ''}`);
+      }
       return transcript;
     } catch (error) {
       logger.error(`Error transcribing audio: ${error.message}`, {}, error);

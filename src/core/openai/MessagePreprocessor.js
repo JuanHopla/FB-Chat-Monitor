@@ -38,14 +38,14 @@ class MessagePreprocessor {
    */
   getNewMessagesSinceNoFormat(messages, lastMessageId) {
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      console.log(`[MessagePreprocessor][ERROR] Invalid message array provided to getNewMessagesSinceNoFormat`);
+      logger.error(`[MessagePreprocessor][ERROR] Invalid message array provided to getNewMessagesSinceNoFormat`);
       logger.error('Invalid messages array provided to getNewMessagesSinceNoFormat');
       return [];
     }
 
     // If no lastMessageId, return all messages (up to limit)
     if (!lastMessageId) {
-      console.log(`[MessagePreprocessor][DEBUG] No lastMessageId provided, using all messages`);
+      if (window.CONFIG?.debug) console.debug(`[MessagePreprocessor][DEBUG] No lastMessageId provided, using all messages`);
       return messages.slice(-this.config.maxMessagesInNewThread);
     }
 
@@ -53,19 +53,19 @@ class MessagePreprocessor {
     const lastIndex = messages.findIndex(msg => msg.id === lastMessageId);
 
     if (lastIndex === -1) {
-      console.log(`[MessagePreprocessor][WARN] Last ID ${lastMessageId} not found, using timestamp fallback`);
+      logger.warn(`[MessagePreprocessor][WARN] Last ID ${lastMessageId} not found, using timestamp fallback`);
       logger.warn(`Last message ID ${lastMessageId} not found, using timestamp-based fallback`);
       return this.getNewMessagesUsingTimestampFallbackNoFormat(messages, lastMessageId);
     }
 
     // Get messages after the last processed one
     const newMessages = messages.slice(lastIndex + 1);
-    console.log(`[MessagePreprocessor][DEBUG] Found ${newMessages.length} new messages since ${lastMessageId}`);
+    if (window.CONFIG?.debug) console.log(`[MessagePreprocessor][DEBUG] Found ${newMessages.length} new messages since ${lastMessageId}`);
 
     // If no new messages, return just the last message for context
     if (newMessages.length === 0) {
       const lastMessage = messages[messages.length - 1];
-      console.log(`[MessagePreprocessor][DEBUG] No new messages, returning only the last message for context`);
+      if (window.CONFIG?.debug) console.debug(`[MessagePreprocessor][DEBUG] No new messages, returning only the last message for context`);
       return [lastMessage];
     }
 
@@ -80,14 +80,14 @@ class MessagePreprocessor {
    */
   getNewMessagesSince(messages, lastMessageId) {
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      console.log(`[MessagePreprocessor][ERROR] Invalid message array provided to getNewMessagesSince`);
+      logger.error(`[MessagePreprocessor][ERROR] Invalid message array provided to getNewMessagesSince`);
       logger.error('Invalid messages array provided to getNewMessagesSince');
       return [];
     }
 
     // If no lastMessageId, return all messages (up to limit)
     if (!lastMessageId) {
-      console.log(`[MessagePreprocessor][DEBUG] No lastMessageId provided, using all messages`);
+      if (window.CONFIG?.debug) console.debug(`[MessagePreprocessor][DEBUG] No lastMessageId provided, using all messages`);
       return this.formatMessagesForOpenAI(
         messages.slice(-this.config.maxMessagesInNewThread)
       );
@@ -97,19 +97,20 @@ class MessagePreprocessor {
     const lastIndex = messages.findIndex(msg => msg.id === lastMessageId);
 
     if (lastIndex === -1) {
-      console.log(`[MessagePreprocessor][WARN] Last ID ${lastMessageId} not found, using timestamp fallback`);
+      logger.warn(`[MessagePreprocessor][WARN] Last ID ${lastMessageId} not found, using timestamp fallback`);
       logger.warn(`Last message ID ${lastMessageId} not found, using timestamp-based fallback`);
       return this.getNewMessagesUsingTimestampFallback(messages, lastMessageId);
     }
 
     // Get messages after the last processed one
     const newMessages = messages.slice(lastIndex + 1);
-    console.log(`[MessagePreprocessor][DEBUG] Found ${newMessages.length} new messages since ${lastMessageId}`);
+    if (window.CONFIG?.debug) console.log(`[MessagePreprocessor][DEBUG] Found ${newMessages.length} new messages since ${lastMessageId}`);
 
     // If no new messages, return just the last message for context
     if (newMessages.length === 0) {
       const lastMessage = messages[messages.length - 1];
-      console.log(`[MessagePreprocessor][DEBUG] No new messages, returning only the last message for context`);
+      if (window.CONFIG?.debug) console.debug(`[MessagePreprocessor][DEBUG] No new messages, returning only the last message for context`);
+      logger.warn(`[MessagePreprocessor][WARN] AudioTranscriber not available for transcriptions`);
       return this.formatMessagesForOpenAI([lastMessage]);
     }
 
@@ -175,12 +176,12 @@ class MessagePreprocessor {
       });
     }
 
-    console.log(`Found ${newMessages.length} new messages using timestamp fallback`);
+    if (window.CONFIG?.debug) console.log(`Found ${newMessages.length} new messages using timestamp fallback`);
 
     // If no new messages, return only the last message
     if (newMessages.length === 0) {
       const lastMessage = messages[messages.length - 1];
-      console.log('No new messages with timestamp fallback, returning only the last message');
+      if (window.CONFIG?.debug) console.debug('No new messages with timestamp fallback, returning only the last message');
       return this.formatMessagesForOpenAI([lastMessage]);
     }
 
@@ -244,12 +245,12 @@ class MessagePreprocessor {
       });
     }
 
-    console.log(`Found ${newMessages.length} new messages using timestamp fallback`);
+    if (window.CONFIG?.debug) console.log(`Found ${newMessages.length} new messages using timestamp fallback`);
 
     // If no new messages, return only the last message
     if (newMessages.length === 0) {
       const lastMessage = messages[messages.length - 1];
-      console.log('No new messages with timestamp fallback, returning only the last message');
+      if (window.CONFIG?.debug) console.debug('No new messages with timestamp fallback, returning only the last message');
       return [lastMessage];
     }
 
@@ -308,13 +309,13 @@ class MessagePreprocessor {
     const timeBlocks = messageData?.timeBlocks || [];
 
     if (!messages || !Array.isArray(messages)) {
-      console.log("[MessagePreprocessor][ERROR] Invalid message array provided to attachTranscriptions");
+      logger.error("[MessagePreprocessor][ERROR] Invalid message array provided to attachTranscriptions");
       return messageData;
     }
 
     // Check if AudioTranscriber is available
     if (!window.audioTranscriber) {
-      console.log("[MessagePreprocessor][WARN] AudioTranscriber not available for transcriptions");
+      logger.warn("[MessagePreprocessor][WARN] AudioTranscriber not available for transcriptions");
       return messageData;
     }
 
@@ -331,12 +332,14 @@ class MessagePreprocessor {
 
     // Use logger instead of direct console.log
     if (window.logger && typeof window.logger.debug === 'function') {
-      window.logger.debug(
-        `attachTranscriptions - Found ${messagesToTranscribe.length} messages needing transcription`, {},
-        'MessagePreprocessor'
-      );
+      if (window.CONFIG?.debug) {
+        window.logger.debug(
+          `attachTranscriptions - Found ${messagesToTranscribe.length} messages needing transcription`, {},
+          'MessagePreprocessor'
+        );
+      }
     } else {
-      console.log(`[MessagePreprocessor][DEBUG] attachTranscriptions - Found ${messagesToTranscribe.length} messages needing transcription`);
+      if (window.CONFIG?.debug) console.log(`[MessagePreprocessor][DEBUG] attachTranscriptions - Found ${messagesToTranscribe.length} messages needing transcription`);
     }
 
     if (messagesToTranscribe.length === 0) {
@@ -344,7 +347,7 @@ class MessagePreprocessor {
     }
 
     // NEW: Wait briefly to allow in-progress transcriptions to complete
-    console.log("[MessagePreprocessor][DEBUG] Waiting briefly to allow in-progress transcriptions...");
+    if (window.CONFIG?.debug) console.log("[MessagePreprocessor][DEBUG] Waiting briefly to allow in-progress transcriptions...");
     await new Promise(resolve => setTimeout(resolve, 1500));
 
     try {
@@ -403,7 +406,7 @@ class MessagePreprocessor {
 
       // Get image quality from configuration
       const imageQuality = window.CONFIG?.images?.quality || 'high';
-      logger.debug(`[MessagePreprocessor] Processing ${imageUrls.length} images with quality: ${imageQuality}`);
+      if (window.CONFIG?.debug) logger.debug(`[MessagePreprocessor] Processing ${imageUrls.length} images with quality: ${imageQuality}`);
 
       // Use ImageFilterUtils to process images with the specified quality
       if (window.ImageFilterUtils && typeof window.ImageFilterUtils.processImageUrls === 'function') {
@@ -499,7 +502,9 @@ class MessagePreprocessor {
     }
 
     // NEW: Log for diagnostics
-    console.log(`[MessagePreprocessor][DEBUG] formatMessagesForOpenAI received ${messages.length} messages`);
+    if (window.CONFIG?.debug) {
+      console.log(`[MessagePreprocessor][DEBUG] formatMessagesForOpenAI received ${messages.length} messages`);
+    }
 
     // Array for OpenAI messages
     const openaiMessages = [];
@@ -520,7 +525,9 @@ class MessagePreprocessor {
     const messageGroups = this.groupMessagesByRoleImproved(messages);
 
     // NEW: Log for group diagnostics
-    console.log(`[MessagePreprocessor][DEBUG] Messages grouped into ${messageGroups.length} groups`);
+    if (window.CONFIG?.debug) {
+      console.log(`[MessagePreprocessor][DEBUG] Messages grouped into ${messageGroups.length} groups`);
+    }
 
     // Convert groups to OpenAI format
     for (const messageGroup of messageGroups) {
@@ -538,7 +545,9 @@ class MessagePreprocessor {
     }
 
     // NEW: Detailed log of the final result
-    console.log(`[MessagePreprocessor][PAYLOAD] Full content to be sent: `, JSON.parse(JSON.stringify(openaiMessages)));
+    if (window.CONFIG?.debug) {
+      console.log(`[MessagePreprocessor][PAYLOAD] Full content to be sent: `, JSON.parse(JSON.stringify(openaiMessages)));
+    }
 
     return openaiMessages;
   }
@@ -568,7 +577,9 @@ class MessagePreprocessor {
     };
 
     // Single log at the beginning
-    console.log(`[MessagePreprocessor][DEBUG] Processing ${messages.length} messages for grouping`);
+    if (window.CONFIG?.debug) {
+      console.log(`[MessagePreprocessor][DEBUG] Processing ${messages.length} messages for grouping`);
+    }
 
     for (let i = 0; i < messages.length; i++) {
       const message = messages[i];
@@ -642,10 +653,10 @@ class MessagePreprocessor {
     }
 
     // SINGLE, summarized log instead of multiple logs
-    console.log(`[MessagePreprocessor][DEBUG] Messages grouped: ${messages.length} → ${groups.length} groups (${stats.userGroups} user, ${stats.assistantGroups} assistant)`);
+    if (window.CONFIG?.debug) {
+      console.log(`[MessagePreprocessor][DEBUG] Messages grouped: ${messages.length} → ${groups.length} groups (${stats.userGroups} user, ${stats.assistantGroups} assistant)`);
 
-    // Only show expandable details in debug mode
-    if (window.CONFIG?.logging?.level === 'debug') {
+      // Only show expandable details in debug mode
       console.groupCollapsed('[MessagePreprocessor][DEBUG] Group details (expand to view)');
       groups.forEach((group, i) => {
         //console.log(`Group ${i+1}: ${group.length} messages, sentByUs=${group[0].sentByUs}`);
@@ -757,7 +768,7 @@ class MessagePreprocessor {
     // Messages with images cannot have role=assistant
     let role = isSentByUs ? 'assistant' : 'user';
     if (hasImages && role === 'assistant') {
-      console.log('[MessagePreprocessor][WARN] Changing role to user for message with images');
+      console.warn('[MessagePreprocessor][WARN] Changing role to user for message with images');
       role = 'user';
     }
 

@@ -17,7 +17,7 @@ function loadCachedProducts() {
   try {
     const savedCache = storageUtilsInstance.get('PRODUCT_CACHE', {});
     Object.assign(productCache, savedCache);
-    console.log(`[ProductExtractorPOC] Loaded ${Object.keys(productCache).length} cached products from storage`);
+    if (window.CONFIG?.debug) console.debug(`[ProductExtractorPOC] Loaded ${Object.keys(productCache).length} cached products from storage`);
   } catch (error) {
     console.error('[ProductExtractorPOC] Error loading product cache', error);
   }
@@ -30,7 +30,7 @@ setInterval(() => {
   }
   try {
     storageUtilsInstance.set('PRODUCT_CACHE', productCache);
-    // console.log(`[ProductExtractorPOC] Saved ${Object.keys(productCache).length} product cache entries to storage`);
+    // This comment indicates there was a console.log that's now removed/commented
   } catch (error) {
     console.error('[ProductExtractorPOC] Error saving product cache', error);
   }
@@ -102,7 +102,7 @@ function filterRelevantFields(data) {
  * @returns {Object|null} Product details or null if not found
  */
 function extractFromInlineJsonPOC(doc, originalUrl, productId) {
-    console.log('[ProductExtractorPOC] Initiating extraction from inline JSON...');
+  if (window.CONFIG?.debug) console.debug('[ProductExtractorPOC] Initiating extraction from inline JSON...');
     const scripts = doc.querySelectorAll('script');
     let mainJsonData = null;
     let mediaJsonData = null;
@@ -189,8 +189,11 @@ function extractFromInlineJsonPOC(doc, originalUrl, productId) {
         return null;
     }
     
-    // console.log('[ProductExtractorPOC] Processing mainJsonData:', JSON.stringify(mainJsonData, null, 2).substring(0, 500) + "...");
-    // if (mediaJsonData) console.log('[ProductExtractorPOC] Processing mediaJsonData:', JSON.stringify(mediaJsonData, null, 2).substring(0, 500) + "...");
+    // Previous console.log statements replaced with debug condition
+    if (window.CONFIG?.debug) {
+      console.log('[ProductExtractorPOC] Processing mainJsonData:', JSON.stringify(mainJsonData, null, 2).substring(0, 500) + "...");
+      if (mediaJsonData) console.log('[ProductExtractorPOC] Processing mediaJsonData:', JSON.stringify(mediaJsonData, null, 2).substring(0, 500) + "...");
+    }
 
     try {
         const page = mainJsonData.__bbox.result.data.viewer.marketplace_product_details_page;
@@ -208,20 +211,20 @@ function extractFromInlineJsonPOC(doc, originalUrl, productId) {
             allImages = mediaJsonData.__bbox.result.data.node.all_listing_photos.edges
                 .map(edge => edge?.node?.image?.uri)
                 .filter(Boolean);
-            // console.log(`[ProductExtractorPOC] ${allImages.length} images from Media JSON (all_listing_photos).`);
+            if (window.CONFIG?.debug) console.log(`[ProductExtractorPOC] ${allImages.length} images from Media JSON (all_listing_photos).`);
         }
         // 2. Try mediaJsonData (if found and structured like POC's expectation for media)
         else if (mediaJsonData?.__bbox?.result?.data?.viewer?.marketplace_product_details_page?.target?.listing_photos) {
              const photos = mediaJsonData.__bbox.result.data.viewer.marketplace_product_details_page.target.listing_photos;
              if (photos && Array.isArray(photos)) {
                 allImages = photos.map(photo => photo?.image?.uri).filter(Boolean);
-                // console.log(`[ProductExtractorPOC] ${allImages.length} images from Media JSON (listing_photos).`);
+                if (window.CONFIG?.debug) console.log(`[ProductExtractorPOC] ${allImages.length} images from Media JSON (listing_photos).`);
              }
         }
         // 3. Fallback to mainJsonData.target.listing_photos (POC style)
         else if (target?.listing_photos && Array.isArray(target.listing_photos)) {
              allImages = target.listing_photos.map(photo => photo?.image?.uri).filter(Boolean);
-             // console.log(`[ProductExtractorPOC] ${allImages.length} images from Main JSON target.listing_photos.`);
+             if (window.CONFIG?.debug) console.log(`[ProductExtractorPOC] ${allImages.length} images from Main JSON target.listing_photos.`);
         }
         
         // Ensure primary image from main JSON (target or rt) is included (POC logic)
@@ -231,7 +234,7 @@ function extractFromInlineJsonPOC(doc, originalUrl, productId) {
                 allImages.unshift(mainPrimaryImageUri);
             }
             primaryImage = allImages[0]; // The first image is now the primary
-            // console.log('[ProductExtractorPOC] Ensured primary image from Main JSON is in list.');
+            if (window.CONFIG?.debug) console.log('[ProductExtractorPOC] Ensured primary image from Main JSON is in list.');
         } else if (allImages.length > 0) {
             primaryImage = allImages[0];
         }
@@ -242,11 +245,11 @@ function extractFromInlineJsonPOC(doc, originalUrl, productId) {
                 const url1 = new URL(allImages[0]);
                 const url2 = new URL(allImages[1]);
                 if (url1.pathname === url2.pathname && url1.searchParams.get('stp') !== url2.searchParams.get('stp')) {
-                    // console.log('[ProductExtractorPOC] Duplicate thumbnail detected (POC logic), removing first.');
+                    if (window.CONFIG?.debug) console.log('[ProductExtractorPOC] Duplicate thumbnail detected (POC logic), removing first.');
                     allImages.shift();
                     if (allImages.length > 0) primaryImage = allImages[0];
                 }
-            } catch(e) { /* console.warn('[ProductExtractorPOC] Error during image duplicate check:', e.message); */ }
+            } catch(e) { /* console.warn removed as it was commented */ }
         }
         if (!primaryImage && allImages.length > 0) primaryImage = allImages[0];
 
@@ -391,7 +394,7 @@ function extractFromInlineJsonPOC(doc, originalUrl, productId) {
  */
 function fetchProductWithGM(productId, url) {
   return new Promise((resolve, reject) => {
-    // console.log('[ProductExtractorPOC] Using GM_xmlhttpRequest to fetch HTML for product:', { productId, url });
+    if (window.CONFIG?.debug) console.log('[ProductExtractorPOC] Using GM_xmlhttpRequest to fetch HTML for product:', { productId, url });
 
     if (typeof GM_xmlhttpRequest !== 'function') {
       console.error('[ProductExtractorPOC] GM_xmlhttpRequest not available.');
@@ -412,7 +415,7 @@ function fetchProductWithGM(productId, url) {
           try { // Open in new tab for inspection (from POC)
             const blob = new Blob([response.responseText], { type: 'text/html' });
             const blobUrl = URL.createObjectURL(blob);
-          } catch (e) { /* console.warn('[ProductExtractorPOC] Could not open responseText in a new tab:', e); */ }
+          } catch (e) { /* Debug log commented out */ }
 
           const doc = new DOMParser().parseFromString(response.responseText, 'text/html');
           const productDetails = extractFromInlineJsonPOC(doc, url, productId);
@@ -420,7 +423,7 @@ function fetchProductWithGM(productId, url) {
           if (productDetails) {
             resolve(productDetails);
           } else {
-            // console.warn('[ProductExtractorPOC] Inline JSON extraction failed. No DOM fallback in POC style.');
+            if (window.CONFIG?.debug) console.warn('[ProductExtractorPOC] Inline JSON extraction failed. No DOM fallback in POC style.');
             resolve(filterRelevantFields({
                 source: 'inline_json_poc_failed',
                 productId: productId, id: productId, title: 'Extraction Failed (POC)',
@@ -457,10 +460,10 @@ async function getProductDetails(productId, url = null) {
   }
 
   if (!url) url = `https://www.facebook.com/marketplace/item/${productId}/`;
-  // console.log(`[ProductExtractorPOC] Fetching product details for ID: ${productId} from URL: ${url}`);
+  if (window.CONFIG?.debug) console.log(`[ProductExtractorPOC] Fetching product details for ID: ${productId} from URL: ${url}`);
 
   if (productCache[productId]) {
-    // console.log(`[ProductExtractorPOC] Product ${productId} found in cache. Returning cached version.`);
+    if (window.CONFIG?.debug) console.log(`[ProductExtractorPOC] Product ${productId} found in cache. Returning cached version.`);
     return productCache[productId];
   }
 
@@ -514,9 +517,11 @@ function inspectProduct(productId) {
     if (productLink) productId = extractProductIdFromUrl(productLink.href);
   }
   if (productId && productCache[productId]) {
-    console.log("--- MANUAL PRODUCT INSPECTION (POC Style Cache) ---");
-    console.log(JSON.stringify(productCache[productId], null, 2));
-    console.log("--- END INSPECTION ---");
+    if (window.CONFIG?.debug) {
+      console.log("--- MANUAL PRODUCT INSPECTION (POC Style Cache) ---");
+      console.log(JSON.stringify(productCache[productId], null, 2));
+      console.log("--- END INSPECTION ---");
+    }
     return productCache[productId];
   } else {
     console.error("[ProductExtractorPOC] No product with ID " + productId + " in cache to inspect, or productId is missing.");
@@ -535,7 +540,7 @@ function initialize(utils) {
     if (utils && utils.storageUtils) {
         storageUtilsInstance = utils.storageUtils;
         loadCachedProducts(); // Load cache once utils are available
-        console.log('[ProductExtractorPOC] Initialized with storageUtils.');
+        if (window.CONFIG?.debug) console.log('[ProductExtractorPOC] Initialized with storageUtils.');
     } else {
         console.warn('[ProductExtractorPOC] Initialization failed: storageUtils not provided.');
     }
@@ -668,4 +673,4 @@ window.productExtractor = {
   getRelevantProductSummary,
 };
 
-console.log('[ProductExtractorPOC] Module loaded. Call productExtractor.initialize({storageUtils: yourStorageUtils}) from main script.');
+if (window.CONFIG?.debug) console.log('[ProductExtractorPOC] Module loaded. Call productExtractor.initialize({storageUtils: yourStorageUtils}) from main script.');

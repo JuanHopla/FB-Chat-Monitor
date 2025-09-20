@@ -67,7 +67,9 @@ class ScrollManager {
     
     // Notify scroll start
     this._notifyEvent('beforeScroll', { direction: 'up', type: 'beginning' });
-    console.log('[ScrollManager] Starting scroll to the beginning of the conversation');
+    if (window.CONFIG?.debug) {
+      console.log('[ScrollManager] Starting scroll to the beginning of the conversation');
+    }
 
     try {
       // Start scroll process
@@ -110,7 +112,9 @@ class ScrollManager {
           
           // If we have several attempts without changes, we assume we've reached the beginning
           if (this.state.consecutiveNoChange >= scrollOptions.noChangeThreshold) {
-            console.log('[ScrollManager] Reached the beginning of the conversation');
+            if (window.CONFIG?.debug) {
+              console.log('[ScrollManager] Reached the beginning of the conversation');
+            }
             break;
           }
         } else {
@@ -122,7 +126,9 @@ class ScrollManager {
       
       // Check result
       const scrolledToBeginning = (container.scrollTop === 0);
-      console.log(`[ScrollManager] Scroll completed in ${this.state.scrollAttempts} attempts. Reached beginning: ${scrolledToBeginning}`);
+      if (window.CONFIG?.debug) {
+        console.log(`[ScrollManager] Scroll completed in ${this.state.scrollAttempts} attempts. Reached beginning: ${scrolledToBeginning}`);
+      }
       
       this._notifyEvent('scrollToBeginning', {
         success: true,
@@ -170,7 +176,9 @@ class ScrollManager {
                       (this.state.originalPosition === null && options.scrollToBottom !== false);
     
     if (goToBottom) {
-      console.log(`[ScrollManager] Scrolling to the end of the conversation`);
+      if (window.CONFIG?.debug) {
+        console.log(`[ScrollManager] Scrolling to the end of the conversation`);
+      }
       container.scrollTop = container.scrollHeight;
       await new Promise(resolve => setTimeout(resolve, 100));
       return { success: true, scrolledToBottom: true };
@@ -181,7 +189,9 @@ class ScrollManager {
       return { success: false, error: 'Cannot restore position, original position is null' };
     }
     
-    console.log(`[ScrollManager] Restoring position to ${this.state.originalPosition}`);
+    if (window.CONFIG?.debug) {
+      console.log(`[ScrollManager] Restoring position to ${this.state.originalPosition}`);
+    }
     
     try {
       // If smooth scroll is enabled, do it in steps
@@ -259,7 +269,9 @@ class ScrollManager {
       }
       
       if (!targetElement) {
-        console.log(`[ScrollManager] Target message not found, searching by scroll...`);
+        if (window.CONFIG?.debug) {
+          console.log(`[ScrollManager] Target message not found, searching by scroll...`);
+        }
         
         // If the element was not found, perform iterative scroll to search
         const result = await this._searchMessageByScroll(messageTarget, scrollOptions);
@@ -269,7 +281,9 @@ class ScrollManager {
       // Notify scroll start
       this._notifyEvent('beforeScroll', { direction: 'to-message', messageTarget });
       
-      console.log(`[ScrollManager] Scrolling to specific message`);
+      if (window.CONFIG?.debug) {
+        console.log(`[ScrollManager] Scrolling to specific message`);
+      }
       
       // Scroll to the element
       targetElement.scrollIntoView({
@@ -327,7 +341,9 @@ class ScrollManager {
       // Search for the message after each scroll
       const targetElement = document.querySelector(`[data-message-id="${messageId}"], [id="${messageId}"]`);
       if (targetElement) {
-        console.log(`[ScrollManager] Message found after ${this.state.scrollAttempts} attempts`);
+        if (window.CONFIG?.debug) {
+          console.log(`[ScrollManager] Message found after ${this.state.scrollAttempts} attempts`);
+        }
         
         // Scroll to the element
         targetElement.scrollIntoView({
@@ -367,7 +383,9 @@ class ScrollManager {
       // Detect end of scroll
       if (container.scrollTop <= 0 || 
           (prevScrollHeight === currentScrollHeight && this.state.consecutiveNoChange >= 2)) {
-        console.log('[ScrollManager] Reached scroll limit without finding the message');
+        if (window.CONFIG?.debug) {
+          console.log('[ScrollManager] Reached scroll limit without finding the message');
+        }
         break;
       }
       
@@ -380,7 +398,9 @@ class ScrollManager {
       this.state.lastScrollHeight = currentScrollHeight;
     }
     
-    console.log(`[ScrollManager] Message not found after ${this.state.scrollAttempts} attempts`);
+    if (window.CONFIG?.debug) {
+      console.log(`[ScrollManager] Message not found after ${this.state.scrollAttempts} attempts`);
+    }
     
     this._notifyEvent('scrollToMessage', {
       success: true,

@@ -51,8 +51,10 @@ class LogManager {
     if (window.logger && typeof window.logger.process === 'function') {
       window.logger.process(phase, message, data);
     } else {
-      console.log(`[FB-Chat-Monitor][${phase}] ${message}`,
-        Object.keys(data).length > 0 ? data : '');
+      if (window.CONFIG?.debug) {
+        console.debug(`[FB-Chat-Monitor][${phase}] ${message}`,
+          Object.keys(data).length > 0 ? data : '');
+      }
     }
   }
 
@@ -71,8 +73,10 @@ class LogManager {
     if (window.logger && typeof window.logger.substep === 'function') {
       window.logger.substep(phase, step, message, data);
     } else {
-      console.log(`[FB-Chat-Monitor][${phase}][${step}] ${message}`,
-        Object.keys(data).length > 0 ? data : '');
+      if (window.CONFIG?.debug) {
+        console.debug(`[FB-Chat-Monitor][${phase}][${step}] ${message}`,
+          Object.keys(data).length > 0 ? data : '');
+      }
     }
   }
 
@@ -83,16 +87,19 @@ class LogManager {
    */
   startGroup(title, collapsed = this.config.collapseGroups) {
     if (!this.config.useGroups) {
-      console.log(`[FB-Chat-Monitor] === ${title} ===`);
+      if (window.CONFIG?.debug) {
+        console.debug(`[FB-Chat-Monitor] === ${title} ===`);
+      }
       return;
     }
-    
-    if (collapsed) {
-      console.groupCollapsed(`[FB-Chat-Monitor] ${title}`);
-    } else {
-      console.group(`[FB-Chat-Monitor] ${title}`);
+    if (window.CONFIG?.debug) {
+      if (collapsed) {
+        console.groupCollapsed(`[FB-Chat-Monitor] ${title}`);
+      } else {
+        console.group(`[FB-Chat-Monitor] ${title}`);
+      }
+      this._activeGroups++;
     }
-    this._activeGroups++;
   }
 
   /**
@@ -102,9 +109,10 @@ class LogManager {
     if (!this.config.useGroups || this._activeGroups <= 0) {
       return;
     }
-    
-    console.groupEnd();
-    this._activeGroups--;
+    if (window.CONFIG?.debug) {
+      console.groupEnd();
+      this._activeGroups--;
+    }
   }
 
   /**
@@ -116,23 +124,23 @@ class LogManager {
    */
   logGroup(title, items, formatter = null, collapsed = this.config.collapseGroups) {
     this.startGroup(title, collapsed);
-    
-    if (Array.isArray(items)) {
-      if (formatter && typeof formatter === 'function') {
-        items.forEach((item, index) => {
-          console.log(formatter(item, index));
-        });
-      } else if (items.length > 0) {
-        console.table(items);
+    if (window.CONFIG?.debug) {
+      if (Array.isArray(items)) {
+        if (formatter && typeof formatter === 'function') {
+          items.forEach((item, index) => {
+            console.debug(formatter(item, index));
+          });
+        } else if (items.length > 0) {
+          console.table(items);
+        } else {
+          console.debug('No items to show');
+        }
+      } else if (typeof items === 'object' && items !== null) {
+        console.debug(items);
       } else {
-        console.log('No items to show');
+        console.debug('Invalid data');
       }
-    } else if (typeof items === 'object' && items !== null) {
-      console.log(items);
-    } else {
-      console.log('Invalid data');
     }
-    
     this.endGroup();
   }
 
@@ -147,23 +155,23 @@ class LogManager {
       return;
     }
     
-    this.startGroup(`[${component}][DEBUG] ${title}`, true);
-    
-    if (Array.isArray(data)) {
-      if (data.length === 0) {
-        console.log('Empty array');
-      } else if (data.length <= 50) {
-        console.log(data);
+    if (window.CONFIG?.debug) {
+      this.startGroup(`[${component}][DEBUG] ${title}`, true);
+      if (Array.isArray(data)) {
+        if (data.length === 0) {
+          console.debug('Empty array');
+        } else if (data.length <= 50) {
+          console.debug(data);
+        } else {
+          console.debug(`Array with ${data.length} elements:`, data.slice(0, 10), '...');
+        }
+      } else if (data && typeof data === 'object') {
+        console.debug(data);
       } else {
-        console.log(`Array with ${data.length} elements:`, data.slice(0, 10), '...');
+        console.debug(data);
       }
-    } else if (data && typeof data === 'object') {
-      console.log(data);
-    } else {
-      console.log(data);
+      this.endGroup();
     }
-    
-    this.endGroup();
   }
   
   /**
@@ -356,6 +364,108 @@ window.setLogLevel = function (level) {
   return level;
 };
 
+// Flow logger: estructura de pasos de alto nivel por chat
+class FlowLogger {
+  constructor() {
+    this.reset();
+  }
+  start(chatId) {
+    // If starting for a different chat, reset; otherwise preserve steps
+    const normalized = chatId || null;
+    if (this.chatId !== normalized) {
+      this.chatId = normalized;
+      this.steps = [];
+      this.startedAt = Date.now();
+    }
+  }
+  step(key, data = {}) {
+    const entry = { key, data, ts: Date.now() };
+    this.steps.push(entry);
+    if (window.CONFIG?.debug) {
+      try { console.debug('[FB-Chat-Monitor][FLOW][DEBUG]', key, Object.keys(data).length ? data : ''); } catch {}
+    }
+    return entry;
+  }
+  getSteps() { return [...this.steps]; }
+  reset() {
+    this.chatId = null;
+    this.steps = [];
+    this.startedAt = null;
+  }
+  // Imprime resumen amigable para cliente siguiendo el orden deseado
+  printSummary() {
+    try {
+      const steps = this.steps;
+      const find = (k) => steps.find(s => s.key === k);
+      const findAll = (k) => steps.filter(s => s.key === k);
+
+      const threadCheck = find('THREAD_CHECK');
+      const isNew = !!find('THREAD_NEW');
+      const threadCreated = find('THREAD_CREATED');
+      const roleSet = find('ROLE_SET');
+      const productAdded = find('PRODUCT_INFO_ADDED');
+      const scraped = find('MESSAGES_SCRAPED');
+      const transcribed = find('AUDIO_TRANSCRIBED');
+      const payload = find('PAYLOAD_BUILT');
+      const run = find('RUN_CREATED');
+      const lastMsg = find('LAST_MESSAGE_UPDATED');
+      const reply = find('REPLY_RECEIVED');
+      const pasted = find('PASTED_TO_INPUT');
+      const sentAuto = find('MESSAGE_SENT_AUTO');
+      const autoStatus = findAll('AUTO_STATUS');
+
+      const title = `Generate message flow (chat ${this.chatId || '-'})`;
+      console.group(`[FB-Chat-Monitor] ${title}`);
+
+      // 1) checking thread in local storage
+      console.log('1) checking thread in local storage');
+      if (threadCheck?.data?.exists) {
+        console.log('a) existing thread, continue with #2');
+      } else {
+        console.log('b) new thread:');
+        if (threadCreated?.data?.openaiThreadId) {
+          console.log(`- create thread (stored) id=${threadCreated.data.openaiThreadId}`);
+        } else {
+          console.log('- create thread (stored)');
+        }
+        if (roleSet?.data?.role) console.log(`- define role: ${roleSet.data.role} (stored)`);
+        if (productAdded) console.log('- get product listing info (added to thread)');
+      }
+
+      // 2) scrape new messages
+      console.log('2) scrape new messages');
+      if (scraped?.data?.count != null) console.log(`- messages scraped: ${scraped.data.count}`);
+      if (transcribed?.data?.count != null) console.log(`- transcribe audio: ${transcribed.data.count} files`);
+      if (payload?.data) {
+        console.log('- add all new messages to payload (show full object)');
+        console.log(payload.data);
+      }
+      if (run?.data?.runId) console.log(`- run thread: runId=${run.data.runId}`);
+      if (lastMsg?.data?.lastMessageId) console.log(`- update lastMessage in local storage: ${lastMsg.data.lastMessageId}`);
+
+      // 3) receive reply
+      console.log('3) receive reply');
+      if (reply?.data?.text) {
+        console.log('- reply:', reply.data.text);
+      }
+      if (pasted) console.log('- paste to input');
+
+      // 4) send message (if auto)
+      if (sentAuto) console.log('4) send message (auto)');
+      if (autoStatus.length) {
+        autoStatus.forEach(s => {
+          if (s.data?.type === 'FOUND') console.log(`Auto: new message found, open thread ${s.data.chatId || ''}`.trim());
+          if (s.data?.type === 'SLEEP') console.log(`Auto: no new message found, sleep for ${s.data.seconds || 0}s`);
+        });
+      }
+
+      console.groupEnd();
+    } catch (e) {
+      try { console.warn('[FB-Chat-Monitor] Error printing flow summary', e); } catch {}
+    }
+  }
+}
+
 // --- Logger Utility ---
 const logger = (() => {
   const logs = [];
@@ -396,7 +506,7 @@ const logger = (() => {
     if (window.CONFIG?.debug) {
       const entry = { type: 'DEBUG', timestamp: new Date().toISOString(), message, data };
       _addLog(entry);
-      console.log(`[FB-Chat-Monitor][DEBUG] ${message}`, data);
+      console.debug(`[FB-Chat-Monitor][DEBUG] ${message}`, data);
     }
   }
 
@@ -697,8 +807,9 @@ const logger = (() => {
       data
     };
     _addLog(entry);
-
-    console.log(`[FB-Chat-Monitor][${formattedPhase}] ${message}`, data);
+    if (window.CONFIG?.debug) {
+      console.debug(`[FB-Chat-Monitor][${formattedPhase}] ${message}`, data);
+    }
   }
 
   /**
@@ -721,9 +832,10 @@ const logger = (() => {
       data
     };
     _addLog(entry);
-
-    console.log(`[FB-Chat-Monitor][${formattedPhase}][${formattedStep}] ${message}`,
-      Object.keys(data).length > 0 ? data : '');
+    if (window.CONFIG?.debug) {
+      console.debug(`[FB-Chat-Monitor][${formattedPhase}][${formattedStep}] ${message}`,
+        Object.keys(data).length > 0 ? data : '');
+    }
   }
 
   return {
@@ -1136,6 +1248,16 @@ userActivityTracker.initialize();
 
 // --- Expose Utilities ---
 window.logger = logger;
+// Initialize debug flag from localStorage toggle if present
+try {
+  const flag = localStorage.getItem('FB_CHAT_MONITOR_DEBUG');
+  if (flag !== null) {
+    window.CONFIG = window.CONFIG || {};
+    window.CONFIG.debug = flag === 'true';
+  }
+} catch {}
+// Expose flow logger
+window.flowLogger = new FlowLogger();
 window.domUtils = domUtils;
 window.storageUtils = storageUtils;
 window.userActivityTracker = userActivityTracker;

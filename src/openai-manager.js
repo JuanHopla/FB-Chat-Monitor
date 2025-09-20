@@ -44,12 +44,16 @@ class OpenAIManager {
     if (window.messagePreprocessor) this.messagePreprocessor = window.messagePreprocessor;
     if (window.assistantHandler) this.assistantHandler = window.assistantHandler;
     this.isInitialized = !!this.apiKey;
-    console.log(`OpenAI Manager initialized: ${this.isInitialized ? 'SUCCESS' : 'FAILED - No API Key'}`);
+    if (window.CONFIG?.debug) {
+      console.log(`OpenAI Manager initialized: ${this.isInitialized ? 'SUCCESS' : 'FAILED - No API Key'}`);
+    }
     return this.isInitialized;
   }
 
   loadConfig(apiKey = null) {
-    console.log('loadConfig() called - redirecting to initialize()');
+    if (window.CONFIG?.debug) {
+      console.log('loadConfig() called - redirecting to initialize()');
+    }
     return this.initialize(apiKey);
   }
 
@@ -87,7 +91,9 @@ class OpenAIManager {
         }
       });
       if (response.ok) {
-        console.log('API key validated successfully');
+        if (window.CONFIG?.debug) {
+          console.log('API key validated successfully');
+        }
         return true;
       } else {
         const error = await response.json();
@@ -125,10 +131,10 @@ class OpenAIManager {
     let messagesArray;
     if (Array.isArray(context.messages)) {
       messagesArray = context.messages;
-      console.log('[OpenAIManager] Detected old message format (direct array)');
+      if (window.CONFIG?.debug) console.debug('[OpenAIManager] Detected old message format (direct array)');
     } else if (context.messages && Array.isArray(context.messages.messages)) {
       messagesArray = context.messages.messages;
-      console.log('[OpenAIManager] Detected new message format (object with messages and timeBlocks)');
+      if (window.CONFIG?.debug) console.debug('[OpenAIManager] Detected new message format (object with messages and timeBlocks)');
     } else {
       console.error('[OpenAIManager] Invalid message format:', context.messages);
       throw new Error('Invalid message format in context');
@@ -136,16 +142,21 @@ class OpenAIManager {
 
     // NEW: First, apply transcriptions to the messages
     if (window.messagePreprocessor && typeof window.messagePreprocessor.attachTranscriptions === 'function') {
-      console.log('[OpenAIManager] Applying transcriptions to context messages...');
+      if (window.CONFIG?.debug) console.debug('[OpenAIManager] Applying transcriptions to context messages...');
       messagesArray = await window.messagePreprocessor.attachTranscriptions(messagesArray);
     }
 
     // Original logs
-    console.log('[OpenAIManager] Step 3.1: Received context for response generation:', {
-      ...context,
-      messages: messagesArray
-    });
-    console.log('[OpenAIManager] Step 3.2: Calling assistantHandler.generateResponse...');
+    if (window.CONFIG?.debug) {
+      console.debug('[OpenAIManager] Step 3.1: Received context for response generation:', {
+        ...context,
+        messages: messagesArray
+      });
+      console.debug('[OpenAIManager] Step 3.2: Calling assistantHandler.generateResponse...');
+    }
+    if (window.flowLogger) {
+      window.flowLogger.step('PAYLOAD_BUILT', { payload: { ...context, messages: messagesArray } });
+    }
 
     // Update the context with the processed array and the regeneration flag
     const contextToSend = {
@@ -163,8 +174,8 @@ class OpenAIManager {
       contextToSend.productDetails,
       contextToSend.options
     );
-
-    console.log('[OpenAIManager] Step 3.3: assistantHandler.generateResponse completed. Response:', result);
+    if (window.flowLogger) window.flowLogger.step('REPLY_RECEIVED', { text: result });
+    if (window.CONFIG?.debug) console.debug('[OpenAIManager] Step 3.3: assistantHandler.generateResponse completed. Response:', result);
     return result;
   }
 
@@ -177,7 +188,9 @@ class OpenAIManager {
     if (!this.messagePreprocessor) throw new Error('MessagePreprocessor not initialized');
     // Log the payload that will be sent to the assistant
     const payload = this.messagePreprocessor.formatMessagesForOpenAI(context.messages);
-    console.log('[OpenAIManager] Payload prepared to send to assistant:', payload);
+    if (window.CONFIG?.debug) {
+      console.log('[OpenAIManager] Payload prepared to send to assistant:', payload);
+    }
     return payload;
   }
 
@@ -195,7 +208,9 @@ class OpenAIManager {
       forceNewThread = false
     } = options;
 
-    console.log(`[OpenAIManager][DEBUG] generateAssistantResponse - threadId: ${fbThreadId}, role: ${role}, hasMessages: ${!!messages}, hasProduct: ${!!productData}`);
+    if (window.CONFIG?.debug) {
+      console.log(`[OpenAIManager][DEBUG] generateAssistantResponse - threadId: ${fbThreadId}, role: ${role}, hasMessages: ${!!messages}, hasProduct: ${!!productData}`);
+    }
 
     try {
       // Extract messages, supporting both the old (array) and new (object) formats
@@ -212,13 +227,17 @@ class OpenAIManager {
         throw new Error('Invalid message format');
       }
       // 1. Ensure required components are initialized
-      console.log(`[OpenAIManager][DEBUG] Verifying component initialization`);
+      if (window.CONFIG?.debug) {
+        console.log(`[OpenAIManager][DEBUG] Verifying component initialization`);
+      }
       if (!window.assistantHandler || !window.assistantHandler.initialized) {
-        console.log(`[OpenAIManager][DEBUG] AssistantHandler needs initialization`);
+        if (window.CONFIG?.debug) {
+          console.log(`[OpenAIManager][DEBUG] AssistantHandler needs initialization`);
+        }
         if (window.assistantHandler && typeof window.assistantHandler.initialize === 'function') {
           await window.assistantHandler.initialize();
         } else {
-          console.log(`[OpenAIManager][ERROR] AssistantHandler not available`);
+          console.error(`[OpenAIManager][ERROR] AssistantHandler not available`);
           throw new Error('AssistantHandler not available');
         }
       }
@@ -226,13 +245,17 @@ class OpenAIManager {
       // Initialize AudioTranscriber to enable parallel transcription
       if (window.audioTranscriber && typeof window.audioTranscriber.initialize === 'function'
         && !window.audioTranscriber.initialized) {
-        console.log(`[OpenAIManager][DEBUG] Initializing AudioTranscriber`);
+        if (window.CONFIG?.debug) {
+          console.log(`[OpenAIManager][DEBUG] Initializing AudioTranscriber`);
+        }
         await window.audioTranscriber.initialize();
       }
 
       // 2. If forceNewThread, delete any existing thread
       if (forceNewThread && window.threadStore && window.threadStore.hasThread(fbThreadId)) {
-        console.log(`[OpenAIManager][DEBUG] Forcing new thread for ${fbThreadId}`);
+        if (window.CONFIG?.debug) {
+          console.log(`[OpenAIManager][DEBUG] Forcing new thread for ${fbThreadId}`);
+        }
         logger.debug(`Forcing new thread for ${fbThreadId}`);
         // Get the existing thread info before deletion
         const existingThread = window.threadStore.getThreadInfo(fbThreadId);
@@ -240,11 +263,15 @@ class OpenAIManager {
         // Delete from thread store
         window.threadStore.threads.delete(fbThreadId);
         window.threadStore.saveThreads();
-        console.log(`[OpenAIManager][DEBUG] Old thread deleted from ThreadStore`);
+        if (window.CONFIG?.debug) {
+          console.log(`[OpenAIManager][DEBUG] Old thread deleted from ThreadStore`);
+        }
       }
 
       // 3. Generate response using AssistantHandler
-      console.log(`[OpenAIManager][DEBUG] Calling assistantHandler.generateResponse`);
+      if (window.CONFIG?.debug) {
+        console.log(`[OpenAIManager][DEBUG] Calling assistantHandler.generateResponse`);
+      }
       const response = await window.assistantHandler.generateResponse(
         fbThreadId,
         messages,
@@ -252,10 +279,12 @@ class OpenAIManager {
         productData
       );
 
-      console.log(`[OpenAIManager][DEBUG] Response generated: "${response.substring(0, 50)}${response.length > 50 ? '...' : ''}"`);
+      if (window.CONFIG?.debug) {
+        console.log(`[OpenAIManager][DEBUG] Response generated: "${response.substring(0, 50)}${response.length > 50 ? '...' : ''}"`);
+      }
       return response;
     } catch (error) {
-      console.log(`[OpenAIManager][ERROR] Error generating response: ${error.message}`, error);
+      console.error(`[OpenAIManager][ERROR] Error generating response: ${error.message}`, error);
       logger.error(`Error generating assistant response: ${error.message}`, {}, error);
       throw error;
     }
@@ -331,7 +360,7 @@ class OpenAIManager {
 // Expose
 const openAIManager = new OpenAIManager();
 window.openaiManager = openAIManager;
-console.log('[OpenAI Manager] Instance exposed globally as window.openaiManager');
+if (window.CONFIG?.debug) console.debug('[OpenAI Manager] Instance exposed globally as window.openaiManager');
 
 // Minimal global verification
 (function ensureGlobalOpenAIManager() {
@@ -342,7 +371,7 @@ console.log('[OpenAI Manager] Instance exposed globally as window.openaiManager'
     window.openaiManager.apiKey = CONFIG.AI.apiKey;
     window.openaiManager.isInitialized = true;
   }
-  console.log('[OpenAI Manager] Status after global verification:',
+  if (window.CONFIG?.debug) console.debug('[OpenAI Manager] Status after global verification:',
     `apiKey=${!!window.openaiManager.apiKey}`,
     `isInitialized=${window.openaiManager.isInitialized}`,
     `isReady=${typeof window.openaiManager.isReady === 'function' ? window.openaiManager.isReady() : 'method not available'}`);

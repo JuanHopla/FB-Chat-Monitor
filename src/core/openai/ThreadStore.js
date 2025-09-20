@@ -32,7 +32,9 @@ class ThreadStore {
       this.startCleanupInterval();
       
       this.initialized = true;
-      logger.debug('ThreadStore initialized successfully');
+      if (window.CONFIG?.debug) {
+        logger.debug('ThreadStore initialized successfully');
+      }
       return true;
     } catch (error) {
       logger.error('Failed to initialize ThreadStore', {}, error);
@@ -47,23 +49,29 @@ class ThreadStore {
    * @returns {Object|null} Thread info or null if not found
    */
   getThreadInfo(fbThreadId, forceReload = false) {
-    console.log(`[ThreadStore][DEBUG] Looking for info for thread: ${fbThreadId}`);
+    if (window.CONFIG?.debug) {
+      console.debug(`[ThreadStore][DEBUG] Looking for info for thread: ${fbThreadId}`);
+    }
     
     // If forced reload is requested or the store is not initialized, load from storage
     if (forceReload || !this.initialized) {
-      //console.log(`[ThreadStore][DEBUG] ${forceReload ? 'Forcing reload' : 'Store not initialized'}, loading from storage`);
       this.loadThreads();
     }
     
-    const threadInfo = this.threads.get(fbThreadId);
+  const threadInfo = this.threads.get(fbThreadId);
+  if (window.flowLogger) window.flowLogger.step('THREAD_CHECK', { chatId: fbThreadId, exists: !!threadInfo });
     
     // Update last accessed time if found
     if (threadInfo) {
-      console.log(`[ThreadStore][DEBUG] Thread found: ${JSON.stringify(threadInfo)}`);
+      if (window.CONFIG?.debug) {
+        console.debug(`[ThreadStore][DEBUG] Thread found: ${JSON.stringify(threadInfo)}`);
+      }
       threadInfo.lastAccessed = Date.now();
       this.threads.set(fbThreadId, threadInfo);
     } else {
-      console.log(`[ThreadStore][DEBUG] Thread not found: ${fbThreadId}`);
+      if (window.CONFIG?.debug) {
+        console.debug(`[ThreadStore][DEBUG] Thread not found: ${fbThreadId}`);
+      }
     }
     
     return threadInfo || null;
@@ -77,7 +85,10 @@ class ThreadStore {
    * @returns {Object} Thread info
    */
   createThreadInfo(fbThreadId, openaiThreadId, chatRole) {
-    console.log(`[ThreadStore][DEBUG] Creating new thread info: ${fbThreadId} -> ${openaiThreadId}, role: ${chatRole}`);
+    if (window.CONFIG?.debug) {
+      console.debug(`[ThreadStore][DEBUG] Creating new thread info: ${fbThreadId} -> ${openaiThreadId}, role: ${chatRole}`);
+    }
+    
     const threadInfo = {
       openaiThreadId,
       chatRole,
@@ -88,7 +99,16 @@ class ThreadStore {
     
     this.threads.set(fbThreadId, threadInfo);
     this.saveThreads();
-    console.log(`[ThreadStore][DEBUG] Thread info created and saved`);
+    
+    if (window.CONFIG?.debug) {
+      console.debug(`[ThreadStore][DEBUG] Thread info created and saved`);
+    }
+    
+    if (window.flowLogger) {
+      window.flowLogger.step('THREAD_NEW', { chatId: fbThreadId });
+      window.flowLogger.step('THREAD_CREATED', { openaiThreadId });
+      window.flowLogger.step('ROLE_SET', { role: chatRole });
+    }
     
     return threadInfo;
   }
@@ -101,11 +121,16 @@ class ThreadStore {
    * @returns {boolean} Success status
    */
   updateLastMessage(fbThreadId, lastMessageId, timestamp = Date.now()) {
-    console.log(`[ThreadStore][DEBUG] Updating lastMessageId for ${fbThreadId}: ${lastMessageId}`);
+    if (window.CONFIG?.debug) {
+      console.debug(`[ThreadStore][DEBUG] Updating lastMessageId for ${fbThreadId}: ${lastMessageId}`);
+    }
+    
     const threadInfo = this.threads.get(fbThreadId);
     
     if (!threadInfo) {
-      console.log(`[ThreadStore][WARN] Thread info not found for ${fbThreadId}, cannot update`);
+      if (window.CONFIG?.debug) {
+        console.debug(`[ThreadStore][WARN] Thread info not found for ${fbThreadId}, cannot update`);
+      }
       logger.warn(`Thread info not found for ${fbThreadId}`);
       return false;
     }
@@ -114,7 +139,12 @@ class ThreadStore {
     threadInfo.lastAccessed = timestamp;
     this.threads.set(fbThreadId, threadInfo);
     this.saveThreads();
-    console.log(`[ThreadStore][DEBUG] lastMessageId updated`);
+    
+    if (window.CONFIG?.debug) {
+      console.debug(`[ThreadStore][DEBUG] lastMessageId updated`);
+    }
+    
+    if (window.flowLogger) window.flowLogger.step('LAST_MESSAGE_UPDATED', { lastMessageId });
     
     return true;
   }
@@ -140,7 +170,9 @@ class ThreadStore {
       
       if (threadsData) {
         this.threads = new Map(Object.entries(threadsData));
-        logger.debug(`Loaded ${this.threads.size} threads from storage`);
+        if (window.CONFIG?.debug) {
+          logger.debug(`Loaded ${this.threads.size} threads from storage`);
+        }
       }
     } catch (error) {
       logger.error('Error loading threads from storage', {}, error);
@@ -174,7 +206,9 @@ class ThreadStore {
    */
   startCleanupInterval() {
     setInterval(() => this.cleanupOldThreads(), this.threadCleanupInterval);
-    logger.debug(`Thread cleanup scheduled every ${this.threadCleanupInterval / 1000} seconds`);
+    if (window.CONFIG?.debug) {
+      logger.debug(`Thread cleanup scheduled every ${this.threadCleanupInterval / 1000} seconds`);
+    }
   }
 
   /**
@@ -198,7 +232,9 @@ class ThreadStore {
     }
     
     if (removedCount > 0) {
-      logger.debug(`Cleaned up ${removedCount} expired threads`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`Cleaned up ${removedCount} expired threads`);
+      }
       this.saveThreads();
     }
   }

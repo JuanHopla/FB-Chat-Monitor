@@ -12,7 +12,7 @@ function initialize() {
   // Use LogManager for initialization logging
   if (window.logManager) {
     window.logManager.phase('INITIALIZATION', 'Initializing FB Chat Monitor');
-  } else {
+  } else if (window.CONFIG?.debug) {
     logger.log('Initializing FB Chat Monitor');
   }
 
@@ -27,7 +27,7 @@ function initialize() {
     CONFIG.AI.enabled = true;
     if (window.logManager) {
       window.logManager.step('INITIALIZATION', 'CONFIG', 'API Key loaded from localStorage');
-    } else {
+    } else if (window.CONFIG?.debug) {
       logger.log('API Key loaded from localStorage in init');
     }
   }
@@ -41,7 +41,7 @@ function initialize() {
     CONFIG.AI.enabled = true;
     if (window.logManager) {
       window.logManager.step('INITIALIZATION', 'CONFIG', 'API key available - AI enabled');
-    } else {
+    } else if (window.CONFIG?.debug) {
       logger.log('API key loaded from localStorage');
     }
 
@@ -51,7 +51,7 @@ function initialize() {
       const ok = openAIManager.initialize(CONFIG.AI.apiKey, CONFIG.AI.model);
       if (window.logManager) {
         window.logManager.step('INITIALIZATION', 'OPENAI', `OpenAI Manager initialized: ${ok ? 'OK' : 'ERROR'}`);
-      } else {
+      } else if (window.CONFIG?.debug) {
         logger.log(`OpenAI Manager auto-initialized: ${ok}`);
       }
     } else {
@@ -67,7 +67,7 @@ function initialize() {
   if (window.openaiManager) {
     if (window.logManager) {
       window.logManager.step('INITIALIZATION', 'VERIFY', 'OpenAI Manager available to generate responses');
-    } else {
+    } else if (window.CONFIG?.debug) {
       logger.log('OpenAI Manager is available to generate responses');
     }
   } else {
@@ -79,7 +79,9 @@ function initialize() {
   }
 
   if (window.populateAssistantsFromStorage && typeof window.populateAssistantsFromStorage === 'function') {
-    console.log('Loading assistants from init.js');
+    if (window.CONFIG?.debug) {
+      console.log('Loading assistants from init.js');
+    }
     window.populateAssistantsFromStorage();
   }
 
@@ -89,7 +91,7 @@ function initialize() {
   if (window.assistantManager) {
     if (window.logManager) {
       window.logManager.step('INITIALIZATION', 'VERIFY', 'Assistant Manager available to generate responses');
-    } else {
+    } else if (window.CONFIG?.debug) {
       logger.log('Assistant Manager is available to generate responses');
     }
   }
@@ -101,7 +103,7 @@ function initialize() {
     if (window.location.href.includes('/marketplace/')) {
       if (window.logManager) {
         window.logManager.phase('INITIALIZATION', 'We are in Marketplace, starting monitoring...');
-      } else {
+      } else if (window.CONFIG?.debug) {
         logger.log('We are in Marketplace, starting monitoring...');
       }
 
@@ -116,7 +118,7 @@ function initialize() {
     } else {
       if (window.logManager) {
         window.logManager.phase('INITIALIZATION', 'We are not in Marketplace, trying redirection...');
-      } else {
+      } else if (window.CONFIG?.debug) {
         logger.log('We are not in Marketplace, trying redirection...');
       }
 
@@ -147,7 +149,7 @@ async function initializeServices() {
   if (CONFIG.audioTranscription.enabled) {
     if (window.logManager) {
       window.logManager.phase('INITIALIZATION', 'Initializing audio transcription service...');
-    } else {
+    } else if (window.CONFIG?.debug) {
       logger.debug('Initializing audio transcription service...');
     }
 
@@ -160,7 +162,7 @@ async function initializeServices() {
     } else {
       if (window.logManager) {
         window.logManager.phase('INITIALIZATION', 'Audio transcription service ready');
-      } else {
+      } else if (window.CONFIG?.debug) {
         logger.debug('Audio transcription service ready');
       }
 
@@ -218,21 +220,27 @@ window.addEventListener('load', () => {
 
   // Explicitly verify the availability of services
   function verifyServices() {
-    logger.log('Verifying availability of AI services...');
+    if (window.CONFIG?.debug) {
+      logger.log('Verifying availability of AI services...');
+    }
 
     // Verify OpenAI Manager
     if (window.openaiManager) {
       const isReady = window.openaiManager.isReady ? window.openaiManager.isReady() :
         (window.openaiManager.isInitialized && !!window.openaiManager.apiKey);
 
-      logger.log(`OpenAI Manager auto-initialized: ${isReady}`);
+      if (window.CONFIG?.debug) {
+        logger.log(`OpenAI Manager auto-initialized: ${isReady}`);
+      }
 
       if (!isReady && window.storageUtils) {
         // Try to initialize manually if it is available but not initialized
         const apiKey = window.storageUtils.get('FB_CHAT_MONITOR_OPENAI_KEY', '');
         if (apiKey) {
           window.openaiManager.setApiKey(apiKey);
-          logger.log('OpenAI Manager re-initialized with stored API key');
+          if (window.CONFIG?.debug) {
+            logger.log('OpenAI Manager re-initialized with stored API key');
+          }
         }
       }
     } else {
@@ -247,11 +255,13 @@ window.addEventListener('load', () => {
         isReady: () => false
       };
 
-      logger.debug('A backup implementation of OpenAI Manager has been created');
+      if (window.CONFIG?.debug) {
+        logger.debug('A backup implementation of OpenAI Manager has been created');
+      }
     }
 
     // Verify Assistant Manager
-    if (window.assistantManager) {
+    if (window.assistantManager && window.CONFIG?.debug) {
       logger.log('Assistant Manager is available to generate responses');
     }
   }
@@ -266,8 +276,6 @@ window.addEventListener('load', () => {
    * to avoid problems with the API key and initialization
    */
   function ensureOpenAIManagerConsistency() {
-    //logger.log('Verifying OpenAI Manager consistency...');
-
     // If openaiManager does not exist, create it as a backup
     if (!window.openaiManager) {
       logger.warn('OpenAI Manager is not available, creating backup instance');
@@ -275,11 +283,15 @@ window.addEventListener('load', () => {
       // Check if we have the refactored version first
       if (typeof window.OpenAIManager === 'function') {
         window.openaiManager = new OpenAIManager();
-        logger.debug('Created new instance using refactored OpenAIManager class');
+        if (window.CONFIG?.debug) {
+          logger.debug('Created new instance using refactored OpenAIManager class');
+        }
       } else {
         // Fall back to original class
         window.openaiManager = new OpenAIManager();
-        logger.debug('Created new instance using original OpenAIManager class');
+        if (window.CONFIG?.debug) {
+          logger.debug('Created new instance using original OpenAIManager class');
+        }
       }
     }
 
@@ -287,14 +299,18 @@ window.addEventListener('load', () => {
     if (!window.openaiManager.isInitialized) {
       // Check if we have API key in CONFIG
       if (CONFIG?.AI?.apiKey) {
-        logger.log('Recovering OpenAI Manager state with API key from CONFIG');
+        if (window.CONFIG?.debug) {
+          logger.log('Recovering OpenAI Manager state with API key from CONFIG');
+        }
         window.openaiManager.initialize(CONFIG.AI.apiKey);
       }
       // Try loading from storage as an alternative
       else {
         const storedApiKey = storageUtils.get('FB_CHAT_MONITOR_OPENAI_KEY', '');
         if (storedApiKey) {
-          logger.log('Recovering OpenAI Manager state with API key from localStorage');
+          if (window.CONFIG?.debug) {
+            logger.log('Recovering OpenAI Manager state with API key from localStorage');
+          }
           window.openaiManager.initialize(storedApiKey);
         }
       }
@@ -305,11 +321,15 @@ window.addEventListener('load', () => {
 
     if (typeof window.openaiManager.isReady === 'function') {
       isReady = window.openaiManager.isReady();
-      logger.debug(`openaiManager.isReady() = ${isReady}`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`openaiManager.isReady() = ${isReady}`);
+      }
     } else {
       // Fallback if the isReady method is not available
       isReady = window.openaiManager.isInitialized && !!window.openaiManager.apiKey;
-      logger.debug(`Fallback isReady check = ${isReady}`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`Fallback isReady check = ${isReady}`);
+      }
     }
 
     // Final correction if something is still wrong
@@ -323,8 +343,6 @@ window.addEventListener('load', () => {
     if (window.openaiManager.apiClient && window.openaiManager.apiKey) {
       window.openaiManager.apiClient.setApiKey(window.openaiManager.apiKey);
     }
-
-    //logger.log(`Final state of OpenAI Manager: ${isReady ? 'READY' : 'NOT AVAILABLE'}`);
   }
 
   // Call the verification function just after initializing services
@@ -369,15 +387,17 @@ function loadConfigFromStorage() {
       CONFIG.audioTranscription.apiKey = CONFIG.AI.apiKey;
     }
 
-    console.log('[CONFIG] Configuration loaded:', {
-      apiKey: CONFIG.AI.apiKey ? '********' : '(no key)',
-      model: CONFIG.AI.model, // Will always be gpt-4o
-      assistants: {
-        seller: CONFIG.AI.assistants.seller.id ? '(configured)' : '(not configured)',
-        buyer: CONFIG.AI.assistants.buyer.id ? '(configured)' : '(not configured)'
-      },
-      mode: CONFIG.operationMode
-    });
+    if (window.CONFIG?.debug) {
+      console.log('[CONFIG] Configuration loaded:', {
+        apiKey: CONFIG.AI.apiKey ? '********' : '(no key)',
+        model: CONFIG.AI.model,
+        assistants: {
+          seller: CONFIG.AI.assistants.seller.id ? '(configured)' : '(not configured)',
+          buyer: CONFIG.AI.assistants.buyer.id ? '(configured)' : '(not configured)'
+        },
+        mode: CONFIG.operationMode
+      });
+    }
   } catch (error) {
     console.error('[CONFIG] Error loading configuration:', error);
   }

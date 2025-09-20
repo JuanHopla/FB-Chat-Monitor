@@ -23,19 +23,19 @@ const appState = {
  * Initialize all components in the correct order
  */
 async function initialize() {
-  logger.log('Initializing FB-Chat-Monitor', { version: CONFIG.version });
+  if (window.CONFIG?.debug) logger.log('Initializing FB-Chat-Monitor', { version: CONFIG.version });
 
   try {
     // Load stored OpenAI API Key if present
     const savedApiKey = storageUtils.get('OPENAI_KEY', null);
     if (savedApiKey) {
       CONFIG.AI.apiKey = savedApiKey;
-      logger.log('Loaded OpenAI API Key from storageUtils');
+      if (window.CONFIG?.debug) logger.log('Loaded OpenAI API Key from storageUtils');
     }
 
     // 1. Check if we're on the right page
     if (pageUtils.redirectToMarketplace()) {
-      logger.log('Redirecting to Marketplace messenger, please wait...');
+      if (window.CONFIG?.debug) logger.log('Redirecting to Marketplace messenger, please wait...');
       return; // Stop execution - we're redirecting
     }
 
@@ -45,7 +45,7 @@ async function initialize() {
     // 3. Initialize OpenAI Manager (API integration)
     const openAIInitialized = openAIManager.initialize(CONFIG.AI.apiKey, CONFIG.AI.model);
     if (openAIInitialized) {
-      logger.log('OpenAI Manager initialized successfully');
+      if (window.CONFIG?.debug) logger.log('OpenAI Manager initialized successfully');
     } else {
       logger.warn('OpenAI Manager initialized but no valid API key is set');
     }
@@ -59,13 +59,13 @@ async function initialize() {
     // 6. Check for previously active monitoring
     const wasMonitoring = storageUtils.get('MONITORING_ACTIVE', false);
     if (wasMonitoring) {
-      logger.log('Restoring previous monitoring state');
+      if (window.CONFIG?.debug) logger.log('Restoring previous monitoring state');
       toggleMonitoring(true);
     }
 
     // 7. Show welcome notification
-    showSimpleAlert('FB-Chat-Monitor initialized successfully', 'success');
-    logger.log('Initialization complete', { status: 'success' });
+    if (window.CONFIG?.debug) showSimpleAlert('FB-Chat-Monitor initialized successfully', 'success');
+    if (window.CONFIG?.debug) logger.log('Initialization complete', { status: 'success' });
 
     // 8. Return success
     return true;
@@ -84,7 +84,7 @@ function createUI() {
   assistantManagerUI.initialize();
 
   // Additional UI components will be implemented in ui.js
-  logger.debug('UI components initialized');
+  if (window.CONFIG?.debug) logger.debug('UI components initialized');
 }
 
 /**
@@ -95,14 +95,14 @@ function loadSavedSettings() {
   const savedApiKey = storageUtils.get('FB_CHAT_MONITOR_OPENAI_KEY', null);
   if (savedApiKey) {
     CONFIG.AI.apiKey = savedApiKey;
-    logger.debug('OpenAI API Key loaded from storageUtils');
+    if (window.CONFIG?.debug) logger.debug('OpenAI API Key loaded from storageUtils');
   } else {
     // Compatibility with localStorage for migration
     const legacyApiKey = localStorage.getItem('FB_CHAT_MONITOR_OPENAI_KEY');
     if (legacyApiKey) {
       CONFIG.AI.apiKey = legacyApiKey;
       storageUtils.set('FB_CHAT_MONITOR_OPENAI_KEY', legacyApiKey);
-      logger.debug('OpenAI API Key migrated from localStorage to storageUtils');
+      if (window.CONFIG?.debug) logger.debug('OpenAI API Key migrated from localStorage to storageUtils');
     }
   }
 
@@ -119,7 +119,7 @@ function loadSavedSettings() {
   CONFIG.AI.assistants.seller.id = storageUtils.get('FB_CHAT_MONITOR_SELLER_ASSISTANT_ID', '');
   CONFIG.AI.assistants.buyer.id = storageUtils.get('FB_CHAT_MONITOR_BUYER_ASSISTANT_ID', '');
 
-  logger.debug('Saved settings loaded', {
+  if (window.CONFIG?.debug) logger.debug('Saved settings loaded', {
     operationMode: CONFIG.operationMode,
     hasApiKey: !!CONFIG.AI.apiKey,
     sellerAssistant: !!CONFIG.AI.assistants.seller.id,
@@ -137,7 +137,7 @@ function setupAdaptiveMonitoring() {
       updateScanInterval();
     }
 
-    logger.debug('User activity changed', { isActive });
+    if (window.CONFIG?.debug) logger.debug('User activity changed', { isActive });
   });
 }
 
@@ -167,7 +167,7 @@ function updateScanInterval() {
     clearTimeout(appState.monitorInterval);
     appState.monitorInterval = setTimeout(runChatMonitor, interval);
 
-    logger.debug('Scan interval updated', {
+    if (window.CONFIG?.debug) logger.debug('Scan interval updated', {
       interval,
       userActive: userActivityTracker.isActive,
       errorCount: appState.errorCount
@@ -189,7 +189,7 @@ function toggleMonitoring(state) {
     appState.startTime = Date.now();
     appState.monitorInterval = setTimeout(runChatMonitor, 1000); // Start immediately
     storageUtils.set('MONITORING_ACTIVE', true);
-    logger.log('Chat monitoring started');
+    if (window.CONFIG?.debug) logger.log('Chat monitoring started');
   } else {
     // Stop monitoring
     if (appState.monitorInterval) {
@@ -197,7 +197,9 @@ function toggleMonitoring(state) {
       appState.monitorInterval = null;
     }
     storageUtils.set('MONITORING_ACTIVE', false);
-    logger.log('Chat monitoring stopped');
+    if (window.CONFIG?.debug) {
+      logger.log('Chat monitoring stopped');
+    }
   }
 
   // Update UI elements if needed
@@ -213,9 +215,9 @@ function updateMonitoringUI(isMonitoring) {
   // This will be implemented when the UI module is created
   // For now, just show a notification
   if (isMonitoring) {
-    showSimpleAlert('Chat monitoring started', 'success');
+    if (window.CONFIG?.debug) showSimpleAlert('Chat monitoring started', 'success');
   } else {
-    showSimpleAlert('Chat monitoring stopped', 'info');
+    if (window.CONFIG?.debug) showSimpleAlert('Chat monitoring stopped', 'info');
   }
 }
 
@@ -227,7 +229,7 @@ async function runChatMonitor() {
   if (!appState.isMonitoring) return;
 
   appState.lastScanTime = Date.now();
-  logger.debug('Starting chat scan');
+  if (window.CONFIG?.debug) logger.debug('Starting chat scan');
 
   try {
     // Check if we're on the right page
@@ -244,13 +246,13 @@ async function runChatMonitor() {
     );
 
     if (unreadChatsCount > 0) {
-      logger.log(`Found ${unreadChatsCount} unread chats`);
+      if (window.CONFIG?.debug) logger.log(`Found ${unreadChatsCount} unread chats`);
 
       // Process the first unread chat
       const opened = await chatManager.openNextPendingChat();
 
       if (opened) {
-        logger.log('Chat opened and processed successfully');
+        if (window.CONFIG?.debug) logger.log('Chat opened and processed successfully');
         appState.stats.chatsProcessed++;
 
         // Reset error count on success
@@ -261,7 +263,14 @@ async function runChatMonitor() {
         incrementErrorCount();
       }
     } else {
-      logger.debug('No unread chats found');
+      if (window.CONFIG?.debug) logger.debug('No unread chats found');
+      try {
+        if (window.flowLogger) {
+          const base = (CONFIG.scanInterval || appState.baseInterval || 30000);
+          const seconds = Math.round(base / 1000);
+          window.flowLogger.step('AUTO_STATUS', { type: 'SLEEP', seconds });
+        }
+      } catch {}
       // Not an error, just no chats to process
       appState.scansSinceLastSuccess++;
     }
@@ -294,7 +303,7 @@ function resetMonitoringInterval() {
 
   // Set next execution
   appState.monitorInterval = setTimeout(runChatMonitor, nextInterval);
-  logger.debug(`Next scan scheduled in ${nextInterval}ms`);
+  if (window.CONFIG?.debug) logger.debug(`Next scan scheduled in ${nextInterval}ms`);
 }
 
 /**
@@ -326,7 +335,7 @@ function incrementErrorCount() {
 
 function incrementResponseSent() {
   appState.stats.responsesSent++;
-  logger.debug(`Response sent - Total count: ${appState.stats.responsesSent}`);
+  if (window.CONFIG?.debug) logger.debug(`Response sent - Total count: ${appState.stats.responsesSent}`);
 }
 
 /**
@@ -334,7 +343,7 @@ function incrementResponseSent() {
  */
 function incrementChatsProcessed() {
   appState.stats.chatsProcessed++;
-  logger.debug(`Chat processed - Total count: ${appState.stats.chatsProcessed}`);
+  if (window.CONFIG?.debug) logger.debug(`Chat processed - Total count: ${appState.stats.chatsProcessed}`);
 }
 
 /**
@@ -357,7 +366,7 @@ function getMonitoringStats() {
  * Manually trigger a chat scan
  */
 async function manualScan() {
-  logger.log('Manual chat scan triggered');
+  if (window.CONFIG?.debug) logger.debug('Manual chat scan triggered');
 
   // Store current monitoring state and pause scheduled monitoring
   const wasMonitoring = appState.isMonitoring;
@@ -392,7 +401,7 @@ function setupTranscriptionUpdates() {
       }
     }, 10000); // Every 10 seconds
 
-    logger.debug('Audio transcription periodic updates configured');
+    if (window.CONFIG?.debug) logger.debug('Audio transcription periodic updates configured');
   }
 }
 
@@ -411,7 +420,7 @@ function initializeApplication() {
  */
 
 function verifyServices() {
-  logger.log('Verifying availability of AI services...');
+  if (window.CONFIG?.debug) logger.debug('Verifying availability of AI services...');
 
   // Verify OpenAI Manager
   let openaiReady = false;
@@ -423,7 +432,7 @@ function verifyServices() {
       window.openaiManager.isReady = function () {
         return !!this.apiKey;
       };
-      logger.debug('Added missing isReady method to openaiManager');
+      if (window.CONFIG?.debug) logger.debug('Added missing isReady method to openaiManager');
     }
 
     if (typeof window.openaiManager.initialize !== 'function') {
@@ -435,7 +444,7 @@ function verifyServices() {
         }
         return !!this.apiKey;
       };
-      logger.debug('Added missing initialize method to openaiManager');
+      if (window.CONFIG?.debug) logger.debug('Added missing initialize method to openaiManager');
     }
 
     if (typeof window.openaiManager.verifyServiceState !== 'function') {
@@ -451,7 +460,7 @@ function verifyServices() {
         }
         return this.isReady ? this.isReady() : !!this.apiKey;
       };
-      logger.debug('Added missing verifyServiceState method to openaiManager');
+      if (window.CONFIG?.debug) logger.debug('Added missing verifyServiceState method to openaiManager');
     }
 
     // Now check if it's ready
@@ -462,10 +471,10 @@ function verifyServices() {
       window.openaiManager.apiKey = window.CONFIG.AI.apiKey;
       window.openaiManager.isInitialized = true;
       openaiReady = true;
-      logger.debug('Forced openaiManager to ready state using CONFIG.AI.apiKey');
+      if (window.CONFIG?.debug) logger.debug('Forced openaiManager to ready state using CONFIG.AI.apiKey');
     }
 
-    logger.log(`OpenAI Manager available: ${openaiReady}`);
+    if (window.CONFIG?.debug) logger.log(`OpenAI Manager available: ${openaiReady}`);
   } else {
     logger.warn('OpenAI Manager is not available. Some functions will not be operational.');
 
@@ -503,20 +512,20 @@ function verifyServices() {
       window.openaiManager.apiKey = window.CONFIG.AI.apiKey;
       window.openaiManager.isInitialized = true;
       openaiReady = true;
-      logger.debug('Created fallback openaiManager with CONFIG.AI.apiKey');
+      if (window.CONFIG?.debug) logger.debug('Created fallback openaiManager with CONFIG.AI.apiKey');
     }
 
-    logger.debug('A fallback implementation of OpenAI Manager has been created');
+    if (window.CONFIG?.debug) logger.debug('A fallback implementation of OpenAI Manager has been created');
   }
 
   // Verify Assistant Manager (add this part)
   let assistantReady = false;
   try {
     if (!window.assistantManager) {
-      logger.debug('Assistant Manager not found, verifying if we can create one');
+      if (window.CONFIG?.debug) logger.debug('Assistant Manager not found, verifying if we can create one');
       // Try to create a basic assistantManager if it does not exist
       if (window.openaiManager && window.openaiManager.apiKey) {
-        logger.debug('Creating Assistant Manager using existing OpenAI Manager');
+        if (window.CONFIG?.debug) logger.debug('Creating Assistant Manager using existing OpenAI Manager');
         window.assistantManager = {
           isInitialized: true,
           apiKey: window.openaiManager.apiKey,
@@ -540,7 +549,7 @@ function verifyServices() {
           }
         };
         assistantReady = true;
-        logger.debug('Created fallback assistantManager with openaiManager.apiKey');
+        if (window.CONFIG?.debug) logger.debug('Created fallback assistantManager with openaiManager.apiKey');
       }
     } else {
       assistantReady = true;
@@ -549,7 +558,7 @@ function verifyServices() {
     logger.error('Error verifying Assistant Manager:', error.message);
   }
 
-  logger.debug(`Services available: Assistant=${assistantReady}, OpenAI=${openaiReady}`);
+  if (window.CONFIG?.debug) logger.debug(`Services available: Assistant=${assistantReady}, OpenAI=${openaiReady}`);
   return openaiReady || assistantReady;
 }
 
@@ -580,11 +589,11 @@ window.getMonitoringStats = getMonitoringStats;
  * Initializes the chat monitoring
  */
 function init() {
-  logger.log('Initializing FB Chat Monitor');
+  if (window.CONFIG?.debug) logger.log('Initializing FB Chat Monitor');
 
   // Initialize the UI first
   ui.init();
-  logger.debug('UI initialized');
+  if (window.CONFIG?.debug) logger.debug('UI initialized');
 
   // Load configuration
   loadConfig();
@@ -592,31 +601,31 @@ function init() {
   // Initialize Product Extractor with storageUtils
   if (window.productExtractor && typeof window.productExtractor.initialize === 'function' && window.storageUtils) {
     window.productExtractor.initialize({ storageUtils: window.storageUtils });
-    logger.debug('Product Extractor initialized');
+    if (window.CONFIG?.debug) logger.debug('Product Extractor initialized');
   } else {
     logger.warn('Product Extractor or storageUtils not available for initialization.');
   }
 
   // Initialize OpenAI Manager
   if (CONFIG.AI && CONFIG.AI.apiKey) {
-    logger.log('API key loaded from localStorage in init');
+    if (window.CONFIG?.debug) logger.log('API key loaded from localStorage in init');
 
     // Auto-initialize OpenAI Manager if available
     if (window.openaiManager) {
       const initialized = window.openaiManager.initialize(CONFIG.AI.apiKey);
-      logger.log(`OpenAI Manager initialized: ${initialized ? 'SUCCESS' : 'FAILED'}`);
+      if (window.CONFIG?.debug) logger.debug(`OpenAI Manager initialized: ${initialized ? 'SUCCESS' : 'FAILED'}`);
 
       // Critical correction: if we have API key but initialize failed, force isInitialized=true
       if (!initialized && CONFIG.AI.apiKey) {
         window.openaiManager.apiKey = CONFIG.AI.apiKey;
         window.openaiManager.isInitialized = true;
-        logger.debug('Forced OpenAI Manager initialization with valid API key');
+        if (window.CONFIG?.debug) logger.debug('Forced OpenAI Manager initialization with valid API key');
       }
 
       // Verify service status
       if (typeof window.openaiManager.verifyServiceState === 'function') {
         const serviceReady = window.openaiManager.verifyServiceState();
-        logger.debug(`OpenAI service status after verification: ${serviceReady ? 'READY' : 'NOT AVAILABLE'}`);
+        if (window.CONFIG?.debug) logger.debug(`OpenAI service status after verification: ${serviceReady ? 'READY' : 'NOT AVAILABLE'}`);
       }
     } else {
       logger.error('openAIManager not available for auto-initialization.', null, new Error('openAIManager unavailable'));
@@ -625,7 +634,7 @@ function init() {
 
   // Check if we are on the Marketplace page
   if (isInMarketplace()) {
-    logger.log('We are in Marketplace, starting monitoring...');
+    if (window.CONFIG?.debug) logger.log('We are in Marketplace, starting monitoring...');
 
     // Prepare automatic mode if configured
     if (CONFIG.operationMode === 'auto' && CONFIG.prepareAutoMode) {
@@ -634,6 +643,6 @@ function init() {
 
     chatManager.startMonitoring();
   } else {
-    logger.log('Not in Marketplace, monitoring disabled');
+    if (window.CONFIG?.debug) logger.log('Not in Marketplace, monitoring disabled');
   }
 }

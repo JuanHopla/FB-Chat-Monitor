@@ -23,7 +23,9 @@ class ImageFilterUtils {
 
     const processedUrls = [];
     for (const originalUrl of imageUrls) {
-      logger.debug(`[ImageFilterUtils] Processing URL: ${originalUrl} with quality ${quality}`);
+      if (window.CONFIG?.debug) {
+        logger.debug(`[ImageFilterUtils] Processing URL: ${originalUrl} with quality ${quality}`);
+      }
       try {
         // Build the URL with the quality parameter
         const proxyUrl = `${workerUrl}?url=${encodeURIComponent(originalUrl)}&quality=${quality}`;
@@ -32,7 +34,9 @@ class ImageFilterUtils {
         const response = await fetch(proxyUrl, { method: 'HEAD' });
         if (response.ok) {
           processedUrls.push(proxyUrl);
-          logger.debug(`[ImageFilterUtils] Processed URL: ${proxyUrl}`);
+          if (window.CONFIG?.debug) {
+            logger.debug(`[ImageFilterUtils] Processed URL: ${proxyUrl}`);
+          }
         } else {
           logger.warn(`[ImageFilterUtils] Error accessing URL: ${proxyUrl}. Status: ${response.status}`);
           // If it fails, try using the original URL as a fallback
@@ -45,7 +49,7 @@ class ImageFilterUtils {
       }
     }
 
-    logger.log(`[ImageFilterUtils] Processed ${processedUrls.length}/${imageUrls.length} images (quality: ${quality}).`);
+    if (window.CONFIG?.debug) logger.log(`[ImageFilterUtils] Processed ${processedUrls.length}/${imageUrls.length} images (quality: ${quality}).`);
     return processedUrls;
   }
 }

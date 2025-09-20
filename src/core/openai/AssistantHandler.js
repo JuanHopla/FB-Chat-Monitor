@@ -46,7 +46,9 @@ class AssistantHandler {
       if (window.logManager) {
         window.logManager.phase(window.logManager.phases.INITIALIZATION, 'AssistantHandler initialized successfully');
       } else {
-        console.log('AssistantHandler initialized successfully');
+        if (window.CONFIG?.debug) {
+          console.log('AssistantHandler initialized successfully');
+        }
       }
       return true;
     } catch (error) {
@@ -93,8 +95,10 @@ class AssistantHandler {
       window.logManager.phase(window.logManager.phases.GENERATION,
         `Generating response for conversation ${fbThreadId} as ${chatRole}`);
     } else {
-      console.log(`Generating response for thread ${fbThreadId} as ${chatRole}`);
-      console.log(`[AssistantHandler] Step 4.1: Generating response for thread ${fbThreadId} as ${chatRole}`);
+      if (window.CONFIG?.debug) {
+        console.debug(`Generating response for thread ${fbThreadId} as ${chatRole}`);
+        console.debug(`[AssistantHandler] Step 4.1: Generating response for thread ${fbThreadId} as ${chatRole}`);
+      }
     }
 
     try {
@@ -149,7 +153,7 @@ class AssistantHandler {
       window.logManager.step('GENERATION', 'NEW_THREAD',
         `Processing new thread - fbThreadId: ${fbThreadId}, messages: ${allMessages.length}, role: ${chatRole}`);
     } else {
-      console.log(`[AssistantHandler][DEBUG] handleNewThread - fbThreadId: ${fbThreadId}, messages: ${allMessages.length}, role: ${chatRole}`);
+      if (window.CONFIG?.debug) console.debug(`[AssistantHandler][DEBUG] handleNewThread - fbThreadId: ${fbThreadId}, messages: ${allMessages.length}, role: ${chatRole}`);
     }
 
     // --- FOLLOW-UP LOGIC FOR NEW THREADS ---
@@ -160,45 +164,47 @@ class AssistantHandler {
       if (window.logManager) {
         window.logManager.step('GENERATION', 'FOLLOW_UP', 'Manual follow-up request detected in new thread');
       } else {
-        console.log('[AssistantHandler] Manual follow-up request detected in a new thread.');
+        if (window.CONFIG?.debug) console.debug('[AssistantHandler] Manual follow-up request detected in a new thread.');
       }
 
       // The follow-up message will always be allowed
       if (window.logManager) {
         window.logManager.step('GENERATION', 'FOLLOW_UP', 'Follow-up request accepted.');
       } else {
-        console.log('[AssistantHandler] Follow-up request processing...');
+        if (window.CONFIG?.debug) console.debug('[AssistantHandler] Follow-up request processing...');
       }
       isFollowUpRequest = true;
     }
     // --- END OF FOLLOW-UP LOGIC ---
 
-    console.log('No existing thread found, creating new one');
-    console.log('[AssistantHandler] Processing new thread flow...');
+    if (window.CONFIG?.debug) {
+      console.debug('No existing thread found, creating new one');
+      console.debug('[AssistantHandler] Processing new thread flow...');
+    }
 
     if (window.threadStore) {
       const threadInfoCheck = window.threadStore.getThreadInfo(fbThreadId, true);
       if (threadInfoCheck) {
-        console.log(`[AssistantHandler][DEBUG] Thread found on final check, using existing instead of creating new`);
+        if (window.CONFIG?.debug) console.debug(`[AssistantHandler][DEBUG] Thread found on final check, using existing instead of creating new`);
         return await this.handleExistingThread(fbThreadId, allMessages, chatRole, threadInfoCheck);
       }
     }
 
-    console.log(`[AssistantHandler][DEBUG] Creating new thread in OpenAI for ${fbThreadId}`);
+    if (window.CONFIG?.debug) console.debug(`[AssistantHandler][DEBUG] Creating new thread in OpenAI for ${fbThreadId}`);
     const threadInfo = await this.createNewThread(fbThreadId, chatRole);
 
     const assistantId = this.getAssistantIdForRole(chatRole);
     if (!assistantId) {
       throw new Error(`No assistant ID configured for role: ${chatRole}`);
     }
-    console.log(`[AssistantHandler][DEBUG] Assistant ID obtained: ${assistantId}`);
+    if (window.CONFIG?.debug) console.debug(`[AssistantHandler][DEBUG] Assistant ID obtained: ${assistantId}`);
 
-    console.log('[AssistantHandler] Step 4.2: Preparing messages for new thread...');
+    if (window.CONFIG?.debug) console.debug('[AssistantHandler] Step 4.2: Preparing messages for new thread...');
 
     // NEW: Explicitly wait for pending transcriptions
     if (window.audioTranscriber && window.audioTranscriber.pendingTranscriptions.size > 0) {
       const pendingCount = window.audioTranscriber.pendingTranscriptions.size;
-      console.log(`[AssistantHandler][DEBUG] Waiting for ${pendingCount} pending transcriptions...`);
+      if (window.CONFIG?.debug) console.debug(`[AssistantHandler][DEBUG] Waiting for ${pendingCount} pending transcriptions...`);
 
       // Wait up to 5 seconds for pending transcriptions
       const maxWaitTime = 5000;
@@ -210,16 +216,16 @@ class AssistantHandler {
         // Check how many are still pending
         const currentPending = window.audioTranscriber.pendingTranscriptions.size;
         if (currentPending < pendingCount) {
-          console.log(`[AssistantHandler][DEBUG] Progress: ${pendingCount - currentPending} transcriptions completed, ${currentPending} pending`);
+          if (window.CONFIG?.debug) console.debug(`[AssistantHandler][DEBUG] Progress: ${pendingCount - currentPending} transcriptions completed, ${currentPending} pending`);
         }
       }
 
       // If after waiting there are still pending ones, run FIFO association
       if (window.audioTranscriber.pendingTranscriptions.size > 0) {
-        console.log(`[AssistantHandler][DEBUG] Some transcriptions are still pending. Applying FIFO association...`);
+        if (window.CONFIG?.debug) console.debug(`[AssistantHandler][DEBUG] Some transcriptions are still pending. Applying FIFO association...`);
         await window.audioTranscriber.associateTranscriptionsWithMessagesFIFO(allMessages);
       } else {
-        console.log(`[AssistantHandler][DEBUG] All transcriptions completed successfully`);
+        if (window.CONFIG?.debug) console.debug(`[AssistantHandler][DEBUG] All transcriptions completed successfully`);
       }
     }
 
@@ -230,15 +236,15 @@ class AssistantHandler {
 
     // OPTIMIZATION: Replace verbose logs with summary and collapsible details
     const audioMessages = messagesWithTranscriptions.filter(msg => msg.content?.hasAudio);
-    console.log(`[AssistantHandler] [DEBUG] ${audioMessages.length} messages with audio found`);
+    if (window.CONFIG?.debug) console.debug(`[AssistantHandler] [DEBUG] ${audioMessages.length} messages with audio found`);
 
     // Only show expandable details in debug mode
-    if (window.CONFIG?.logging?.level === 'debug') {
+    if (window.CONFIG?.debug) {
       console.groupCollapsed('[AssistantHandler] [DEBUG] Details of messages with audio (expand to view)');
       audioMessages.forEach((msg, idx) => {
-        console.log(`[${idx}] Message ID: ${msg.id}`);
-        console.log(`    - audioUrl: ${msg.content.audioUrl ? 'Available' : 'Not available'}`);
-        console.log(`    - transcription: ${msg.content.transcribedAudio?.substring(0, 50)}${msg.content.transcribedAudio?.length > 50 ? '...' : ''}`);
+        console.debug(`[${idx}] Message ID: ${msg.id}`);
+        console.debug(`    - audioUrl: ${msg.content.audioUrl ? 'Available' : 'Not available'}`);
+        console.debug(`    - transcription: ${msg.content.transcribedAudio?.substring(0, 50)}${msg.content.transcribedAudio?.length > 50 ? '...' : ''}`);
       });
       console.groupEnd();
     }
@@ -254,7 +260,7 @@ class AssistantHandler {
       return '';
     }
 
-    console.log(`[AssistantHandler][DEBUG] Adding ${validatedMessages.length} messages to thread ${threadInfo.openaiThreadId}`);
+    if (window.CONFIG?.debug) console.debug(`[AssistantHandler][DEBUG] Adding ${validatedMessages.length} messages to thread ${threadInfo.openaiThreadId}`);
     for (const message of validatedMessages) {
       await window.apiClient.addMessage(threadInfo.openaiThreadId, message);
     }
@@ -304,13 +310,14 @@ class AssistantHandler {
       await window.apiClient.addMessage(threadInfo.openaiThreadId, followUpInstruction);
     }
 
-    console.log(`[AssistantHandler][DEBUG] Creating run with assistant ${assistantId}`);
+    if (window.CONFIG?.debug) console.debug(`[AssistantHandler][DEBUG] Creating run with assistant ${assistantId}`);
     const { runId } = await window.apiClient.createRun(threadInfo.openaiThreadId, assistantId);
-    console.log(`[AssistantHandler][DEBUG] Run created: ${runId}`);
+    if (window.CONFIG?.debug) console.debug(`[AssistantHandler][DEBUG] Run created: ${runId}`);
+    if (window.flowLogger) window.flowLogger.step('RUN_CREATED', { runId });
 
-    console.log(`[AssistantHandler][DEBUG] Waiting for run completion ${runId}`);
+    if (window.CONFIG?.debug) console.debug(`[AssistantHandler][DEBUG] Waiting for run completion ${runId}`);
     const runResult = await window.apiClient.waitForRunCompletion(threadInfo.openaiThreadId, runId, this.maxWaitTime);
-    console.log(`[AssistantHandler][DEBUG] Run completed with status: ${runResult.status}`);
+    if (window.CONFIG?.debug) console.debug(`[AssistantHandler][DEBUG] Run completed with status: ${runResult.status}`);
 
     if (runResult.status === 'completed' && runResult.output) {
       if (allMessages.length > 0) {
@@ -321,7 +328,7 @@ class AssistantHandler {
       return this.processResponse(runResult.output);
     } else {
       const errorMsg = `Run did not complete: ${runResult.status}. Error: ${runResult.error?.message || 'Unknown'}`;
-      console.log(`[AssistantHandler][ERROR] ${errorMsg}`);
+      console.error(`[AssistantHandler][ERROR] ${errorMsg}`);
       throw new Error(errorMsg);
     }
   }
@@ -336,17 +343,17 @@ class AssistantHandler {
    * @private
    */
   async handleExistingThread(fbThreadId, allMessages, chatRole, threadInfo, options = {}) {
-    console.log(`[AssistantHandler][DEBUG] handleExistingThread - fbThreadId: ${fbThreadId}, messages: ${allMessages.length}, role: ${chatRole}`);
+    if (window.CONFIG?.debug) console.log(`[AssistantHandler][DEBUG] handleExistingThread - fbThreadId: ${fbThreadId}, messages: ${allMessages.length}, role: ${chatRole}`);
     const { openaiThreadId, lastMessageId } = threadInfo;
 
     const assistantId = this.getAssistantIdForRole(chatRole);
     if (!assistantId) {
       throw new Error(`No assistant ID configured for role: ${chatRole}`);
     }
-    console.log(`[AssistantHandler][DEBUG] Assistant ID obtained: ${assistantId}`);
+    if (window.CONFIG?.debug) console.log(`[AssistantHandler][DEBUG] Assistant ID obtained: ${assistantId}`);
 
     const newMessages = window.messagePreprocessor.getNewMessagesSinceNoFormat(allMessages, lastMessageId);
-    console.log(`[AssistantHandler][DEBUG] Found ${newMessages.length} new messages from the preprocessor.`);
+    if (window.CONFIG?.debug) console.log(`[AssistantHandler][DEBUG] Found ${newMessages.length} new messages from the preprocessor.`);
 
     const hasTrulyNewMessages = newMessages.length > 0 && newMessages[0].id !== lastMessageId;
     // NEW: forces the generation of a new response (regeneration)
@@ -357,9 +364,9 @@ class AssistantHandler {
     if (hasTrulyNewMessages || isRegenerationRequest) {
       // --- ACTION A: Respond to new messages or regenerate response ---
       if (isRegenerationRequest) {
-        console.log('[AssistantHandler] User requested to generate an alternative response.');
+        if (window.CONFIG?.debug) console.log('[AssistantHandler] User requested to generate an alternative response.');
       } else {
-        console.log(`[AssistantHandler] Found ${newMessages.length} new user messages. Processing to respond.`);
+        if (window.CONFIG?.debug) console.log(`[AssistantHandler] Found ${newMessages.length} new user messages. Processing to respond.`);
       }
 
       // (Reuse transcription and preprocessing logic)
@@ -369,14 +376,14 @@ class AssistantHandler {
       if (audioMessages.length && window.audioTranscriber) {
         const pendingCount = window.audioTranscriber.pendingTranscriptions.size;
         if (pendingCount > 0) {
-          console.log(`[AssistantHandler][DEBUG] Waiting for ${pendingCount} pending transcriptions...`);
+          if (window.CONFIG?.debug) console.log(`[AssistantHandler][DEBUG] Waiting for ${pendingCount} pending transcriptions...`);
           const start = Date.now();
           const maxWait = 5000;
           while (Date.now() - start < maxWait && window.audioTranscriber.pendingTranscriptions.size > 0) {
             await new Promise(r => setTimeout(r, 500));
           }
           if (window.audioTranscriber.pendingTranscriptions.size > 0) {
-            console.log('[AssistantHandler][DEBUG] Applying FIFO association for pending transcriptions');
+            if (window.CONFIG?.debug) console.log('[AssistantHandler][DEBUG] Applying FIFO association for pending transcriptions');
             await window.audioTranscriber.associateTranscriptionsWithMessagesFIFO(msgsToProcess);
           }
         }
@@ -384,16 +391,18 @@ class AssistantHandler {
 
       const messagesWithTranscriptions = await window.messagePreprocessor.attachTranscriptions(msgsToProcess);
 
-      console.log('==================== FULL ARRAY OF PROCESSED MESSAGES ====================');
-      console.log('[AssistantHandler] [DEBUG] After attachTranscriptions (existing):', JSON.stringify(messagesWithTranscriptions));
-      console.log('===================================================================================');
+      if (window.CONFIG?.debug) {
+        console.log('==================== FULL ARRAY OF PROCESSED MESSAGES ====================');
+        console.log('[AssistantHandler] [DEBUG] After attachTranscriptions (existing):', JSON.stringify(messagesWithTranscriptions));
+        console.log('===================================================================================');
+      }
 
       const openAIMessages = await window.messagePreprocessor.formatMessagesForOpenAI(messagesWithTranscriptions);
       const validatedMessages = this.validateMessages(openAIMessages);
 
       if (validatedMessages.length) {
         actionTaken = true;
-        console.log(`[AssistantHandler][DEBUG] Adding ${validatedMessages.length} messages to thread ${openaiThreadId}`);
+        if (window.CONFIG?.debug) console.log(`[AssistantHandler][DEBUG] Adding ${validatedMessages.length} messages to thread ${openaiThreadId}`);
         for (const message of validatedMessages) {
           await window.apiClient.addMessage(openaiThreadId, message);
         }
@@ -402,9 +411,9 @@ class AssistantHandler {
       }
     } else {
       // --- ACTION B: Generate manual follow-up ---
-      console.log('[AssistantHandler] No new messages. User has requested a manual follow-up.');
+      if (window.CONFIG?.debug) console.log('[AssistantHandler] No new messages. User has requested a manual follow-up.');
       actionTaken = true;
-      console.log('[AssistantHandler] Generating follow-up message.');
+      if (window.CONFIG?.debug) console.log('[AssistantHandler] Generating follow-up message.');
       
       let followUpInstruction;
       
@@ -450,18 +459,19 @@ class AssistantHandler {
     }
 
     if (!actionTaken) {
-      console.log('[AssistantHandler] No action was taken. Finalizing the process.');
+      if (window.CONFIG?.debug) console.log('[AssistantHandler] No action was taken. Finalizing the process.');
       return '';
     }
 
     // Create and wait for the OpenAI run
-    console.log(`[AssistantHandler][DEBUG] Creating run with assistant ${assistantId}`);
+    if (window.CONFIG?.debug) console.log(`[AssistantHandler][DEBUG] Creating run with assistant ${assistantId}`);
     const { runId } = await window.apiClient.createRun(openaiThreadId, assistantId);
-    console.log(`[AssistantHandler][DEBUG] Run created: ${runId}`);
+    if (window.CONFIG?.debug) console.log(`[AssistantHandler][DEBUG] Run created: ${runId}`);
+    if (window.flowLogger) window.flowLogger.step('RUN_CREATED', { runId });
 
-    console.log(`[AssistantHandler][DEBUG] Waiting for run completion ${runId}`);
+    if (window.CONFIG?.debug) console.log(`[AssistantHandler][DEBUG] Waiting for run completion ${runId}`);
     const runResult = await window.apiClient.waitForRunCompletion(openaiThreadId, runId, this.maxWaitTime);
-    console.log(`[AssistantHandler][DEBUG] Run completed with status: ${runResult.status}`);
+    if (window.CONFIG?.debug) console.log(`[AssistantHandler][DEBUG] Run completed with status: ${runResult.status}`);
 
     if (runResult.status === 'completed' && runResult.output) {
       const lastMsg = allMessages[allMessages.length - 1];
@@ -484,7 +494,7 @@ class AssistantHandler {
    */
   async createNewThread(fbThreadId, chatRole) {
     try {
-      console.log(`Creating new thread for ${fbThreadId} as ${chatRole}`);
+      if (window.CONFIG?.debug) console.log(`Creating new thread for ${fbThreadId} as ${chatRole}`);
 
       // Create the thread in OpenAI
       const { id: openaiThreadId } = await window.apiClient.createThread();
@@ -496,7 +506,7 @@ class AssistantHandler {
         chatRole
       );
 
-      console.log(`New thread created successfully: ${openaiThreadId}`);
+      if (window.CONFIG?.debug) console.log(`New thread created successfully: ${openaiThreadId}`);
       return threadInfo;
     } catch (error) {
       logger.error(`Error creating new thread: ${error.message}`, {}, error);
@@ -511,9 +521,9 @@ class AssistantHandler {
    * @private
    */
   validateMessages(messages) {
-    console.log(`[AssistantHandler][DEBUG] validateMessages - validating ${messages ? messages.length : 0} messages`);
+    if (window.CONFIG?.debug) console.log(`[AssistantHandler][DEBUG] validateMessages - validating ${messages ? messages.length : 0} messages`);
     if (!messages || !Array.isArray(messages)) {
-      console.log(`[AssistantHandler][ERROR] Invalid message array in validateMessages`);
+      console.error(`[AssistantHandler][ERROR] Invalid message array in validateMessages`);
       return [];
     }
 
@@ -522,9 +532,9 @@ class AssistantHandler {
       Array.isArray(msg.content) && msg.content.length > 0
     );
 
-    console.log(`[AssistantHandler][DEBUG] Validation completed: ${validMessages.length}/${messages.length} valid messages`);
+    if (window.CONFIG?.debug) console.log(`[AssistantHandler][DEBUG] Validation completed: ${validMessages.length}/${messages.length} valid messages`);
     if (messages.length > 0 && validMessages.length === 0) {
-      console.log(`[AssistantHandler][DEBUG] Invalid messages found:`, messages);
+      if (window.CONFIG?.debug) console.log(`[AssistantHandler][DEBUG] Invalid messages found:`, messages);
     }
 
     return validMessages;
@@ -537,8 +547,8 @@ class AssistantHandler {
    */
   getAssistantIdForRole(role) {
     // DEBUG: Log the current assistant config for troubleshooting
-    logger.debug('AssistantHandler: CONFIG.AI.assistants:', JSON.stringify(window.CONFIG?.AI?.assistants));
-    logger.debug('AssistantHandler: CONFIG:', JSON.stringify(window.CONFIG));
+    if (window.CONFIG?.debug) logger.debug('AssistantHandler: CONFIG.AI.assistants:', JSON.stringify(window.CONFIG?.AI?.assistants));
+    if (window.CONFIG?.debug) logger.debug('AssistantHandler: CONFIG:', JSON.stringify(window.CONFIG));
 
     // Check for configuration
     if (!window.CONFIG || !window.CONFIG.AI || !window.CONFIG.AI.assistants) {
@@ -568,25 +578,25 @@ class AssistantHandler {
    * @returns {string} Response text
    */
   processResponse(messages) {
-    console.log(`[AssistantHandler][DEBUG] processResponse - processing ${messages ? messages.length : 0} messages`);
+    if (window.CONFIG?.debug) console.log(`[AssistantHandler][DEBUG] processResponse - processing ${messages ? messages.length : 0} messages`);
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      console.log(`[AssistantHandler][ERROR] No messages in the response to process`);
+      console.error(`[AssistantHandler][ERROR] No messages in the response to process`);
       logger.error('No messages in response to process');
       return '';
     }
 
     try {
       // Full log for debugging
-      console.log('[AssistantHandler][DEBUG] Messages received from API:', messages);
+      if (window.CONFIG?.debug) console.log('[AssistantHandler][DEBUG] Messages received from API:', messages);
 
       // Find the first assistant message
       const assistantMessage = messages.find(msg => msg.role === 'assistant');
       if (!assistantMessage) {
-        console.log(`[AssistantHandler][WARN] No assistant message found in the response`);
+        console.warn(`[AssistantHandler][WARN] No assistant message found in the response`);
         logger.warn('No assistant message found in response');
         return '';
       }
-      console.log(`[AssistantHandler][DEBUG] Assistant message found with content type: ${typeof assistantMessage.content}`);
+      if (window.CONFIG?.debug) console.log(`[AssistantHandler][DEBUG] Assistant message found with content type: ${typeof assistantMessage.content}`);
 
       // Extract the response text, supporting various formats
       let responseText = '';
@@ -612,10 +622,10 @@ class AssistantHandler {
         }
       }
 
-      console.log(`[AssistantHandler][DEBUG] Processed response: "${responseText.substring(0, 50)}${responseText.length > 50 ? '...' : ''}"`);
+      if (window.CONFIG?.debug) console.log(`[AssistantHandler][DEBUG] Processed response: "${responseText.substring(0, 50)}${responseText.length > 50 ? '...' : ''}"`);
       return responseText;
     } catch (error) {
-      console.log(`[AssistantHandler][ERROR] Error processing response: ${error.message}`, error);
+      console.error(`[AssistantHandler][ERROR] Error processing response: ${error.message}`, error);
       logger.error(`Error processing response: ${error.message}`, {}, error);
       return '';
     }

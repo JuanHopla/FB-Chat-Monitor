@@ -863,6 +863,9 @@ function createLogsContent() {
             </select>
           </div>
           <div>
+            <label style="margin-right:8px; display:inline-flex; align-items:center; gap:6px;">
+              <input type="checkbox" id="fb-chat-monitor-dev-toggle" ${window.CONFIG?.debug ? 'checked' : ''} /> Developer Mode
+            </label>
             <button id="fb-chat-monitor-refresh-logs" class="fb-chat-monitor-button fb-chat-monitor-button-secondary">Refresh</button>
             <button id="fb-chat-monitor-clear-logs" class="fb-chat-monitor-button fb-chat-monitor-button-danger">Clear Logs</button>
           </div>
@@ -1192,6 +1195,15 @@ function attachEventHandlers() {
   document.getElementById('fb-chat-monitor-clear-logs').addEventListener('click', clearLogs);
   document.getElementById('fb-chat-monitor-export-logs').addEventListener('click', exportLogs);
   document.getElementById('fb-chat-monitor-log-level').addEventListener('change', refreshLogs);
+  const devToggle = document.getElementById('fb-chat-monitor-dev-toggle');
+  if (devToggle) {
+    devToggle.addEventListener('change', (e) => {
+      window.CONFIG = window.CONFIG || {};
+      window.CONFIG.debug = !!e.target.checked;
+      try { localStorage.setItem('FB_CHAT_MONITOR_DEBUG', String(window.CONFIG.debug)); } catch {}
+      logger.log(`Developer mode ${window.CONFIG.debug ? 'enabled' : 'disabled'}`);
+    });
+  }
 
   // History tab
   document.getElementById('fb-chat-monitor-refresh-history').addEventListener('click', refreshHistory);
@@ -1417,7 +1429,7 @@ function saveConfig() {
 
     // Show confirmation message
     showSimpleAlert('Configuration saved successfully', 'success');
-    logger.log('Configuration saved to persistent storage');
+  if (window.CONFIG?.debug) logger.log('Configuration saved to persistent storage');
   } catch (error) {
     logger.error(`Error saving configuration: ${error.message}`);
     showSimpleAlert('Error saving configuration', 'error');

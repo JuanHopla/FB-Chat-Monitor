@@ -274,7 +274,7 @@ Object.assign(CONFIG, {
         this.images.quality = storage.FB_CHAT_IMAGE_QUALITY;
       }
 
-      if (typeof logger !== 'undefined') logger.log('Configuration loaded from storage');
+  if (typeof logger !== 'undefined') logger.debug('Configuration loaded from storage');
       return this;
     } catch (error) {
       if (typeof logger !== 'undefined') logger.error(`Error loading configuration: ${error.message}`);
@@ -302,7 +302,7 @@ Object.assign(CONFIG, {
     }
     this.AI.apiKey = apiKey; // Update the single source of truth
     this.saveToStorage('FB_CHAT_API_KEY', apiKey);
-    if (typeof logger !== 'undefined') logger.log('API Key saved');
+  if (typeof logger !== 'undefined') logger.debug('API Key saved');
     return true;
   },
 
@@ -313,7 +313,7 @@ Object.assign(CONFIG, {
     }
     this.AI.model = model; // Update the single source of truth
     this.saveToStorage('FB_CHAT_MODEL', model);
-    if (typeof logger !== 'undefined') logger.log(`Model changed to: ${model}`);
+  if (typeof logger !== 'undefined') logger.debug(`Model changed to: ${model}`);
     return true;
   },
 
