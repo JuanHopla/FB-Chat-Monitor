@@ -22,6 +22,9 @@ class OpenAIManager {
   }
 
   initialize(apiKey = null) {
+    if (window.flowLogger) {
+      window.flowLogger.phase('INIT', 'Inicializando OpenAIManager');
+    }
     if (apiKey) {
       this.apiKey = apiKey;
       CONFIG.AI.apiKey = apiKey;
@@ -47,6 +50,9 @@ class OpenAIManager {
     if (window.CONFIG?.debug) {
       console.log(`OpenAI Manager initialized: ${this.isInitialized ? 'SUCCESS' : 'FAILED - No API Key'}`);
     }
+    if (window.flowLogger) {
+      window.flowLogger.phase('INIT', this.isInitialized ? 'Inicializado' : 'Fallo de inicialización (sin API Key)', { isInitialized: this.isInitialized });
+    }
     return this.isInitialized;
   }
 
@@ -54,10 +60,16 @@ class OpenAIManager {
     if (window.CONFIG?.debug) {
       console.log('loadConfig() called - redirecting to initialize()');
     }
+    if (window.flowLogger) {
+      window.flowLogger.step('INIT', 'LOAD_CONFIG_CALLED');
+    }
     return this.initialize(apiKey);
   }
 
   async setApiKey(apiKey) {
+    if (window.flowLogger) {
+      window.flowLogger.step('INIT', 'SET_API_KEY_CALLED');
+    }
     this.apiKey = apiKey;
     CONFIG.AI.apiKey = apiKey;
     storageUtils.set('FB_CHAT_MONITOR_OPENAI_KEY', apiKey);
@@ -70,6 +82,9 @@ class OpenAIManager {
     }
     const valid = await this.validateApiKey();
     this.isInitialized = valid;
+    if (window.flowLogger) {
+      window.flowLogger.phase('INIT', valid ? 'API Key válida' : 'API Key inválida');
+    }
     return valid;
   }
 
@@ -79,8 +94,15 @@ class OpenAIManager {
 
   async validateApiKey() {
     if (!this.apiKey) return false;
+    if (window.flowLogger) {
+      window.flowLogger.step('INIT', 'VALIDATE_API_KEY');
+    }
     if (this.apiClient && typeof this.apiClient.validateApiKey === 'function') {
-      return await this.apiClient.validateApiKey();
+      const ok = await this.apiClient.validateApiKey();
+      if (window.flowLogger) {
+        window.flowLogger.step('INIT', 'VALIDATE_API_KEY_RESULT', { ok });
+      }
+      return ok;
     }
     try {
       const response = await fetch('https://api.openai.com/v1/models', {
@@ -94,14 +116,23 @@ class OpenAIManager {
         if (window.CONFIG?.debug) {
           console.log('API key validated successfully');
         }
+        if (window.flowLogger) {
+          window.flowLogger.step('INIT', 'VALIDATE_API_KEY_RESULT', { ok: true });
+        }
         return true;
       } else {
         const error = await response.json();
         logger.error(`API key validation failed: ${error.error?.message || 'Unknown error'}`);
+        if (window.flowLogger) {
+          window.flowLogger.step('INIT', 'VALIDATE_API_KEY_RESULT', { ok: false, error: error.error?.message });
+        }
         return false;
       }
     } catch (error) {
       logger.error(`API key validation error: ${error.message}`);
+      if (window.flowLogger) {
+        window.flowLogger.step('INIT', 'VALIDATE_API_KEY_ERROR', { error: error.message });
+      }
       return false;
     }
   }
@@ -117,6 +148,9 @@ class OpenAIManager {
     if (!this.isReady()) throw new Error('OpenAI API not ready');
     if (window.ensureAssistantsLoaded) {
       window.ensureAssistantsLoaded();
+    }
+    if (window.flowLogger) {
+      window.flowLogger.phase('GENERATION', 'Inicio de generación', { chatId: context?.chatId, role: context?.role });
     }
 
     // Verify context structure
@@ -144,6 +178,9 @@ class OpenAIManager {
     if (window.messagePreprocessor && typeof window.messagePreprocessor.attachTranscriptions === 'function') {
       if (window.CONFIG?.debug) console.debug('[OpenAIManager] Applying transcriptions to context messages...');
       messagesArray = await window.messagePreprocessor.attachTranscriptions(messagesArray);
+      if (window.flowLogger) {
+        window.flowLogger.step('GENERATION', 'TRANSCRIPTIONS_ATTACHED');
+      }
     }
 
     // Original logs
@@ -155,7 +192,7 @@ class OpenAIManager {
       console.debug('[OpenAIManager] Step 3.2: Calling assistantHandler.generateResponse...');
     }
     if (window.flowLogger) {
-      window.flowLogger.step('PAYLOAD_BUILT', { payload: { ...context, messages: messagesArray } });
+      window.flowLogger.step('GENERATION', 'PAYLOAD_BUILT', { hasProduct: !!context.productDetails, messages: messagesArray?.length || 0, forceNew: !!isRegenerationRequest });
     }
 
     // Update the context with the processed array and the regeneration flag
@@ -174,7 +211,7 @@ class OpenAIManager {
       contextToSend.productDetails,
       contextToSend.options
     );
-    if (window.flowLogger) window.flowLogger.step('REPLY_RECEIVED', { text: result });
+    if (window.flowLogger) window.flowLogger.step('GENERATION', 'REPLY_RECEIVED', { preview: typeof result === 'string' ? result.substring(0, 80) : '' });
     if (window.CONFIG?.debug) console.debug('[OpenAIManager] Step 3.3: assistantHandler.generateResponse completed. Response:', result);
     return result;
   }
@@ -211,6 +248,9 @@ class OpenAIManager {
     if (window.CONFIG?.debug) {
       console.log(`[OpenAIManager][DEBUG] generateAssistantResponse - threadId: ${fbThreadId}, role: ${role}, hasMessages: ${!!messages}, hasProduct: ${!!productData}`);
     }
+    if (window.flowLogger) {
+      window.flowLogger.phase('GENERATION', 'Inicio generateAssistantResponse', { fbThreadId, role, hasProduct: !!productData });
+    }
 
     try {
       // Extract messages, supporting both the old (array) and new (object) formats
@@ -235,9 +275,15 @@ class OpenAIManager {
           console.log(`[OpenAIManager][DEBUG] AssistantHandler needs initialization`);
         }
         if (window.assistantHandler && typeof window.assistantHandler.initialize === 'function') {
+          if (window.flowLogger) {
+            window.flowLogger.step('GENERATION', 'ASSISTANT_HANDLER_INIT');
+          }
           await window.assistantHandler.initialize();
         } else {
           console.error(`[OpenAIManager][ERROR] AssistantHandler not available`);
+          if (window.flowLogger) {
+            window.flowLogger.phase('GENERATION', 'ASSISTANT_HANDLER_MISSING');
+          }
           throw new Error('AssistantHandler not available');
         }
       }
@@ -247,6 +293,9 @@ class OpenAIManager {
         && !window.audioTranscriber.initialized) {
         if (window.CONFIG?.debug) {
           console.log(`[OpenAIManager][DEBUG] Initializing AudioTranscriber`);
+        }
+        if (window.flowLogger) {
+          window.flowLogger.step('GENERATION', 'AUDIO_TRANSCRIBER_INIT');
         }
         await window.audioTranscriber.initialize();
       }
@@ -266,6 +315,9 @@ class OpenAIManager {
         if (window.CONFIG?.debug) {
           console.log(`[OpenAIManager][DEBUG] Old thread deleted from ThreadStore`);
         }
+        if (window.flowLogger) {
+          window.flowLogger.step('GENERATION', 'FORCE_NEW_THREAD', { fbThreadId });
+        }
       }
 
       // 3. Generate response using AssistantHandler
@@ -282,10 +334,16 @@ class OpenAIManager {
       if (window.CONFIG?.debug) {
         console.log(`[OpenAIManager][DEBUG] Response generated: "${response.substring(0, 50)}${response.length > 50 ? '...' : ''}"`);
       }
+      if (window.flowLogger) {
+        window.flowLogger.phase('GENERATION', 'Respuesta generada (legacy path)', { preview: typeof response === 'string' ? response.substring(0, 80) : '' });
+      }
       return response;
     } catch (error) {
       console.error(`[OpenAIManager][ERROR] Error generating response: ${error.message}`, error);
       logger.error(`Error generating assistant response: ${error.message}`, {}, error);
+      if (window.flowLogger) {
+        window.flowLogger.phase('GENERATION', 'ERROR', { error: error.message });
+      }
       throw error;
     }
   }
@@ -375,4 +433,13 @@ if (window.CONFIG?.debug) console.debug('[OpenAI Manager] Instance exposed globa
     `apiKey=${!!window.openaiManager.apiKey}`,
     `isInitialized=${window.openaiManager.isInitialized}`,
     `isReady=${typeof window.openaiManager.isReady === 'function' ? window.openaiManager.isReady() : 'method not available'}`);
+  if (window.flowLogger) {
+    try {
+      window.flowLogger.step('INIT', 'GLOBAL_VERIFY', {
+        apiKey: !!window.openaiManager.apiKey,
+        isInitialized: window.openaiManager.isInitialized,
+        isReady: typeof window.openaiManager.isReady === 'function' ? window.openaiManager.isReady() : false
+      });
+    } catch (_) {}
+  }
 })();

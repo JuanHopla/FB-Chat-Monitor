@@ -386,6 +386,7 @@ class ChatManager {
         if (window.CONFIG?.debug) {
           logger.log('Using direct click method to open chat');
         }
+        try { if (window.flowLogger) window.flowLogger.phase('CHAT_DETECTION', 'Abriendo chat (click directo)', { chatId: nextChat.chatId }); } catch {}
 
         // Scroll to element to ensure it's visible
         nextChat.element.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -402,6 +403,7 @@ class ChatManager {
 
         // Wait for chat to load
         await new Promise(resolve => setTimeout(resolve, 4000));
+  try { if (window.flowLogger) window.flowLogger.phase('CHAT_DETECTION', 'Chat abierto', { chatId: nextChat.chatId }); } catch {}
 
         // Explicitly check operation mode
         const isAutoMode = (window.CONFIG?.operationMode === 'auto');
@@ -422,6 +424,7 @@ class ChatManager {
 
         const url = `https://www.messenger.com/marketplace/t/${nextChat.chatId}/`;
         logger.notify(`Navigating to: ${nextChat.userName}`, 'info');
+  try { if (window.flowLogger) window.flowLogger.phase('CHAT_DETECTION', 'Abriendo chat (navegación URL)', { chatId: nextChat.chatId, url }); } catch {}
 
         // Change current location - this will reload the page
         window.location.href = url;
@@ -429,9 +432,11 @@ class ChatManager {
       }
 
       logger.error('Could not open chat - neither by click nor by URL');
+      try { if (window.flowLogger) window.flowLogger.phase('CHAT_DETECTION', 'No se pudo abrir el chat', { chatId: nextChat?.chatId }); } catch {}
       return false;
     } catch (error) {
       logger.error(`Error opening chat: ${error.message}`);
+      try { if (window.flowLogger) window.flowLogger.phase('CHAT_DETECTION', 'Error abriendo chat', { error: error?.message, chatId: nextChat?.chatId }); } catch {}
       return false;
     }
   }
@@ -521,7 +526,7 @@ class ChatManager {
         window.logManager.phase(window.logManager.phases.GENERATION,
           'Response generated and inserted into the input field');
         if (window.flowLogger) window.flowLogger.step('REPLY_RECEIVED', { text: response });
-        if (window.flowLogger) window.flowLogger.printSummary();
+  if (window.flowLogger) window.flowLogger.print();
 
         // Log to history (new line)
         this.logResponseToHistory(context, context.role, response, false);
@@ -558,7 +563,10 @@ class ChatManager {
     if (window.CONFIG?.debug) {
       logger.log(`Extracting data from chat ${this.currentChatId}`);
     }
-    if (window.flowLogger) window.flowLogger.start(this.currentChatId);
+    if (window.flowLogger) {
+      window.flowLogger.start(this.currentChatId);
+      try { window.flowLogger.phase('EXTRACTION', 'Iniciando extracción de datos'); } catch {}
+    }
 
     try {
       // Get chat container
@@ -701,11 +709,13 @@ class ChatManager {
         if (window.flowLogger) window.flowLogger.step('MESSAGES_SCRAPED', { count });
       } catch {}
 
-      // Return extracted data along with success status
-      return { success: true, chatData };
+  // Return extracted data along with success status
+  try { if (window.flowLogger) window.flowLogger.phase('EXTRACTION', 'Extracción completada'); } catch {}
+  return { success: true, chatData };
 
     } catch (error) {
       logger.error(`Error extracting chat data: ${error.message}`);
+      try { if (window.flowLogger) window.flowLogger.phase('EXTRACTION', 'ERROR en extracción', { error: error?.message }); } catch {}
       return { success: false, error };
     }
   }
@@ -768,6 +778,7 @@ class ChatManager {
 
     // --- BEGIN: Improved scroll/thread logic from new version ---
     try {
+      try { if (window.flowLogger) window.flowLogger.phase('PROCESSING', 'Procesando chat actual', { autoRespond }); } catch {}
       if (window.CONFIG?.debug) {
         logger.log('Processing current chat with improved scroll/thread logic');
       }
@@ -929,9 +940,11 @@ class ChatManager {
       }
 
       this.isResponding = false;
+      try { if (window.flowLogger) window.flowLogger.phase('PROCESSING', 'Procesamiento completado', { autoRespond }); } catch {}
       return true;
     } catch (error) {
       logger.error('Error processing chat', {}, error);
+      try { if (window.flowLogger) window.flowLogger.phase('PROCESSING', 'ERROR en procesamiento', { error: error?.message }); } catch {}
       this.isResponding = false;
       return false;
     }
@@ -2502,6 +2515,7 @@ class ChatManager {
    */
   async handleResponse(context) {
     try {
+      try { if (window.flowLogger) window.flowLogger.phase('GENERATION', 'Generación de respuesta iniciada'); } catch {}
       if (window.CONFIG?.debug) {
         logger.log('[ChatManager] Initiating handleResponse...');
       }
@@ -2551,18 +2565,20 @@ class ChatManager {
         showSimpleAlert('Consulting the OpenAI Assistant...', 'info');
 
         // Get response as plain text
-        const responseText = await assistantService.generateResponse(context);
+  const responseText = await assistantService.generateResponse(context);
+  try { if (window.flowLogger) window.flowLogger.step('REPLY_READY'); } catch {}
 
         // Always treat as simple plain text
         const replyText = typeof responseText === 'string'
           ? responseText
           : (responseText.toString() || "No response received");
 
-        this.insertResponseInInputField(replyText);
+  this.insertResponseInInputField(replyText);
         showSimpleAlert('Response inserted. Review and send.', 'info');
         // Registrar en historial (nueva línea)
         this.logResponseToHistory(context, context.role, replyText, CONFIG.operationMode === 'auto');
-        return { text: replyText };
+  try { if (window.flowLogger) window.flowLogger.phase('GENERATION', 'Respuesta generada'); } catch {}
+  return { text: replyText };
       }
       // NO AI SERVICE AVAILABLE
       else {
@@ -2581,6 +2597,7 @@ class ChatManager {
       }
     } catch (error) {
       logger.error(`[ChatManager] Critical error in handleResponse: ${error.message}`, {}, error);
+      try { if (window.flowLogger) window.flowLogger.phase('GENERATION', 'ERROR generando respuesta', { error: error?.message }); } catch {}
       // Avoid duplicate alerts if a more specific one was already shown
       if (!error.message.includes("API Error:") &&
         !error.message.includes("parsing issue") &&
@@ -2695,7 +2712,7 @@ class ChatManager {
             this.sendMessage(true); // Pass true to indicate that it is a sending attempt after inserting text
             if (window.flowLogger && isAutoMode) {
               window.flowLogger.step('MESSAGE_SENT_AUTO');
-              window.flowLogger.printSummary();
+              window.flowLogger.print();
             }
           } else {
             logger.warn(`The final text (${finalText.length} chars) does not match the expected one (${text.length} chars), aborting automatic sending`);
@@ -2760,6 +2777,7 @@ class ChatManager {
               if (window.CONFIG?.debug) {
                 logger.log('Message sent by clicking on the button');
               }
+              try { if (window.flowLogger) window.flowLogger.step('REPLY_SENT'); } catch {}
               if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
                 messageSent = true;
                 window.FBChatMonitor.incrementResponseSent();
@@ -2772,6 +2790,7 @@ class ChatManager {
                 if (window.CONFIG?.debug) {
                   logger.log('Message sent using simulated click event');
                 }
+                try { if (window.flowLogger) window.flowLogger.step('REPLY_SENT'); } catch {}
                 if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
                   messageSent = true;
                   window.FBChatMonitor.incrementResponseSent();
@@ -2803,6 +2822,7 @@ class ChatManager {
           if (window.CONFIG?.debug) {
             logger.log('Message sent simulating Enter key with domUtils.simulateKeyPress');
           }
+          try { if (window.flowLogger) window.flowLogger.step('REPLY_SENT'); } catch {}
           if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
             messageSent = true;
             window.FBChatMonitor.incrementResponseSent();
@@ -2825,6 +2845,7 @@ class ChatManager {
           if (window.CONFIG?.debug) {
             logger.log('Message sent simulating Enter key with KeyboardEvent');
           }
+          try { if (window.flowLogger) window.flowLogger.step('REPLY_SENT'); } catch {}
           if (!messageSent && window.FBChatMonitor?.incrementResponseSent) {
             messageSent = true;
             window.FBChatMonitor.incrementResponseSent();

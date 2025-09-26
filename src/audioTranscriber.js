@@ -48,8 +48,11 @@ class AudioTranscriber {
     if (this.initialized) return true;
 
     try {
-      // Use logManager to register initialization phase
+      // Log con LogManager y FlowLogger
       window.logManager.phase(window.logManager.phases.RESOURCE_DETECTION, 'Initializing AudioTranscriber');
+      if (window.flowLogger) {
+        window.flowLogger.phase('RESOURCE_DETECTION', 'Inicializando AudioTranscriber');
+      }
 
       // Load cached transcriptions from localStorage
       this.loadCache();
@@ -63,6 +66,9 @@ class AudioTranscriber {
         'POLLING_START',
         `Starting audio resource detection every ${this.POLLING_INTERVAL_MS}ms`
       );
+      if (window.flowLogger) {
+        window.flowLogger.step('RESOURCE_DETECTION', 'POLLING_START', { intervalMs: this.POLLING_INTERVAL_MS });
+      }
 
       this.pollingInterval = setInterval(() => this.checkForAudioResources(), this.POLLING_INTERVAL_MS);
 
@@ -72,6 +78,9 @@ class AudioTranscriber {
       // Integration with ScrollManager - subscribe to events
       if (window.scrollManager) {
         window.logManager.step(window.logManager.phases.RESOURCE_DETECTION, 'INTEGRATION', 'Integrating with ScrollManager');
+        if (window.flowLogger) {
+          window.flowLogger.step('RESOURCE_DETECTION', 'INTEGRATION_SCROLL_MANAGER');
+        }
         window.scrollManager.on('afterScroll', (data) => {
           // Detect audio after each scroll
           this.checkForAudioResources();
@@ -81,6 +90,9 @@ class AudioTranscriber {
       // Integration with EventCoordinator
       if (window.eventCoordinator) {
         window.logManager.step(window.logManager.phases.RESOURCE_DETECTION, 'INTEGRATION', 'Integrating with EventCoordinator');
+        if (window.flowLogger) {
+          window.flowLogger.step('RESOURCE_DETECTION', 'INTEGRATION_EVENT_COORDINATOR');
+        }
 
         // Subscribe to the chatHistoryExtracted event to receive time blocks
         window.eventCoordinator.on('chatHistoryExtracted', async (data) => {
@@ -90,6 +102,9 @@ class AudioTranscriber {
               'HISTORY_RECEIVED',
               `Received history with ${data.messages.length} messages and ${data.timeBlocks?.length || 0} time blocks`
             );
+            if (window.flowLogger) {
+              window.flowLogger.step('ASSOCIATION', 'HISTORY_RECEIVED', { messages: data.messages.length, timeBlocks: data.timeBlocks?.length || 0 });
+            }
 
             // Associate transcriptions using the time blocks
             await this.associateTranscriptionsWithMessagesFIFO(data);
@@ -99,9 +114,15 @@ class AudioTranscriber {
 
       this.initialized = true;
       window.logManager.phase(window.logManager.phases.RESOURCE_DETECTION, 'AudioTranscriber initialized successfully');
+      if (window.flowLogger) {
+        window.flowLogger.phase('RESOURCE_DETECTION', 'AudioTranscriber inicializado correctamente');
+      }
       return true;
     } catch (error) {
       window.logManager.phase(window.logManager.phases.RESOURCE_DETECTION, `Error initializing AudioTranscriber: ${error.message}`);
+      if (window.flowLogger) {
+        window.flowLogger.phase('RESOURCE_DETECTION', 'Error inicializando AudioTranscriber', { error: error.message });
+      }
       return false;
     }
   }
@@ -116,12 +137,18 @@ class AudioTranscriber {
 
     if (!messageWrapper) {
       window.logManager.step(window.logManager.phases.RESOURCE_DETECTION, 'OBSERVER', 'Message container not found, retrying later');
+      if (window.flowLogger) {
+        window.flowLogger.step('RESOURCE_DETECTION', 'OBSERVER_CONTAINER_MISSING');
+      }
       // Try again later
       setTimeout(() => this.setupObserver(), 2000);
       return;
     }
 
     window.logManager.step(window.logManager.phases.RESOURCE_DETECTION, 'OBSERVER', 'Observer activated for new messages');
+    if (window.flowLogger) {
+      window.flowLogger.step('RESOURCE_DETECTION', 'OBSERVER_ACTIVATED');
+    }
 
     if (this.observer) return;
 
@@ -206,6 +233,9 @@ class AudioTranscriber {
     // Register audio click event with logManager
     window.logManager.step(window.logManager.phases.RESOURCE_DETECTION, 'AUDIO_CLICK',
       `User clicked on audio, messageId: ${messageId}`, { messageId, timestamp });
+    if (window.flowLogger) {
+      window.flowLogger.step('RESOURCE_DETECTION', 'AUDIO_CLICK', { messageId, timestamp });
+    }
 
     // Check if it already has an associated URL
     const cleanUrl = this.messageIdsToAudioUrls.get(messageId);
@@ -233,6 +263,9 @@ class AudioTranscriber {
 
       window.logManager.step(window.logManager.phases.ASSOCIATION, 'EXPECTING',
         `Waiting for audio detection for message ${messageId}`);
+      if (window.flowLogger) {
+        window.flowLogger.step('ASSOCIATION', 'EXPECTING', { messageId });
+      }
 
       // Force an immediate check
       this.checkForAudioResources();
@@ -339,6 +372,9 @@ class AudioTranscriber {
         messageId: messageId,
         timestamp: Date.now()
       });
+      if (window.flowLogger) {
+        window.flowLogger.step('RESOURCE_DETECTION', 'AUDIO_FOUND_DOM', { url: audioUrl, messageId });
+      }
 
       // Process immediately
       if (!this.pendingTranscriptions.has(audioUrl) &&
@@ -363,6 +399,9 @@ class AudioTranscriber {
         detectionSource: 'PerformanceAPI',
         timestamp: Date.now()
       });
+      if (window.flowLogger) {
+        window.flowLogger.step('RESOURCE_DETECTION', 'AUDIO_FOUND_PERF', { url: audioUrl });
+      }
 
       let messageIdToUse = null;
       if (this.expectingAudioForMessageId &&
@@ -374,6 +413,9 @@ class AudioTranscriber {
         window.logManager.step(window.logManager.phases.ASSOCIATION, 'AUTO_ASSIGN',
           `Associating newly detected audio with waiting message: ${messageIdToUse}`,
           { audioUrl: cleanUrl, messageId: messageIdToUse });
+        if (window.flowLogger) {
+          window.flowLogger.step('ASSOCIATION', 'AUTO_ASSIGN', { audioUrl: cleanUrl, messageId: messageIdToUse });
+        }
 
         this.expectingAudioForMessageId = null;
         this.expectingAudioTimestamp = 0;
@@ -390,6 +432,9 @@ class AudioTranscriber {
       window.logManager.phase(window.logManager.phases.RESOURCE_DETECTION,
         `Found ${newAudiosFound} new audio file(s) (DOM: ${domAudioCount}, PerfAPI: ${perfAudioCount})`,
         { newUrls: newAudioUrls });
+      if (window.flowLogger) {
+        window.flowLogger.phase('RESOURCE_DETECTION', 'Nuevos audios detectados', { count: newAudiosFound, dom: domAudioCount, perf: perfAudioCount });
+      }
 
       if (window.eventCoordinator) {
         window.eventCoordinator.emit('audioResourcesFound', {
@@ -486,12 +531,18 @@ class AudioTranscriber {
     });
 
     logEntry.steps.push({ name: 'start', time: Date.now() });
+    if (window.flowLogger) {
+      window.flowLogger.phase('TRANSCRIPTION', 'Transcripción iniciada', { audioUrl: cleanUrl, messageId });
+    }
 
     try {
       // Download
       logEntry.steps.push({ name: 'download_start', time: Date.now() });
       const audioBlob = await this.getAudioBlob(audioUrl);
       if (!audioBlob) throw new Error('Failed to obtain audio blob');
+      if (window.flowLogger) {
+        window.flowLogger.step('TRANSCRIPTION', 'DOWNLOAD_COMPLETE', { sizeBytes: audioBlob.size });
+      }
 
       const sizeKB = Math.round(audioBlob.size / 1024);
       logEntry.sizeKB = sizeKB;
@@ -501,11 +552,20 @@ class AudioTranscriber {
       logEntry.steps.push({ name: 'api_call', time: Date.now() });
       let transcription;
       if (window.apiClient && typeof window.apiClient.transcribeAudio === 'function') {
+        if (window.flowLogger) {
+          window.flowLogger.step('TRANSCRIPTION', 'CALL_APICLIENT');
+        }
         transcription = await window.apiClient.transcribeAudio(audioBlob);
       } else {
+        if (window.flowLogger) {
+          window.flowLogger.step('TRANSCRIPTION', 'CALL_FALLBACK_OPENAI');
+        }
         transcription = await this.transcribeAudio(audioBlob);
       }
       if (!transcription) throw new Error('Transcription failed or returned empty');
+      if (window.flowLogger) {
+        window.flowLogger.step('TRANSCRIPTION', 'API_RESPONSE', { length: transcription.length });
+      }
 
       logEntry.steps.push({ name: 'api_response', time: Date.now() });
       logEntry.textLength = transcription.length;
@@ -549,6 +609,9 @@ class AudioTranscriber {
       if (window.CONFIG?.debug) {
         console.log(`Transcription successful: ${transcription.substring(0, 50)}${transcription.length > 50 ? "..." : ""}`);
       }
+      if (window.flowLogger) {
+        window.flowLogger.phase('TRANSCRIPTION', 'Transcripción completada', { audioUrl: cleanUrl, messageId: currentEntry?.messageId || messageId });
+      }
 
       return transcription;
 
@@ -567,6 +630,9 @@ class AudioTranscriber {
         `Error transcribing audio: ${error.message}`,
         { url: audioUrl }
       );
+      if (window.flowLogger) {
+        window.flowLogger.phase('TRANSCRIPTION', 'ERROR', { error: error.message, url: audioUrl });
+      }
       this.pendingTranscriptions.delete(cleanUrl);
       return null;
     }
@@ -784,6 +850,9 @@ class AudioTranscriber {
     }
 
     this.debugLog(`Processing transcriptions for ${messagesToProcess.length} messages`);
+    if (window.flowLogger) {
+      window.flowLogger.phase('TRANSCRIPTION', 'Procesando lote de transcripciones', { count: messagesToProcess.length });
+    }
 
     // Process in parallel with a concurrency limit
     const concurrencyLimit = 3;
@@ -814,6 +883,9 @@ class AudioTranscriber {
     }
 
     this.showTranscriptionLogs();
+    if (window.flowLogger) {
+      window.flowLogger.phase('TRANSCRIPTION', 'Lote de transcripciones finalizado');
+    }
 
     // Update the original messages with the transcriptions
     return messages.map(msg => {
@@ -1026,14 +1098,23 @@ class AudioTranscriber {
       messages = messageData;
       window.logManager.phase(window.logManager.phases.ASSOCIATION,
         `Processing direct array with ${messages.length} messages`);
+      if (window.flowLogger) {
+        window.flowLogger.phase('ASSOCIATION', 'Procesando arreglo directo', { messages: messages.length });
+      }
     } else if (messageData && messageData.messages) {
       messages = messageData.messages;
       timeBlocks = messageData.timeBlocks || [];
       window.logManager.phase(window.logManager.phases.ASSOCIATION,
         `Processing object with ${messages.length} messages and ${timeBlocks.length} time blocks`);
+      if (window.flowLogger) {
+        window.flowLogger.phase('ASSOCIATION', 'Procesando objeto con mensajes y bloques de tiempo', { messages: messages.length, timeBlocks: timeBlocks.length });
+      }
     } else {
       window.logManager.phase(window.logManager.phases.ASSOCIATION, 'ERROR',
         'Unrecognized messageData format', messageData);
+      if (window.flowLogger) {
+        window.flowLogger.phase('ASSOCIATION', 'ERROR', { error: 'Formato messageData no reconocido' });
+      }
       return { assigned: 0, remaining: 0 };
     }
 
@@ -1056,6 +1137,9 @@ class AudioTranscriber {
     if (messagesToAssign.length === 0) {
       window.logManager.phase(window.logManager.phases.ASSOCIATION,
         "No messages need transcription");
+      if (window.flowLogger) {
+        window.flowLogger.phase('ASSOCIATION', 'Sin mensajes que requieran transcripción');
+      }
       return { assigned: 0, remaining: 0 };
     }
 
@@ -1064,6 +1148,9 @@ class AudioTranscriber {
     if (pendingCount > 0) {
       window.logManager.step(window.logManager.phases.ASSOCIATION, 'WAIT',
         `Waiting for ${pendingCount} pending transcriptions to finish...`);
+      if (window.flowLogger) {
+        window.flowLogger.step('ASSOCIATION', 'WAIT', { pending: pendingCount });
+      }
 
       // Wait up to 5 seconds for pending transcriptions to complete
       const startTime = Date.now();
@@ -1076,9 +1163,15 @@ class AudioTranscriber {
       if (this.pendingTranscriptions.size > 0) {
         window.logManager.step(window.logManager.phases.ASSOCIATION, 'WAIT_INCOMPLETE',
           `After waiting, ${this.pendingTranscriptions.size} transcriptions are still pending`);
+        if (window.flowLogger) {
+          window.flowLogger.step('ASSOCIATION', 'WAIT_INCOMPLETE', { remaining: this.pendingTranscriptions.size });
+        }
       } else {
         window.logManager.step(window.logManager.phases.ASSOCIATION, 'WAIT_COMPLETE',
           `All pending transcriptions completed`);
+        if (window.flowLogger) {
+          window.flowLogger.step('ASSOCIATION', 'WAIT_COMPLETE');
+        }
       }
     }
 
@@ -1095,6 +1188,9 @@ class AudioTranscriber {
     if (unassignedTranscriptions.length === 0) {
       window.logManager.phase(window.logManager.phases.ASSOCIATION,
         "No available transcriptions to assign");
+      if (window.flowLogger) {
+        window.flowLogger.phase('ASSOCIATION', 'No hay transcripciones disponibles para asignar');
+      }
       return { assigned: 0, remaining: messagesToAssign.length };
     }
 
@@ -1102,6 +1198,9 @@ class AudioTranscriber {
     if (window.CONFIG?.debug) {
       debugDetails.push(`Associating ${messagesToAssign.length} messages with ${unassignedTranscriptions.length} transcriptions`);
       this.debugLog(`Associating ${messagesToAssign.length} messages with ${unassignedTranscriptions.length} transcriptions`);
+    }
+    if (window.flowLogger) {
+      window.flowLogger.phase('ASSOCIATION', 'Preparando asociación FIFO', { messages: messagesToAssign.length, transcriptions: unassignedTranscriptions.length });
     }
 
     // Sort transcriptions by timestamp extracted from URL (crucial)
@@ -1116,6 +1215,9 @@ class AudioTranscriber {
 
     if (window.CONFIG?.debug) {
       debugDetails.push(`Sorted transcriptions: ${unassignedTranscriptions.map(t => t.urlTimestamp || 'no timestamp').slice(0, 5).join(', ')}${unassignedTranscriptions.length > 5 ? '...' : ''}`);
+    }
+    if (window.flowLogger) {
+      window.flowLogger.step('ASSOCIATION', 'TRANSCRIPTIONS_SORTED', { preview: unassignedTranscriptions.slice(0, 3).map(t => t.urlTimestamp || 'no-ts') });
     }
 
     // Sort messages by additional data that might indicate order (like ID or timestamp)
@@ -1153,6 +1255,9 @@ class AudioTranscriber {
       debugDetails.push(`Sorted messages: ${messagesToAssign.map(m => m._extractedTimestamp || 'no timestamp').slice(0, 5).join(', ')}${messagesToAssign.length > 5 ? '...' : ''}`);
       debugDetails.push("Using timestamp-based association");
     }
+    if (window.flowLogger) {
+      window.flowLogger.step('ASSOCIATION', 'MESSAGES_SORTED');
+    }
 
     // Association using the determined chronological order
     let assignedCount = 0;
@@ -1164,6 +1269,9 @@ class AudioTranscriber {
 
     if (window.CONFIG?.debug) {
       debugDetails.push(`Assigning ${assignableCount} transcriptions by chronological order`);
+    }
+    if (window.flowLogger) {
+      window.flowLogger.step('ASSOCIATION', 'ASSIGNING', { count: assignableCount });
     }
 
     for (let i = 0; i < assignableCount; i++) {
@@ -1215,6 +1323,9 @@ class AudioTranscriber {
         correlationIndex: i,
         associationType: 'timestamp-fifo'
       });
+      if (window.flowLogger) {
+        window.flowLogger.step('ASSOCIATION', 'ASSIGNED', { messageId: message.id, url: cleanUrl });
+      }
     }
 
     // Save updated cache
@@ -1223,6 +1334,9 @@ class AudioTranscriber {
     // Show summary of results
     window.logManager.phase(window.logManager.phases.ASSOCIATION,
       `Association completed: ${assignedCount} of ${messagesToAssign.length} messages associated`);
+    if (window.flowLogger) {
+      window.flowLogger.phase('ASSOCIATION', 'Asociación completada', { assigned: assignedCount, total: messagesToAssign.length });
+    }
 
     // Show expandable debug details if in debug mode
     if (window.CONFIG?.debug && associationDetails.length > 0) {
@@ -1244,6 +1358,9 @@ class AudioTranscriber {
     } catch (error) {
       window.logManager.phase(window.logManager.phases.ASSOCIATION, 'WARN',
         `Error showing association data: ${error.message}`);
+      if (window.flowLogger) {
+        window.flowLogger.phase('ASSOCIATION', 'WARN', { error: error.message });
+      }
     }
 
     return {
@@ -1285,6 +1402,9 @@ class AudioTranscriber {
     this.expectingAudioTimestamp = 0;
 
     this.debugLog(`State reset for new chat: ${chatId}`);
+    if (window.flowLogger) {
+      window.flowLogger.phase('RESOURCE_DETECTION', 'Reinicio de estado para nuevo chat', { chatId });
+    }
   }
 
   /**
@@ -1295,6 +1415,9 @@ class AudioTranscriber {
   debugLog(message) {
     if (this.DEBUG_MODE && window.CONFIG?.debug) {
       window.logManager.step('GENERAL', 'DEBUG', message);
+      if (window.flowLogger) {
+        window.flowLogger.step('GENERAL', 'DEBUG', { message });
+      }
     }
   }
 }

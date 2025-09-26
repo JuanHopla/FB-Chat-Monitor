@@ -59,7 +59,7 @@ class ThreadStore {
     }
     
   const threadInfo = this.threads.get(fbThreadId);
-  if (window.flowLogger) window.flowLogger.step('THREAD_CHECK', { chatId: fbThreadId, exists: !!threadInfo });
+  if (window.flowLogger) window.flowLogger.step('GENERATION', 'THREAD_CHECK', { chatId: fbThreadId, exists: !!threadInfo });
     
     // Update last accessed time if found
     if (threadInfo) {
@@ -105,9 +105,9 @@ class ThreadStore {
     }
     
     if (window.flowLogger) {
-      window.flowLogger.step('THREAD_NEW', { chatId: fbThreadId });
-      window.flowLogger.step('THREAD_CREATED', { openaiThreadId });
-      window.flowLogger.step('ROLE_SET', { role: chatRole });
+      window.flowLogger.step('GENERATION', 'THREAD_NEW', { chatId: fbThreadId });
+      window.flowLogger.step('GENERATION', 'THREAD_CREATED', { openaiThreadId });
+      window.flowLogger.step('GENERATION', 'ROLE_SET', { role: chatRole });
     }
     
     return threadInfo;
@@ -144,7 +144,7 @@ class ThreadStore {
       console.debug(`[ThreadStore][DEBUG] lastMessageId updated`);
     }
     
-    if (window.flowLogger) window.flowLogger.step('LAST_MESSAGE_UPDATED', { lastMessageId });
+  if (window.flowLogger) window.flowLogger.step('GENERATION', 'LAST_MESSAGE_UPDATED', { lastMessageId });
     
     return true;
   }

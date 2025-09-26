@@ -229,12 +229,12 @@ async function runChatMonitor() {
   if (!appState.isMonitoring) return;
 
   appState.lastScanTime = Date.now();
-  if (window.CONFIG?.debug) logger.debug('Starting chat scan');
+  if (window.flowLogger) window.flowLogger.phase('CHAT_DETECTION', 'Iniciando escaneo de chats');
 
   try {
     // Check if we're on the right page
     if (!pageUtils.isMarketplaceMessenger()) {
-      logger.warn('Not on marketplace messenger page, skipping scan');
+      if (window.flowLogger) window.flowLogger.phase('CHAT_DETECTION', 'No estamos en la página de Messenger Marketplace, omitiendo escaneo');
       resetMonitoringInterval();
       return;
     }
@@ -244,42 +244,31 @@ async function runChatMonitor() {
       () => chatManager.scanForUnreadChats(),
       { maxRetries: 2, baseDelay: 1000 }
     );
+    if (window.flowLogger) window.flowLogger.step('CHAT_DETECTION', 'SCAN', `Chats no leídos detectados: ${unreadChatsCount}`);
 
     if (unreadChatsCount > 0) {
-      if (window.CONFIG?.debug) logger.log(`Found ${unreadChatsCount} unread chats`);
-
-      // Process the first unread chat
+      // Procesar el primer chat no leído
       const opened = await chatManager.openNextPendingChat();
-
       if (opened) {
-        if (window.CONFIG?.debug) logger.log('Chat opened and processed successfully');
+        if (window.flowLogger) window.flowLogger.phase('CHAT_DETECTION', 'Chat abierto y procesado correctamente');
         appState.stats.chatsProcessed++;
-
-        // Reset error count on success
         appState.errorCount = 0;
         appState.scansSinceLastSuccess = 0;
       } else {
-        logger.error('Could not open the chat');
+        if (window.flowLogger) window.flowLogger.phase('CHAT_DETECTION', 'No se pudo abrir el chat');
         incrementErrorCount();
       }
     } else {
-      if (window.CONFIG?.debug) logger.debug('No unread chats found');
+      if (window.flowLogger) window.flowLogger.phase('CHAT_DETECTION', 'No se encontraron chats no leídos');
       try {
-        if (window.flowLogger) {
-          const base = (CONFIG.scanInterval || appState.baseInterval || 30000);
-          const seconds = Math.round(base / 1000);
-          window.flowLogger.step('AUTO_STATUS', { type: 'SLEEP', seconds });
-        }
+        const base = (CONFIG.scanInterval || appState.baseInterval || 30000);
+        const seconds = Math.round(base / 1000);
+        window.flowLogger.step('AUTO_STATUS', { type: 'SLEEP', seconds });
       } catch {}
-      // Not an error, just no chats to process
       appState.scansSinceLastSuccess++;
     }
   } catch (error) {
-    logger.error('Error during chat monitoring', {
-      errorCount: appState.errorCount,
-      scansSinceLastSuccess: appState.scansSinceLastSuccess
-    }, error);
-
+    if (window.flowLogger) window.flowLogger.phase('CHAT_DETECTION', 'Error durante el monitoreo de chats', { errorCount: appState.errorCount, scansSinceLastSuccess: appState.scansSinceLastSuccess, error });
     incrementErrorCount();
   }
 

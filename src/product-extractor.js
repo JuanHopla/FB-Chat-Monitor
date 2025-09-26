@@ -18,6 +18,9 @@ function loadCachedProducts() {
     const savedCache = storageUtilsInstance.get('PRODUCT_CACHE', {});
     Object.assign(productCache, savedCache);
     if (window.CONFIG?.debug) console.debug(`[ProductExtractorPOC] Loaded ${Object.keys(productCache).length} cached products from storage`);
+    if (window.flowLogger) {
+      window.flowLogger.step('EXTRACTION', 'CACHE_LOADED', { count: Object.keys(productCache).length });
+    }
   } catch (error) {
     console.error('[ProductExtractorPOC] Error loading product cache', error);
   }
@@ -31,6 +34,9 @@ setInterval(() => {
   try {
     storageUtilsInstance.set('PRODUCT_CACHE', productCache);
     // This comment indicates there was a console.log that's now removed/commented
+    if (window.flowLogger) {
+      window.flowLogger.step('EXTRACTION', 'CACHE_SAVED', { count: Object.keys(productCache).length });
+    }
   } catch (error) {
     console.error('[ProductExtractorPOC] Error saving product cache', error);
   }
@@ -52,12 +58,19 @@ function extractProductIdFromUrl(url) {
     for (const pattern of patterns) {
       const match = url.match(pattern);
       if (match && match[1]) {
-        return match[1];
+        const id = match[1];
+        if (window.flowLogger) {
+          window.flowLogger.step('EXTRACTION', 'PRODUCT_ID_EXTRACTED', { productId: id });
+        }
+        return id;
       }
     }
     return null;
   } catch (error) {
     console.error('[ProductExtractorPOC] Error extracting product ID from URL', error);
+    if (window.flowLogger) {
+      window.flowLogger.phase('EXTRACTION', 'PRODUCT_ID_EXTRACT_ERROR', { error: error.message });
+    }
     return null;
   }
 }
@@ -103,6 +116,9 @@ function filterRelevantFields(data) {
  */
 function extractFromInlineJsonPOC(doc, originalUrl, productId) {
   if (window.CONFIG?.debug) console.debug('[ProductExtractorPOC] Initiating extraction from inline JSON...');
+    if (window.flowLogger) {
+      window.flowLogger.phase('EXTRACTION', 'INLINE_JSON_START', { productId });
+    }
     const scripts = doc.querySelectorAll('script');
     let mainJsonData = null;
     let mediaJsonData = null;
@@ -184,8 +200,11 @@ function extractFromInlineJsonPOC(doc, originalUrl, productId) {
         }
     }
 
-    if (!mainJsonData) {
+  if (!mainJsonData) {
         console.error('[ProductExtractorPOC] Main JSON data with expected structure not found.');
+    if (window.flowLogger) {
+      window.flowLogger.phase('EXTRACTION', 'INLINE_JSON_MISSING', { productId, url: originalUrl });
+    }
         return null;
     }
     
@@ -254,7 +273,7 @@ function extractFromInlineJsonPOC(doc, originalUrl, productId) {
         if (!primaryImage && allImages.length > 0) primaryImage = allImages[0];
 
 
-        const productDetails = {
+  const productDetails = {
             source: 'inline_json_poc',
             productId: productId,
             title: target?.marketplace_listing_title || rt?.marketplace_listing_title || '',
@@ -379,9 +398,16 @@ function extractFromInlineJsonPOC(doc, originalUrl, productId) {
             nearbyTransits: target?.nearby_transits || [],
 
         };
-        return filterRelevantFields(productDetails);
+        const filtered = filterRelevantFields(productDetails);
+        if (window.flowLogger) {
+          window.flowLogger.phase('EXTRACTION', 'INLINE_JSON_PARSED', { productId, hasMediaJson: !!mediaJsonData, title: filtered.title || '', images: (filtered.allImages||[]).length });
+        }
+        return filtered;
     } catch (error) {
         console.error('[ProductExtractorPOC] Error processing combined JSON data:', error, error.stack);
+        if (window.flowLogger) {
+          window.flowLogger.phase('EXTRACTION', 'INLINE_JSON_ERROR', { productId, error: error.message });
+        }
         return null;
     }
 }
@@ -395,9 +421,15 @@ function extractFromInlineJsonPOC(doc, originalUrl, productId) {
 function fetchProductWithGM(productId, url) {
   return new Promise((resolve, reject) => {
     if (window.CONFIG?.debug) console.log('[ProductExtractorPOC] Using GM_xmlhttpRequest to fetch HTML for product:', { productId, url });
+    if (window.flowLogger) {
+      window.flowLogger.step('EXTRACTION', 'FETCH_HTML_START', { productId, url });
+    }
 
     if (typeof GM_xmlhttpRequest !== 'function') {
       console.error('[ProductExtractorPOC] GM_xmlhttpRequest not available.');
+      if (window.flowLogger) {
+        window.flowLogger.phase('EXTRACTION', 'FETCH_HTML_UNAVAILABLE');
+      }
       return reject(new Error('GM_xmlhttpRequest not available'));
     }
 
@@ -411,6 +443,9 @@ function fetchProductWithGM(productId, url) {
       timeout: 15000,
       onload: function (response) {
         if (response.status >= 200 && response.status < 300) {
+          if (window.flowLogger) {
+            window.flowLogger.step('EXTRACTION', 'FETCH_HTML_OK', { status: response.status });
+          }
           
           try { // Open in new tab for inspection (from POC)
             const blob = new Blob([response.responseText], { type: 'text/html' });
@@ -421,9 +456,15 @@ function fetchProductWithGM(productId, url) {
           const productDetails = extractFromInlineJsonPOC(doc, url, productId);
 
           if (productDetails) {
+            if (window.flowLogger) {
+              window.flowLogger.step('EXTRACTION', 'PARSE_OK', { productId });
+            }
             resolve(productDetails);
           } else {
             if (window.CONFIG?.debug) console.warn('[ProductExtractorPOC] Inline JSON extraction failed. No DOM fallback in POC style.');
+            if (window.flowLogger) {
+              window.flowLogger.step('EXTRACTION', 'PARSE_FAILED_FALLBACK', { productId });
+            }
             resolve(filterRelevantFields({
                 source: 'inline_json_poc_failed',
                 productId: productId, id: productId, title: 'Extraction Failed (POC)',
@@ -432,15 +473,24 @@ function fetchProductWithGM(productId, url) {
           }
         } else {
           console.error(`[ProductExtractorPOC] GM_xmlhttpRequest HTTP Error: ${response.status} for ${url}`);
+          if (window.flowLogger) {
+            window.flowLogger.phase('EXTRACTION', 'FETCH_HTML_ERROR', { status: response.status, url });
+          }
           reject(new Error(`HTTP Error: ${response.status}`));
         }
       },
       onerror: function (error) {
         console.error('[ProductExtractorPOC] GM_xmlhttpRequest network error for product ' + productId, error);
+        if (window.flowLogger) {
+          window.flowLogger.phase('EXTRACTION', 'FETCH_HTML_ERROR', { error: 'network', productId });
+        }
         reject(error);
       },
       ontimeout: function () {
         console.error('[ProductExtractorPOC] GM_xmlhttpRequest timeout for product ' + productId);
+        if (window.flowLogger) {
+          window.flowLogger.phase('EXTRACTION', 'FETCH_HTML_ERROR', { error: 'timeout', productId });
+        }
         reject(new Error('Request timeout'));
       }
     });
@@ -461,9 +511,15 @@ async function getProductDetails(productId, url = null) {
 
   if (!url) url = `https://www.facebook.com/marketplace/item/${productId}/`;
   if (window.CONFIG?.debug) console.log(`[ProductExtractorPOC] Fetching product details for ID: ${productId} from URL: ${url}`);
+  if (window.flowLogger) {
+    window.flowLogger.phase('EXTRACTION', 'GET_DETAILS_START', { productId, url });
+  }
 
   if (productCache[productId]) {
     if (window.CONFIG?.debug) console.log(`[ProductExtractorPOC] Product ${productId} found in cache. Returning cached version.`);
+    if (window.flowLogger) {
+      window.flowLogger.step('EXTRACTION', 'CACHE_HIT', { productId });
+    }
     return productCache[productId];
   }
 
@@ -471,9 +527,16 @@ async function getProductDetails(productId, url = null) {
     const productDetails = await fetchProductWithGM(productId, url);
     productDetails.id = productId; // Ensure id is productId for caching consistency
     productCache[productId] = productDetails;
+    if (window.flowLogger) {
+      window.flowLogger.step('EXTRACTION', 'CACHE_UPDATED', { productId });
+      window.flowLogger.phase('EXTRACTION', 'DETAILS_READY', { productId, hasImage: !!productDetails.image });
+    }
     return productDetails;
   } catch (error) {
     console.error(`[ProductExtractorPOC] Error in getProductDetails for ${productId}:`, error);
+    if (window.flowLogger) {
+      window.flowLogger.phase('EXTRACTION', 'GET_DETAILS_ERROR', { productId, error: error.message });
+    }
     const failureDetails = filterRelevantFields({
         source: 'error_in_getProductDetails_poc',
         productId: productId, id: productId, title: 'Get Details Failed (POC)',
@@ -504,6 +567,9 @@ function extractProductIdFromCurrentChat() {
     return null;
   } catch (error) {
     console.error('[ProductExtractorPOC] Error extracting product ID from current chat:', error);
+    if (window.flowLogger) {
+      window.flowLogger.phase('ASSOCIATION', 'PRODUCT_ID_FROM_CHAT_ERROR', { error: error.message });
+    }
     return null;
   }
 }
@@ -517,6 +583,9 @@ function inspectProduct(productId) {
     if (productLink) productId = extractProductIdFromUrl(productLink.href);
   }
   if (productId && productCache[productId]) {
+    if (window.flowLogger) {
+      window.flowLogger.step('EXTRACTION', 'INSPECT', { productId });
+    }
     if (window.CONFIG?.debug) {
       console.log("--- MANUAL PRODUCT INSPECTION (POC Style Cache) ---");
       console.log(JSON.stringify(productCache[productId], null, 2));
@@ -525,6 +594,9 @@ function inspectProduct(productId) {
     return productCache[productId];
   } else {
     console.error("[ProductExtractorPOC] No product with ID " + productId + " in cache to inspect, or productId is missing.");
+    if (window.flowLogger) {
+      window.flowLogger.step('EXTRACTION', 'INSPECT_MISS', { productId: productId || null });
+    }
     return null;
   }
 }
@@ -541,8 +613,14 @@ function initialize(utils) {
         storageUtilsInstance = utils.storageUtils;
         loadCachedProducts(); // Load cache once utils are available
         if (window.CONFIG?.debug) console.log('[ProductExtractorPOC] Initialized with storageUtils.');
+        if (window.flowLogger) {
+          window.flowLogger.phase('EXTRACTION', 'INITIALIZED');
+        }
     } else {
         console.warn('[ProductExtractorPOC] Initialization failed: storageUtils not provided.');
+        if (window.flowLogger) {
+          window.flowLogger.phase('EXTRACTION', 'INIT_WARN');
+        }
     }
 }
 
@@ -674,3 +752,6 @@ window.productExtractor = {
 };
 
 if (window.CONFIG?.debug) console.log('[ProductExtractorPOC] Module loaded. Call productExtractor.initialize({storageUtils: yourStorageUtils}) from main script.');
+if (window.flowLogger) {
+  window.flowLogger.step('EXTRACTION', 'MODULE_LOADED', { module: 'product-extractor' });
+}

@@ -336,6 +336,15 @@ class LogManager {
 
     return `.../${filename}${urlObj.search ? '?...' : ''}`;
   }
+
+  /**
+   * Logs structured data for flow management
+   * @param {Object} data - Data to log
+   */
+  logFlow(data) {
+    const logger = new FlowLogger();
+    logger.logStructuredData(data);
+  }
 }
 
 // Create global instance
@@ -367,101 +376,155 @@ window.setLogLevel = function (level) {
 // Flow logger: estructura de pasos de alto nivel por chat
 class FlowLogger {
   constructor() {
-    this.reset();
+    this.sessions = [];
+    this.current = null;
   }
-  start(chatId) {
-    // If starting for a different chat, reset; otherwise preserve steps
-    const normalized = chatId || null;
-    if (this.chatId !== normalized) {
-      this.chatId = normalized;
-      this.steps = [];
-      this.startedAt = Date.now();
-    }
-  }
-  step(key, data = {}) {
-    const entry = { key, data, ts: Date.now() };
-    this.steps.push(entry);
-    if (window.CONFIG?.debug) {
-      try { console.debug('[FB-Chat-Monitor][FLOW][DEBUG]', key, Object.keys(data).length ? data : ''); } catch {}
-    }
-    return entry;
-  }
-  getSteps() { return [...this.steps]; }
-  reset() {
-    this.chatId = null;
-    this.steps = [];
-    this.startedAt = null;
-  }
-  // Imprime resumen amigable para cliente siguiendo el orden deseado
-  printSummary() {
-    try {
-      const steps = this.steps;
-      const find = (k) => steps.find(s => s.key === k);
-      const findAll = (k) => steps.filter(s => s.key === k);
 
-      const threadCheck = find('THREAD_CHECK');
-      const isNew = !!find('THREAD_NEW');
-      const threadCreated = find('THREAD_CREATED');
-      const roleSet = find('ROLE_SET');
-      const productAdded = find('PRODUCT_INFO_ADDED');
-      const scraped = find('MESSAGES_SCRAPED');
-      const transcribed = find('AUDIO_TRANSCRIBED');
-      const payload = find('PAYLOAD_BUILT');
-      const run = find('RUN_CREATED');
-      const lastMsg = find('LAST_MESSAGE_UPDATED');
-      const reply = find('REPLY_RECEIVED');
-      const pasted = find('PASTED_TO_INPUT');
-      const sentAuto = find('MESSAGE_SENT_AUTO');
-      const autoStatus = findAll('AUTO_STATUS');
+  // Compatibility helpers from earlier prototype API
+  addPhase(phase) {
+    this.phase(typeof phase === 'string' ? phase : (phase?.name || 'GENERAL'), 'BEGIN');
+  }
+  toggleVisibility() { /* no-op, kept for compatibility */ }
+  printLogs() { this.printSummary(); }
+  logStructured(data) { console.log('[FlowLogger][STRUCTURED]', JSON.parse(JSON.stringify(data))); }
+  logStructuredData(data) { this.logStructured(data); }
 
-      const title = `Generate message flow (chat ${this.chatId || '-'})`;
-      console.group(`[FB-Chat-Monitor] ${title}`);
+  // New hierarchical API
+  start(flowId) {
+    const id = flowId || `flow_${Date.now()}`;
+    this.current = { id, startedAt: Date.now(), entries: [] };
+    this.sessions.push(this.current);
+    return id;
+  }
 
-      // 1) checking thread in local storage
-      console.log('1) checking thread in local storage');
-      if (threadCheck?.data?.exists) {
-        console.log('a) existing thread, continue with #2');
-      } else {
-        console.log('b) new thread:');
-        if (threadCreated?.data?.openaiThreadId) {
-          console.log(`- create thread (stored) id=${threadCreated.data.openaiThreadId}`);
+  phase(phase, message, data) {
+    const entry = { kind: 'phase', phase: String(phase || 'GENERAL').toUpperCase(), message: message || '', data: data || null, ts: Date.now() };
+    this._add(entry);
+  }
+
+  step(a, b, c) {
+    // Supports: step('PHASE','STEP',data) | step('STEP',data) | step('STEP') | step('PHASE', {..})
+    let phase = null, step = null, data = null;
+    if (typeof a === 'string' && typeof b === 'string') { phase = a; step = b; data = c || null; }
+    else if (typeof a === 'string' && b && typeof b === 'object') { step = a; data = b; }
+    else if (typeof a === 'string' && b === undefined) { step = a; }
+    else if (a && typeof a === 'object') { data = a; }
+    const entry = {
+      kind: 'step',
+      phase: phase ? String(phase).toUpperCase() : null,
+      step: step ? String(step).toUpperCase() : null,
+      data: data || null,
+      ts: Date.now()
+    };
+    this._add(entry);
+  }
+
+  // Aliases for proposed API
+  addStep(phase, step, data) { this.step(phase, step, data); }
+  togglePhase() { /* console UI handles expansion; placeholder */ }
+  toggleStep() { /* console UI handles expansion; placeholder */ }
+
+  // Pretty tree print similar to proposal
+  print() {
+    if (!this.current) return;
+    const mapPhase = (phase, step) => {
+      const p = (phase || '').toUpperCase();
+      const s = (step || '').toUpperCase();
+      if (['THREAD_CHECK','THREAD_NEW','THREAD_CREATED','ROLE_SET','LAST_MESSAGE_UPDATED'].includes(s)) return 'Thread check';
+      if (p === 'PROCESSING' || p === 'EXTRACTION') return 'Messages processed';
+      if (p === 'GENERATION') {
+        if (['PAYLOAD_BUILT','TRANSCRIPTIONS_ATTACHED'].includes(s)) return 'Messages processed';
+        return 'AI Assistant response';
+      }
+      if (p === 'RESPONSE') return 'Message delivery';
+      if (['PASTED_TO_INPUT','REPLY_SENT'].includes(s)) return 'Message delivery';
+      if (['REPLY_READY','REPLY_RECEIVED'].includes(s)) return 'AI Assistant response';
+      return phase || 'General';
+    };
+    const mapStep = (step, data) => {
+      const s = (step || '').toUpperCase();
+      switch (s) {
+        case 'THREAD_CHECK': return 'Check thread';
+        case 'THREAD_NEW': return 'Create thread (stored)';
+        case 'THREAD_CREATED': return 'Thread created';
+        case 'ROLE_SET': return `Define role: ${data && data.role ? data.role : ''} (stored)`;
+        case 'LAST_MESSAGE_UPDATED': return 'Update last message';
+        case 'MESSAGES_SCRAPED': return `Found ${data && typeof data.count==='number' ? data.count : ''} messages`;
+        case 'TRANSCRIPTIONS_ATTACHED': return 'Transcribe audio';
+        case 'PAYLOAD_BUILT': return 'Payload to assistant';
+        case 'REPLY_READY': return 'Response prepared';
+        case 'REPLY_RECEIVED': return 'Reply';
+        case 'PASTED_TO_INPUT': return 'Paste to input';
+        case 'REPLY_SENT': return 'Message sent';
+        default: return step || 'Step';
+      }
+    };
+
+    const groups = {};
+    this.current.entries.forEach(e => {
+      const g = mapPhase(e.phase, e.step);
+      groups[g] = groups[g] || [];
+      groups[g].push(e);
+    });
+    const order = ['Thread check','Messages processed','AI Assistant response','Message delivery'];
+    const keys = [...order, ...Object.keys(groups).filter(k => !order.includes(k))];
+    keys.forEach(phaseName => {
+      if (!groups[phaseName]) return;
+      console.groupCollapsed(`📋 ${phaseName}`);
+      groups[phaseName].forEach(e => {
+        if (e.kind === 'phase') {
+          console.log(`→ ${e.message || ''}`);
+          if (e.data) console.log(e.data);
         } else {
-          console.log('- create thread (stored)');
+          const label = mapStep(e.step, e.data);
+          if (e.data) {
+            console.groupCollapsed(label);
+            console.log(e.data);
+            console.groupEnd();
+          } else {
+            console.log(label);
+          }
         }
-        if (roleSet?.data?.role) console.log(`- define role: ${roleSet.data.role} (stored)`);
-        if (productAdded) console.log('- get product listing info (added to thread)');
-      }
-
-      // 2) scrape new messages
-      console.log('2) scrape new messages');
-      if (scraped?.data?.count != null) console.log(`- messages scraped: ${scraped.data.count}`);
-      if (transcribed?.data?.count != null) console.log(`- transcribe audio: ${transcribed.data.count} files`);
-      if (payload?.data) {
-        console.log('- add all new messages to payload (show full object)');
-        console.log(payload.data);
-      }
-      if (run?.data?.runId) console.log(`- run thread: runId=${run.data.runId}`);
-      if (lastMsg?.data?.lastMessageId) console.log(`- update lastMessage in local storage: ${lastMsg.data.lastMessageId}`);
-
-      // 3) receive reply
-      console.log('3) receive reply');
-      if (reply?.data?.text) {
-        console.log('- reply:', reply.data.text);
-      }
-      if (pasted) console.log('- paste to input');
-
-      // 4) send message (if auto)
-      if (sentAuto) console.log('4) send message (auto)');
-      if (autoStatus.length) {
-        autoStatus.forEach(s => {
-          if (s.data?.type === 'FOUND') console.log(`Auto: new message found, open thread ${s.data.chatId || ''}`.trim());
-          if (s.data?.type === 'SLEEP') console.log(`Auto: no new message found, sleep for ${s.data.seconds || 0}s`);
-        });
-      }
-
+      });
       console.groupEnd();
-    } catch (e) {
-      try { console.warn('[FB-Chat-Monitor] Error printing flow summary', e); } catch {}
+    });
+  }
+
+  printSummary() {
+    if (!this.current) return;
+    const { id, entries } = this.current;
+    const phases = {};
+    entries.forEach(e => {
+      const key = (e.phase || 'GENERAL');
+      phases[key] = phases[key] || { phases: 0, steps: 0 };
+      if (e.kind === 'phase') phases[key].phases++;
+      if (e.kind === 'step') phases[key].steps++;
+    });
+    console.groupCollapsed(`[FlowLogger] Summary for ${id} (${entries.length} entries)`);
+    Object.keys(phases).forEach(k => {
+      console.log(`- ${k}: phases=${phases[k].phases}, steps=${phases[k].steps}`);
+    });
+    console.groupEnd();
+  }
+
+  _add(entry) {
+    if (!this.current) this.start();
+    this.current.entries.push(entry);
+    this._console(entry);
+  }
+
+  _console(entry) {
+    const dbg = !!(window.CONFIG && window.CONFIG.debug);
+    const ts = new Date(entry.ts).toISOString();
+    if (entry.kind === 'phase') {
+      if (dbg) console.groupCollapsed(`[${ts}] [${entry.phase}] ${entry.message || ''}`);
+      else console.log(`[${entry.phase}] ${entry.message || ''}`);
+      if (entry.data) console.log(entry.data);
+      if (dbg) console.groupEnd();
+    } else {
+      const label = `[${entry.phase || 'GENERAL'}]${entry.step ? ' [' + entry.step + ']' : ''}`;
+      if (dbg) console.log(`[${ts}] ${label}`, entry.data || '');
+      else console.log(label, entry.data || '');
     }
   }
 }

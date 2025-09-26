@@ -15,6 +15,8 @@ const uiState = {
  * Create and initialize all UI components
  */
 function initializeUI() {
+  if (uiState._initialized) { try { if (window.flowLogger) window.flowLogger.step('INIT', 'UI_INIT_SKIPPED'); } catch {} return; }
+  try { if (window.flowLogger) window.flowLogger.phase('INIT', 'UI initialize start'); } catch {}
   uiState.floatingButton = createFloatingButton();
   createStyles();
   const now = Date.now();
@@ -33,6 +35,7 @@ function initializeUI() {
 
     storageUtils.set('UI_STATE', { activeTab: 'assistants' });
     logger.debug('Page reloaded - forcing assistants tab');
+    try { if (window.flowLogger) window.flowLogger.step('INIT', 'PAGE_REFRESH_DETECTED'); } catch {}
   } else {
     const savedState = storageUtils.get('UI_STATE', {});
     if (savedState.activeTab) {
@@ -40,6 +43,7 @@ function initializeUI() {
     }
 
     logger.debug('Existing session - using saved tab: ' + uiState.activeTab);
+    try { if (window.flowLogger) window.flowLogger.step('INIT', 'SESSION_RESTORED', { activeTab: uiState.activeTab }); } catch {}
   }
   setTimeout(() => {
     populateAssistantsFromStorage();
@@ -49,6 +53,8 @@ function initializeUI() {
   uiState.floatingResponseButton = createFloatingResponseButton();
   document.body.appendChild(uiState.floatingResponseButton);
   setInterval(updateFloatingResponseButtonVisibility, 2000);
+  try { if (window.flowLogger) window.flowLogger.phase('INIT', 'UI initialized'); } catch {}
+  uiState._initialized = true;
 }
 
 /**
@@ -507,6 +513,7 @@ function createStyles() {
 function toggleControlPanel() {
   // Check if the panel already exists
   if (uiState.controlPanel) {
+    try { if (window.flowLogger) window.flowLogger.phase('GENERAL', 'CONTROL_PANEL_CLOSED'); } catch {}
     uiState.controlPanel.remove();
     uiState.controlPanel = null;
     uiState.isControlPanelVisible = false;
@@ -521,6 +528,7 @@ function toggleControlPanel() {
   // Create the control panel
   uiState.controlPanel = createControlPanel();
   uiState.isControlPanelVisible = true;
+  try { if (window.flowLogger) window.flowLogger.phase('GENERAL', 'CONTROL_PANEL_OPENED'); } catch {}
 
   // ADDED: Hide the floating button when the panel is opened
   if (uiState.floatingResponseButton) {
@@ -555,6 +563,7 @@ function toggleControlPanel() {
 
   // Show the current tab
   showTabContent(uiState.activeTab);
+  try { if (window.flowLogger) window.flowLogger.step('GENERAL', 'TAB_DEFAULT_SHOWN', { tab: uiState.activeTab }); } catch {}
 }
 
 /**
@@ -635,6 +644,7 @@ function createControlPanel() {
       tabElement.classList.add('active');
 
       // Show content
+      try { if (window.flowLogger) window.flowLogger.step('GENERAL', 'TAB_SWITCH', { to: tab.id }); } catch {}
       showTabContent(tab.id);
 
       // Save state
@@ -700,6 +710,7 @@ function createControlPanel() {
  * @param {string} tabId - The ID of the tab to show
  */
 function showTabContent(tabId) {
+  try { if (window.flowLogger) window.flowLogger.step('GENERAL', 'TAB_SHOW', { tabId }); } catch {}
   // Hide all tab contents
   document.querySelectorAll('.fb-chat-monitor-tab-content').forEach(tab => {
     tab.classList.remove('active');
@@ -712,10 +723,13 @@ function showTabContent(tabId) {
 
     // Perform tab-specific actions
     if (tabId === 'logs') {
+      try { if (window.flowLogger) window.flowLogger.step('GENERAL', 'LOGS_TAB_OPEN'); } catch {}
       refreshLogs();
     } else if (tabId === 'history') {
+      try { if (window.flowLogger) window.flowLogger.step('GENERAL', 'HISTORY_TAB_OPEN'); } catch {}
       refreshHistory();
     } else if (tabId === 'assistants') {
+      try { if (window.flowLogger) window.flowLogger.step('GENERAL', 'ASSISTANTS_TAB_OPEN'); } catch {}
       populateAssistantsFromStorage(); // <-- NUEVO: poblar asistentes desde storage al abrir la pestaña
     }
   }
@@ -1093,11 +1107,13 @@ function attachEventHandlers() {
   // Update the code that enables/disables the Generate Response button
   function handleModeChange(value) {
     const genBtn = document.getElementById('fb-chat-monitor-generate-response');
+    try { if (window.flowLogger) window.flowLogger.step('GENERAL', 'MODE_CHANGE', { mode: value === 'on' ? 'auto' : 'manual' }); } catch {}
     if (value === 'on') {
       // CORREGIDO: Comprobamos si existe FBChatMonitor antes de llamar a sus métodos
       if (window.FBChatMonitor) {
         window.FBChatMonitor.changeOperationMode('auto');
         window.FBChatMonitor.toggleMonitoring(true);
+        try { if (window.flowLogger) window.flowLogger.step('GENERAL', 'MONITORING_TOGGLE', { enabled: true }); } catch {}
       } else {
         logger.error('FBChatMonitor not available');
       }
@@ -1107,6 +1123,7 @@ function attachEventHandlers() {
       if (window.FBChatMonitor) {
         window.FBChatMonitor.changeOperationMode('manual');
         window.FBChatMonitor.toggleMonitoring(false);
+        try { if (window.flowLogger) window.flowLogger.step('GENERAL', 'MONITORING_TOGGLE', { enabled: false }); } catch {}
       } else {
         logger.error('FBChatMonitor not available');
       }
@@ -1142,12 +1159,15 @@ function attachEventHandlers() {
   document.getElementById('fb-chat-monitor-generate-response')
     .addEventListener('click', async () => {
       try {
+        try { if (window.flowLogger) window.flowLogger.phase('GENERATION', 'UI_GENERATE_CLICK'); } catch {}
         const success = await chatManager.generateResponseForCurrentChat();
         if (!success) {
           // Error messages are already handled in the method
           logger.debug('Failed to generate response via UI button');
         }
+        try { if (window.flowLogger) window.flowLogger.phase('GENERATION', success ? 'UI_GENERATE_DONE' : 'UI_GENERATE_FAILED'); } catch {}
       } catch (e) {
+        try { if (window.flowLogger) window.flowLogger.phase('GENERATION', 'UI_GENERATE_ERROR', { error: e.message }); } catch {}
         showSimpleAlert(`Error generating response: ${e.message}`, 'error');
       }
     });
@@ -1163,6 +1183,7 @@ function attachEventHandlers() {
     }
 
     try {
+      try { if (window.flowLogger) window.flowLogger.step('INIT', 'SAVE_API_KEY_CLICK'); } catch {}
       const button = document.getElementById('fb-chat-monitor-save-api-key');
       button.textContent = 'Validating...';
       button.disabled = true;
@@ -1171,11 +1192,14 @@ function attachEventHandlers() {
 
       if (success) {
         showSimpleAlert('API Key validated and saved successfully', 'success');
+        try { if (window.flowLogger) window.flowLogger.phase('INIT', 'API_KEY_SAVED'); } catch {}
         refreshAssistantsList();
       } else {
         showSimpleAlert('Invalid API Key', 'error');
+        try { if (window.flowLogger) window.flowLogger.phase('INIT', 'API_KEY_INVALID'); } catch {}
       }
     } catch (error) {
+      try { if (window.flowLogger) window.flowLogger.phase('INIT', 'API_KEY_ERROR', { error: error.message }); } catch {}
       showSimpleAlert(`Error: ${error.message}`, 'error');
     } finally {
       const button = document.getElementById('fb-chat-monitor-save-api-key');
@@ -1202,6 +1226,7 @@ function attachEventHandlers() {
       window.CONFIG.debug = !!e.target.checked;
       try { localStorage.setItem('FB_CHAT_MONITOR_DEBUG', String(window.CONFIG.debug)); } catch {}
       logger.log(`Developer mode ${window.CONFIG.debug ? 'enabled' : 'disabled'}`);
+      try { if (window.flowLogger) window.flowLogger.step('GENERAL', 'DEV_MODE_TOGGLE', { enabled: window.CONFIG.debug }); } catch {}
     });
   }
 
@@ -1249,6 +1274,12 @@ function updateStats() {
     if (uiState.statusIndicator) {
       uiState.statusIndicator.style.backgroundColor = stats.isMonitoring ? '#4CAF50' : '#f44336';
     }
+    try {
+      const last = uiState._lastStats || {};
+      const changed = last.chatsProcessed !== stats.chatsProcessed || last.responsesSent !== stats.responsesSent || last.errors !== stats.errors || last.isMonitoring !== stats.isMonitoring;
+      if (changed && window.flowLogger) window.flowLogger.step('GENERAL', 'STATS_UPDATE', { processed: stats.chatsProcessed||0, responses: stats.responsesSent||0, errors: stats.errors||0, isMonitoring: !!stats.isMonitoring });
+      uiState._lastStats = { chatsProcessed: stats.chatsProcessed||0, responsesSent: stats.responsesSent||0, errors: stats.errors||0, isMonitoring: !!stats.isMonitoring };
+    } catch {}
   } catch (error) {
     logger.error('Error updating stats', {}, error);
   }
@@ -1259,6 +1290,7 @@ function updateStats() {
  */
 async function refreshAssistantsList() {
   try {
+    try { if (window.flowLogger) window.flowLogger.phase('INIT', 'REFRESH_ASSISTANTS_BEGIN'); } catch {}
     const sellerSelect = document.getElementById('fb-chat-monitor-seller-assistant');
     const buyerSelect = document.getElementById('fb-chat-monitor-buyer-assistant');
 
@@ -1270,6 +1302,7 @@ async function refreshAssistantsList() {
     if (!assistants || assistants.length === 0) {
       if (sellerSelect) sellerSelect.innerHTML = '<option value="">No assistants found</option>';
       if (buyerSelect) buyerSelect.innerHTML = '<option value="">No assistants found</option>';
+      try { if (window.flowLogger) window.flowLogger.phase('INIT', 'REFRESH_ASSISTANTS_EMPTY'); } catch {}
       return;
     }
 
@@ -1301,6 +1334,7 @@ async function refreshAssistantsList() {
 
     populateSelect(sellerSelect, CONFIG.AI?.assistants?.seller?.id);
     populateSelect(buyerSelect, CONFIG.AI?.assistants?.buyer?.id);
+    try { if (window.flowLogger) window.flowLogger.step('INIT', 'REFRESH_ASSISTANTS_OK', { count: assistants.length }); } catch {}
 
   } catch (error) {
     logger.error('Error refreshing assistants', {}, error);
@@ -1311,6 +1345,7 @@ async function refreshAssistantsList() {
 
     if (sellerSelect) sellerSelect.innerHTML = '<option value="">Error loading assistants</option>';
     if (buyerSelect) buyerSelect.innerHTML = '<option value="">Error loading assistants</option>';
+    try { if (window.flowLogger) window.flowLogger.phase('INIT', 'REFRESH_ASSISTANTS_ERROR', { error: error.message }); } catch {}
   }
 }
 
@@ -1375,6 +1410,7 @@ function populateAssistantsFromStorage() {
       window.CONFIG.assistants.seller = { ...window.CONFIG.assistants.seller, ...assistants.seller };
       window.CONFIG.assistants.buyer = { ...window.CONFIG.assistants.buyer, ...assistants.buyer };
     }
+    try { if (window.flowLogger) window.flowLogger.step('INIT', 'ASSISTANTS_POPULATED_FROM_STORAGE'); } catch {}
   } catch (e) {
     logger.error('Error populating assistants from storage', {}, e);
   }
@@ -1390,6 +1426,7 @@ function saveConfig() {
   }
 
   try {
+    try { if (window.flowLogger) window.flowLogger.phase('GENERAL', 'SAVE_CONFIG_BEGIN'); } catch {}
     // Save scan interval configuration
     const scanInterval = document.getElementById('fb-chat-monitor-scan-interval');
     if (scanInterval && scanInterval.value) {
@@ -1430,8 +1467,10 @@ function saveConfig() {
     // Show confirmation message
     showSimpleAlert('Configuration saved successfully', 'success');
   if (window.CONFIG?.debug) logger.log('Configuration saved to persistent storage');
+    try { if (window.flowLogger) window.flowLogger.phase('GENERAL', 'SAVE_CONFIG_OK'); } catch {}
   } catch (error) {
     logger.error(`Error saving configuration: ${error.message}`);
+    try { if (window.flowLogger) window.flowLogger.phase('GENERAL', 'SAVE_CONFIG_ERROR', { error: error.message }); } catch {}
     showSimpleAlert('Error saving configuration', 'error');
   }
 }
@@ -1446,6 +1485,7 @@ function loadConfig() {
   }
 
   try {
+    try { if (window.flowLogger) window.flowLogger.step('INIT', 'LOAD_CONFIG'); } catch {}
     // Load previous configuration
     window.CONFIG.operationMode = GM_getValue('CONFIG_operationMode', 'manual');
     window.CONFIG.autoSendMessages = GM_getValue('CONFIG_autoSendMessages', false);
@@ -1502,6 +1542,7 @@ function updateUIWithLoadedConfig() {
  */
 function resetConfig() {
   if (confirm('Are you sure you want to reset all settings to default values?')) {
+    try { if (window.flowLogger) window.flowLogger.phase('GENERAL', 'RESET_CONFIG'); } catch {}
     storageUtils.remove('CONFIG');
     showSimpleAlert('Settings reset to defaults. Reloading...', 'info');
     setTimeout(() => window.location.reload(), 2000);
@@ -1513,6 +1554,7 @@ function resetConfig() {
  */
 function refreshLogs() {
   try {
+    try { if (window.flowLogger) window.flowLogger.step('GENERAL', 'REFRESH_LOGS'); } catch {}
     const logsContainer = document.getElementById('fb-chat-monitor-logs-list');
     const logLevel = document.getElementById('fb-chat-monitor-log-level').value;
 
@@ -1562,6 +1604,7 @@ function refreshLogs() {
  */
 function clearLogs() {
   if (confirm('Are you sure you want to clear all logs?')) {
+    try { if (window.flowLogger) window.flowLogger.phase('GENERAL', 'CLEAR_LOGS'); } catch {}
     logger.clearLogs();
     refreshLogs();
     showSimpleAlert('Logs cleared', 'success');
@@ -1573,6 +1616,7 @@ function clearLogs() {
  */
 function exportLogs() {
   try {
+    try { if (window.flowLogger) window.flowLogger.step('GENERAL', 'EXPORT_LOGS'); } catch {}
     const logs = logger.getAllLogs();
     const exportData = {
       timestamp: new Date().toISOString(),
@@ -1611,6 +1655,7 @@ function formatDateTime(timestamp) {
  */
 function refreshHistory() {
   try {
+    try { if (window.flowLogger) window.flowLogger.step('GENERAL', 'REFRESH_HISTORY'); } catch {}
     const historyList = document.getElementById('fb-chat-monitor-history-list');
 
     // Get history
@@ -1758,6 +1803,7 @@ function findChatElementById(chatId) {
  */
 function clearHistory() {
   if (confirm('Are you sure you want to clear all conversation history?')) {
+    try { if (window.flowLogger) window.flowLogger.phase('GENERAL', 'CLEAR_HISTORY'); } catch {}
     storageUtils.remove('RESPONSE_LOGS');
     refreshHistory();
     showSimpleAlert('Conversation history cleared', 'success');
@@ -1769,6 +1815,7 @@ function clearHistory() {
  */
 function exportHistory() {
   try {
+    try { if (window.flowLogger) window.flowLogger.step('GENERAL', 'EXPORT_HISTORY'); } catch {}
     const history = getConversationHistory();
     const exportData = {
       timestamp: new Date().toISOString(),
@@ -1812,6 +1859,7 @@ function updateMonitoringStatus(isActive) {
   if (uiState.isControlPanelVisible) {
     updateStats();
   }
+  try { if (window.flowLogger) window.flowLogger.step('AUTO_STATUS', 'MONITORING_STATUS', { isActive: !!isActive }); } catch {}
 }
 
 /**
@@ -1926,6 +1974,7 @@ function createFloatingResponseButton() {
   // Generate response on click
   button.addEventListener('click', (e) => {
     e.stopPropagation();
+    try { if (window.flowLogger) window.flowLogger.phase('GENERATION', 'UI_QUICK_GENERATE_CLICK'); } catch {}
     // Use the same function as the original button
     if (window.chatManager && typeof window.chatManager.generateResponseForCurrentChat === 'function') {
       window.chatManager.generateResponseForCurrentChat();
@@ -1960,6 +2009,7 @@ function updateFloatingResponseButtonVisibility() {
     window.chatManager.currentChatId;
 
   // Reposition the button to appear near the chat input field
+  const currentlyVisible = uiState.floatingResponseButton.style.display !== 'none';
   if (shouldShow) {
     // Find the input field or send button to better position the floating button
     const inputField = document.querySelector(CONFIG.selectors.activeChat.messageInput);
@@ -1974,9 +2024,9 @@ function updateFloatingResponseButtonVisibility() {
       uiState.floatingResponseButton.style.right = '20px';
     }
 
-    uiState.floatingResponseButton.style.display = 'block';
+    if (!currentlyVisible) { uiState.floatingResponseButton.style.display = 'block'; try { if (window.flowLogger) window.flowLogger.step('GENERAL', 'QUICK_BUTTON_VISIBILITY', { visible: true }); } catch {} }
   } else {
-    uiState.floatingResponseButton.style.display = 'none';
+    if (currentlyVisible) { uiState.floatingResponseButton.style.display = 'none'; try { if (window.flowLogger) window.flowLogger.step('GENERAL', 'QUICK_BUTTON_VISIBILITY', { visible: false }); } catch {} }
   }
 }
 
